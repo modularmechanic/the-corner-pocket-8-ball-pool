@@ -191,6 +191,7 @@ export function attachRooms(http: HttpServer, origins = allowedOrigins()) {
     socket.on('game:shot', (shot, ack) => command(socket, { type: 'shoot', shot }, ack));
     socket.on('game:equip', (data, ack) => command(socket, { type: 'equip', cue: data?.cue }, ack));
     socket.on('game:chalk', (_, ack) => command(socket, { type: 'chalk' }, ack));
+    socket.on('game:group', (data, ack) => command(socket, { type: 'group', group: data?.group }, ack));
     socket.on('game:place', (point, ack) => command(socket, { type: 'place', x: point?.x, z: point?.z }, ack));
     socket.on('game:rematch', (data, ack) =>
       command(socket, { type: data?.advance === true ? 'advance' : 'rematch' }, ack),

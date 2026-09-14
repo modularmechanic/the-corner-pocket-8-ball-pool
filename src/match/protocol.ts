@@ -1,5 +1,5 @@
 import type { CueId } from '../simulation/cues';
-import type { GameFormat, GameOptions, GameState, Shot, TableEvent } from '../simulation/types';
+import type { GameFormat, GameOptions, GameState, Group, Shot, TableEvent } from '../simulation/types';
 
 export interface CommandResult {
   ok: boolean;
@@ -34,6 +34,7 @@ export interface ClientToServerEvents {
   'game:place': (point: { x: number; z: number }, ack: Ack) => void;
   'game:equip': (data: { cue: CueId }, ack: Ack) => void;
   'game:chalk': (data: Record<string, never>, ack: Ack) => void;
+  'game:group': (data: { group: Group }, ack: Ack) => void;
   'game:rematch': (data: { advance?: boolean }, ack: Ack) => void;
 }
 export interface ServerToClientEvents {

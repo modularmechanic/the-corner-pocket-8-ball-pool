@@ -102,7 +102,7 @@ export class RemoteMatch implements Match {
         this.ready &&
         !this.pending &&
         humanControls(state, 'online', this.ownSeat) &&
-        (state.phase === 'ready' || state.phase === 'ball-in-hand') &&
+        (state.phase === 'ready' || state.phase === 'ball-in-hand' || state.phase === 'choose-group') &&
         shown.phase === state.phase &&
         shown.shotCount === state.shotCount &&
         activeSeat(shown) === activeSeat(state),
@@ -216,7 +216,7 @@ export class RemoteMatch implements Match {
     if (!this.roomInfo || !this.connected || (command.type !== 'equip' && !this.ready) || this.pending)
       return { ok: false, error: 'Reconnect all players before playing.' };
     if (command.type === 'reset') command = { type: 'rematch' };
-    if (['shoot', 'place', 'chalk'].includes(command.type) && !this.actor.canAct)
+    if (['shoot', 'place', 'chalk', 'group'].includes(command.type) && !this.actor.canAct)
       return { ok: false, error: 'Wait for your turn.' };
     const generation = this.generation;
     this.inFlight = true;
@@ -232,7 +232,9 @@ export class RemoteMatch implements Match {
               ? await socket.emitWithAck('game:equip', { cue: command.cue })
               : command.type === 'chalk'
                 ? await socket.emitWithAck('game:chalk', {})
-                : await socket.emitWithAck('game:rematch', { advance: command.type === 'advance' });
+                : command.type === 'group'
+                  ? await socket.emitWithAck('game:group', { group: command.group })
+                  : await socket.emitWithAck('game:rematch', { advance: command.type === 'advance' });
       return generation === this.generation ? reply : { ok: false, error: 'The connection changed. Please try again.' };
     } catch {
       return { ok: false, error: 'Connection interrupted. Reconnecting…' };

@@ -1,11 +1,12 @@
 import type { CueId } from '../simulation/cues';
-import type { Difficulty, GameOptions, GameState, Mode, Shot, TableEvent } from '../simulation/types';
+import type { Difficulty, GameOptions, GameState, Group, Mode, Shot, TableEvent } from '../simulation/types';
 import type { MatchCapabilities } from './policy';
 import type { CommandResult, RoomSnapshot } from './protocol';
 export type MatchCommand =
   | { type: 'shoot'; shot: Shot }
   | { type: 'place'; x: number; z: number }
   | { type: 'chalk' }
+  | { type: 'group'; group: Group }
   | { type: 'equip'; cue: CueId }
   | { type: 'rematch' }
   | { type: 'advance' }

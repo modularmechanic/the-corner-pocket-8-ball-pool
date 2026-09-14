@@ -1,6 +1,6 @@
 import { availableCues, canEquipCue, normalizeCues, type CueId } from '../simulation/cues';
 import { PoolGame } from '../simulation/game';
-import { choosePlacement, chooseShot } from '../simulation/ai';
+import { chooseGroup, choosePlacement, chooseShot } from '../simulation/ai';
 import {
   activeSeat,
   seatCount,
@@ -12,7 +12,7 @@ import {
   type TableEvent,
 } from '../simulation/types';
 import { normalizeLevel } from '../simulation/level-policy';
-import { inPlacementZone } from '../simulation/table-geometry';
+import { inPlacementZone, isCueLie } from '../simulation/table-geometry';
 import { canAdvance, humanControls, matchCapabilities } from './policy';
 import type { CommandResult } from './protocol';
 import type { Match, MatchActor, MatchChange, MatchCommand, MatchUpdate } from './types';
@@ -93,7 +93,7 @@ export class LocalMatch implements Match {
       canAct:
         this.available &&
         humanControls(state, this.mode, this.seat) &&
-        (state.phase === 'ready' || state.phase === 'ball-in-hand'),
+        (state.phase === 'ready' || state.phase === 'ball-in-hand' || state.phase === 'choose-group'),
     };
   }
   get thinking() {
@@ -187,14 +187,23 @@ export class LocalMatch implements Match {
       (this.mode === 'ai' && (seat === 0 ? controller !== 'human' : controller !== 'ai'))
     )
       return { ok: false, error: 'Wait for your turn.' };
-    if (command.type === 'place' && state.phase === 'ball-in-hand' && !inPlacementZone(state, command))
+    if (
+      command.type === 'place' &&
+      state.phase === 'ball-in-hand' &&
+      !isCueLie(state, command) &&
+      !inPlacementZone(state, command)
+    )
       return { ok: false, error: 'Place the cue ball behind the head string.' };
+    if (command.type === 'group' && state.phase !== 'choose-group')
+      return { ok: false, error: 'There is no group to choose.' };
     const ok =
       command.type === 'shoot'
         ? this.game.shoot(command.shot)
         : command.type === 'place'
           ? this.game.placeCue(command.x, command.z)
-          : this.game.chalkCue();
+          : command.type === 'group'
+            ? this.game.chooseGroup(command.group)
+            : this.game.chalkCue();
     if (ok) {
       if (controller === 'human') this.pauseAI();
       this.changed();
@@ -278,7 +287,7 @@ export class LocalMatch implements Match {
       !this.available ||
       this.mode !== 'ai' ||
       activeSeat(this.state) === 0 ||
-      !['ready', 'ball-in-hand'].includes(this.state.phase)
+      !['ready', 'ball-in-hand', 'choose-group'].includes(this.state.phase)
     )
       this.pauseAI();
     else this.updateAI(Math.min(dt, 0.1), options.aiCameraReady !== false);
@@ -302,10 +311,15 @@ export class LocalMatch implements Match {
       if (state.cues[activeSeat(state)] !== cue) this.apply({ type: 'equip', cue }, activeSeat(state), 'ai');
     }
     this.aiElapsed += dt;
-    if (state.phase === 'ball-in-hand') {
+    if (state.phase === 'ball-in-hand' || state.phase === 'choose-group') {
       if (this.aiElapsed >= 0.75) {
-        const point = choosePlacement(state);
-        this.apply({ type: 'place', ...point }, activeSeat(state), 'ai');
+        this.apply(
+          state.phase === 'choose-group'
+            ? { type: 'group', group: chooseGroup(state) }
+            : { type: 'place', ...choosePlacement(state) },
+          activeSeat(state),
+          'ai',
+        );
         this.pauseAI();
       }
       return;
