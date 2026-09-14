@@ -74,7 +74,7 @@ export function settleShot(input:GameState,result:ShotResult,context:SettlementC
       state.message=`${reason}. ${oldRules?next:'Ball in hand — click the felt to place.'}`;
     } else {
       const secondShot=ownPotted===0&&allowance===2;
-      if(ownPotted===0&&!secondShot)state.turn=other(shooter);
+      if(ownPotted===0&&!secondShot){state.turn=other(shooter);next='Over to the other side.';}
       if(secondShot)state.shotsLeft=1;
       state.phase='ready';state.message=ownPotted>0?`${ownPotted+opponentPotted===1?'Nice pot':'Beautiful shot'}. Keep the table.`:secondShot?'No pot. Take your second shot.':'Over to the other side. Make it count.';
     }

@@ -43,7 +43,7 @@ test('Old Rules: a legal miss on the first shot keeps the table for the second; 
   assert.deepEqual(view(settle(potted,{firstContact:1}).state),{turn:0,phase:'ready',shotsLeft:2,foul:true},'a foul after the allowance is spent gives two shots again');
 });
 
-test('Old Rules: a foul while holding two shots loses the remaining shot and gives one visit',()=>{
+test('Old Rules: a foul on either of the two shots (first or second) forfeits the rest and gives the opponent one visit',()=>{
   const two=settle(arranged(),wrongBall).state,second=settle(two,{firstContact:9}).state;
   for(const [label,state] of [['first shot',two],['second shot',second]] as const){
     assert.deepEqual(view(settle(state,{firstContact:1}).state),{turn:0,phase:'ready',shotsLeft:0,foul:true},label);
@@ -51,6 +51,35 @@ test('Old Rules: a foul while holding two shots loses the remaining shot and giv
     assert.deepEqual(view(scratched),{turn:0,phase:'ball-in-hand',shotsLeft:0,foul:true},`${label}: placement still follows the scratch`);
     // The single visit is ordinary: its miss passes the turn back.
     assert.deepEqual(view(settle(settle(state,{firstContact:1}).state,{firstContact:2}).state),{turn:1,phase:'ready',shotsLeft:0,foul:false});
+  }
+});
+
+test('Old Rules: obstacle-only contact is legal, and a foul after obstacle contact still gives two shots',()=>{
+  const blocked={firstContact:null,obstacleContact:true,railAfterContact:false};
+  assert.deepEqual(view(settle(arranged(),blocked).state),{turn:1,phase:'ready',shotsLeft:0,foul:false});
+  assert.deepEqual(view(settle(settle(arranged(),wrongBall).state,blocked).state),{turn:1,phase:'ready',shotsLeft:1,foul:false},'it spends only the first of two shots');
+  const state=arranged(),wrong=settle(state,{...blocked,firstContact:9});
+  assert.deepEqual(view(wrong.state),{turn:1,phase:'ready',shotsLeft:2,foul:true});assert.deepEqual(wrong.state.balls[0],state.balls[0]);
+  assert.deepEqual(view(settle(state,{...blocked,potted:[0]}).state),{turn:1,phase:'ball-in-hand',shotsLeft:2,foul:true});
+});
+
+test('Old Rules: sending the eight off the table while holding two shots loses the rack; on the break it is respotted',()=>{
+  const two=settle(arranged(),wrongBall).state;
+  for(const legal of [[9,10],[8]]){
+    const lost=settleShot(two,result({firstContact:legal[0],offTable:[8]}),{legalBefore:legal,shooter:1});
+    assert.equal(lost.state.phase,'over');assert.equal(lost.state.winner,0);assert.equal(lost.state.shotsLeft,0);
+    assert.equal(lost.state.message,'The eight left the table. Rack lost.');
+  }
+  const breaking=initialState('old-break-off','singles','old'),respotted=settle(breaking,{offTable:[8]});
+  assert.equal(respotted.outcome.respotEight,true);assert.equal(respotted.state.balls[8].pocketed,false);
+  assert.deepEqual(view(respotted.state),{turn:1,phase:'ready',shotsLeft:2,foul:true});
+});
+
+test('an eight potted alone on the break passes the turn and says so, under both rule sets',()=>{
+  for(const rules of ['old','new'] as RuleSet[]){
+    const settled=settle(initialState('eight-only-break','singles',rules),{potted:[8]}).state;
+    assert.equal(settled.turn,1);assert.equal(settled.message,'Eight on the break — respotted. Over to the other side.');
+    assert.equal(settle(initialState('eight-and-two','singles',rules),{potted:[8,2]}).state.message,'Eight on the break — respotted. Keep playing.');
   }
 });
 
