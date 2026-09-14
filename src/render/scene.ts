@@ -1,12 +1,10 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { TABLE, POCKETS, initialState, type GameState, type Obstacle, type TableEvent, type Shot, type PowerUp } from '../simulation/types';
-import { TABLE_RAILS, TABLE_NOSES } from '../simulation/table-geometry';
 import { EFFECTS, effectDefinition } from '../presentation/effects';
 import { deriveTableEffects } from '../presentation/table-presentation';
 import { ballTexture, canvasTexture, woodTexture, clubLightingTexture } from './materials';
 import { createTableSurfaces, type TableSurfaces } from './table-surfaces';
-import { buildPocketDetails, createPocketedSlabGeometry, createPocketedPanelGeometry, createPocketedClothGeometry } from './pocket-details';
 import { RoomReflections } from './room-reflections';
 import { ShotPaths } from './shot-paths';
 import { CueAppearance } from './cue-appearance';
@@ -17,12 +15,11 @@ import { PoolPostprocessing } from './postprocessing';
 import { AdaptiveRenderBudget, RenderFrameHistory, GpuFrameTimer, ShadowRevision, budgetDpr, type RenderQuality } from './performance';
 import { PracticalLightBudget } from './light-budget';
 import { TableDetails } from './table-details';
+import { TableModel, drawTableTextures, enableTableShadows, TABLE_SHADOW_LAYER } from './table-model';
 import { advanceOrbit,clampOrbit,fitTableCamera,fitOverheadCamera,orbitDirection,orbitFromDirection,CameraTransition,TemporaryCameraView,rayFromViewport,type OrbitAngles } from './camera';
 import { ShotCameraAim, ShotCameraRig } from './shot-camera';
 import { BuffTrail } from './buff-trail';
 export type Quality = RenderQuality;
-// Table-only shadow casters keep the three practical lights from redrawing the entire pub.
-const TABLE_SHADOW_LAYER = 1;
 const X_AXIS=new THREE.Vector3(1,0,0),Z_AXIS=new THREE.Vector3(0,0,1),DROP_AXIS=new THREE.Vector3(.7,0,.3).normalize();
 const INSPECT_TARGET=new THREE.Vector3(.35,-.75,2.6),INSPECT_DIRECTION=new THREE.Vector3(.015,.32,.947).normalize();
 // Per-frame scratch vectors; never retained between calls.
@@ -105,7 +102,7 @@ export class PoolScene {
   private outFades = new Map<number,OutFade>();
   private effects: TableEffects;
   private surfaces: TableSurfaces;
-  private pocketDetails?: ReturnType<typeof buildPocketDetails>;
+  private pocketDetails?: TableModel['pocketDetails'];
   private roomReflections?: RoomReflections;
   private fallbackEnvironment: THREE.WebGLRenderTarget;
   private pub?: ReturnType<typeof buildPub>;
@@ -186,84 +183,12 @@ export class PoolScene {
     this.resizeObserver = new ResizeObserver(() => this.resize()); this.resizeObserver.observe(container);
     this.applyGraphicsBudget();
   }
-  private box(w: number, h: number, d: number, mat: THREE.Material, x: number, y: number, z: number, round = .04) {
-    const mesh = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 3, round), mat); mesh.position.set(x, y, z); mesh.castShadow = true; mesh.receiveShadow = true; this.scene.add(mesh); return mesh;
-  }
-  private enableTableShadows(object:THREE.Object3D) {
-    object.traverse(child=>{if(child instanceof THREE.Mesh)child.layers.enable(TABLE_SHADOW_LAYER);});
-  }
   private buildEnvironment() {
     this.pub = buildPub(this.scene, this.renderer);
   }
   private buildTable() {
-    const firstTableObject=this.scene.children.length;
-    const {walnut,sideWood,darkWood,brass,cloth,cushion}=this.surfaces;
-    const slab=(width:number,thickness:number,depth:number,material:THREE.Material,y:number,round:number)=>{
-      const mesh=new THREE.Mesh(createPocketedSlabGeometry(width,depth,thickness,round),material);
-      mesh.position.y=y;mesh.castShadow=true;mesh.receiveShadow=true;this.scene.add(mesh);
-    };
-    const notchedPanel=(width:number,height:number,depth:number,material:THREE.Material,x:number,y:number,z:number,round:number)=>{
-      const mesh=new THREE.Mesh(createPocketedPanelGeometry(width,depth,height,x,z,round,y+height/2<0?'throat':'mouth'),material);
-      mesh.position.set(x,y,z);mesh.castShadow=true;mesh.receiveShadow=true;this.scene.add(mesh);return mesh;
-    };
-    slab(12.98,.5,7.23,darkWood,-.42,.22);
-    slab(12.9,.055,7.16,brass,-.22,.2);
-    slab(12.84,.27,7.1,walnut,-.18,.18);
-    // Separate shell panels leave a real opening into the return mechanism.
-    notchedPanel(12.42, 1.04, .32, sideWood, 0, -.88, -3.165, .06);
-    for(const x of [-6.05,6.05])notchedPanel(.32,1.04,6.33,sideWood,x,-.88,0,.06);
-    notchedPanel(12.42,.3,.32,sideWood,0,-.51,3.165,.04);
-    this.box(12.42,.2,.32,sideWood,0,-1.30,3.165,.04);
-    notchedPanel(2.39,.54,.32,sideWood,-5.015,-.94,3.165,.025);
-    notchedPanel(3.89,.54,.32,sideWood,4.265,-.94,3.165,.025);
-    slab(12.46,.055,6.69,brass,-1.3,.07);
-    for (const sign of [-1, 1]) {
-      for (const x of sign>0?[-4.8,4.8]:[-4.8,-2.4,0,2.4,4.8]) this.box(sign>0&&x<0?1.94:2.16, .61, .04, darkWood, x, -.91, sign * 3.337, .055);
-      this.box(11.94, .025, .03, brass, 0, -.55, sign * 3.364, .008);
-    }
-    const legProfile = [[.43,0],[.43,.11],[.32,.2],[.27,.55],[.25,.86],[.29,1.39],[.36,1.91],[.46,2.16],[.46,2.28]].map(([radius,y])=>new THREE.Vector2(radius,y));
-    const legGeometry = new THREE.LatheGeometry(legProfile, 48);
-    for (const x of [-4.68, 4.68]) for (const z of [-2.35, 2.35]) {
-      const leg = new THREE.Mesh(legGeometry, walnut); leg.position.set(x,-3.5,z); leg.castShadow = true; leg.receiveShadow = true; this.scene.add(leg);
-      const foot = new THREE.Mesh(new THREE.CylinderGeometry(.43,.47,.1,40),brass); foot.position.set(x,-3.55,z); foot.castShadow = true; this.scene.add(foot);
-      const collar = new THREE.Mesh(new THREE.TorusGeometry(.355,.022,8,40),brass); collar.rotation.x = -Math.PI / 2; collar.position.set(x,-1.68,z); this.scene.add(collar);
-    }
-    for (const z of [-2.35,2.35]) this.box(9.3,.18,.23,walnut,0,-2.55,z,.04);
-    for (const x of [-4.68,4.68]) this.box(.23,.18,4.7,walnut,x,-2.55,0,.04);
-    // A shaped cloth surface leaves actual openings at the pockets.
-    const bedGeo = createPocketedClothGeometry(11.76,6.06);
-    const uv = bedGeo.attributes.uv, pos = bedGeo.attributes.position;
-    for (let i = 0; i < uv.count; i++) uv.setXY(i, (pos.getX(i) + 5.88) / 11.76, (pos.getZ(i) + 3.03) / 6.06);
-    const bed = new THREE.Mesh(bedGeo, cloth); bed.position.y = 0; bed.receiveShadow = true; this.scene.add(bed);
-    for (const sign of [-1, 1]) {
-      notchedPanel(11.8, .23, .4, walnut, 0, .1, sign * 3.29, .065);
-      notchedPanel(.42, .23, 6.12, walnut, sign * 6.11, .1, 0, .065);
-      this.box(11.72, .012, .016, brass, 0, .222, sign * 3.43, .005);
-      this.box(.016, .012, 5.86, brass, sign * 6.26, .222, 0, .005);
-      for (const x of [-4.28, -2.85, -1.42, 1.42, 2.85, 4.28]) this.diamond(x, sign * 3.31, brass);
-      for (const z of [-1.45, 0, 1.45]) this.diamond(sign * 6.1, z, brass);
-    }
-    for(const rail of TABLE_RAILS)this.box(rail.halfWidth*2,.16,rail.halfDepth*2,cushion,rail.x,.073,rail.z,.075);
-    for(const jaw of TABLE_NOSES){const geometry=new THREE.SphereGeometry(jaw.radius,24,16);geometry.scale(1,.7,1);const nose=new THREE.Mesh(geometry,cushion);nose.position.set(jaw.x,jaw.y-.03,jaw.z);nose.castShadow=true;nose.receiveShadow=true;this.scene.add(nose);}
-    this.pocketDetails=buildPocketDetails(this.scene,this.surfaces);
-    // A subtle head string and the traditional baulk semicircle.
-    const lineMat = new THREE.LineBasicMaterial({ color: '#c1d3ab', transparent: true, opacity: .2 });
-    const head = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-2.85, .008, -2.82), new THREE.Vector3(-2.85, .008, 2.82)]), lineMat); this.scene.add(head);
-    const arc: THREE.Vector3[] = []; for (let i = 0; i <= 60; i++) { const a = Math.PI / 2 + i / 60 * Math.PI; arc.push(new THREE.Vector3(-2.85 + Math.cos(a) * .93, .008, Math.sin(a) * .93)); }
-    this.scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(arc), lineMat));
-    for (const x of [-2.85, 2.55]) { const spot = new THREE.Mesh(new THREE.CircleGeometry(.023, 16), new THREE.MeshBasicMaterial({ color: '#c9cdb2', transparent: true, opacity: .4 })); spot.rotation.x = -Math.PI / 2; spot.position.set(x, .01, 0); this.scene.add(spot); }
-    const plaqueTexture = canvasTexture(1024, 128, ctx => { ctx.fillStyle = '#bd9d5f'; ctx.fillRect(0, 0, 1024, 128); ctx.fillStyle = '#392e1c'; ctx.textAlign = 'center'; ctx.font = '42px Georgia'; ctx.fillText('T H E   C O R N E R   P O C K E T', 512, 80); });
-    const plaque = new THREE.Mesh(new THREE.PlaneGeometry(1.28, .16), new THREE.MeshStandardMaterial({ map: plaqueTexture, metalness: .45, roughness: .4 })); plaque.rotation.x = -Math.PI / 2; plaque.position.set(2.17, .23, 3.32); this.scene.add(plaque);
-    // Chalk rests on the rail, away from the shot surface.
-    const chalk=this.box(.23,.18,.23,new THREE.MeshStandardMaterial({color:'#bfa975',roughness:.9}),-4.78,.32,3.27,.012);
-    const chalkTop=this.box(.19,.014,.19,new THREE.MeshStandardMaterial({color:'#457e88',roughness:1}),-4.78,.417,3.27,.006);
-    chalk.userData.tableControl='chalk';chalkTop.userData.tableControl='chalk';this.chalkControls=[chalk,chalkTop];
-    this.tableDetails=new TableDetails(this.scene,this.ballMaps);
-    this.tableOccluders=this.scene.children.slice(firstTableObject);
-    for(const object of this.tableOccluders)this.enableTableShadows(object);
-  }
-  private diamond(x: number, z: number, mat: THREE.Material) {
-    const diamond = new THREE.Mesh(new THREE.OctahedronGeometry(.046), mat); diamond.scale.set(.8, .18, 1.5); diamond.position.set(x, .232, z); this.scene.add(diamond);
+    const table=new TableModel(this.scene,this.surfaces,drawTableTextures(this.ballMaps));
+    this.tableOccluders=table.occluders;this.chalkControls=table.chalkControls;this.tableDetails=table.details;this.pocketDetails=table.pocketDetails;
   }
   private buildBalls() {
     const geo = new THREE.SphereGeometry(TABLE.radius, 64, 48);
@@ -294,7 +219,7 @@ export class PoolScene {
     addSection(.035, .038, .038, brass, -1.96);
     addSection(.035, .055, .055, brass, -3.22);
     addSection(.09, .056, .056, rubber, -3.29);
-    this.enableTableShadows(this.cue);
+    enableTableShadows(this.cue);
     this.cueContact.visible=false;this.scene.add(this.cue,this.cueContact);
   }
   private poseCue(x:number,z:number,preview:Pick<Shot,'angle'|'elevation'|'tipX'|'tipY'>,pullback:number,height=0) {
@@ -361,7 +286,7 @@ export class PoolScene {
         add(new THREE.IcosahedronGeometry(.067,1),0,0,0,new THREE.MeshPhysicalMaterial({color:'#e0c4ff',emissive:'#b684ff',emissiveIntensity:1.2,transparent:true,opacity:.65,roughness:.08}));
       }
       const halo=new THREE.Mesh(new THREE.RingGeometry(radius*.93,radius,64),new THREE.MeshBasicMaterial({color,transparent:true,opacity:.7,side:THREE.DoubleSide,depthWrite:false,blending:THREE.AdditiveBlending}));halo.rotation.x=-Math.PI/2;halo.position.y=.025;group.add(halo);
-      this.enableTableShadows(group);group.visible=pickup.available;this.pickups.set(pickup.id,{group,capsule,halo});
+      enableTableShadows(group);group.visible=pickup.available;this.pickups.set(pickup.id,{group,capsule,halo});
     }
   }
   private buildHazards(hazards: VisibleHazard[]) {
@@ -443,7 +368,7 @@ export class PoolScene {
           const cloud = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.smokeTexture, color: '#e1e8e5', transparent: true, opacity: .14, depthWrite: false })); cloud.scale.setScalar(radius * 1.15); group.add(cloud); visual.clouds.push(cloud);
         }
       }
-      this.enableTableShadows(group);this.hazards.set(hazard.id, visual);
+      enableTableShadows(group);this.hazards.set(hazard.id, visual);
     }
   }
   private buildObstacles(state: GameState) {
@@ -491,7 +416,7 @@ export class PoolScene {
       }
       const cracks = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(crackPoints), new THREE.LineBasicMaterial({ color: '#0c1416', transparent: true, opacity: .65 }));
       cracks.visible = false; group.add(cracks);
-      this.enableTableShadows(group);this.obstacles.set(obstacle.id, { group, body, pips, cracks, flash: 0, material: obstacle.material, hp: obstacle.hp });
+      enableTableShadows(group);this.obstacles.set(obstacle.id, { group, body, pips, cracks, flash: 0, material: obstacle.material, hp: obstacle.hp });
     }
   }
   private animateHazards() {
