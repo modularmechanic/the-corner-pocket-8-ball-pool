@@ -27,11 +27,9 @@ their original meshes. No props were removed. The two optimizations account for
 32.6% fewer draws and 62.7% fewer triangles in this fixture.
 
 `pub-before.json` preserves the baseline census and `pub-after.json` preserves the
-new one. The original source tree was copied before editing to
-`/tmp/coolpool-render-baseline`; while that copy exists, rerun the baseline with:
+new one. To compare another revision, run the census in a checkout of it. Rerun the current census with:
 
 ```sh
-node --import tsx scripts/benchmark-pub-batching.ts --baseline
 node --import tsx scripts/benchmark-pub-batching.ts
 node --import tsx --test tests/pub-batching.test.ts tests/pub-models.test.ts tests/pub-entertainment.test.ts
 ```

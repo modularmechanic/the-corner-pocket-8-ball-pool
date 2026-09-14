@@ -1,14 +1,13 @@
 /** CPU scene census using real geometry/GLTF parsing and inert image/canvas data.
  * Reports potential draw submissions with every wall visible; not GPU timings,
- * shader cost or a claim of hardware FPS. Run: node --import tsx scripts/benchmark-pub-batching.ts [--baseline] */
+ * shader cost or a claim of hardware FPS. Run: node --import tsx scripts/benchmark-pub-batching.ts */
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-const project=process.cwd(),baseline=process.argv.includes('--baseline');
-const root=baseline?'/tmp/coolpool-render-baseline':project;
+const project=process.cwd();
 const errors:string[]=[];
 const gradient={addColorStop(){}};
 function canvas() {
@@ -38,8 +37,8 @@ GLTFLoader.prototype.load=function(url,onLoad,_onProgress,onError) {
   })().catch(error=>{errors.push(`${url}: ${error.message}`);onError?.(error);});
 };
 
-const {buildPub}=await import(pathToFileURL(path.join(root,'src/render/pub.ts')).href);
-const {createPropInstaller}=await import(pathToFileURL(path.join(root,'src/render/asset-installer.ts')).href);
+const {buildPub}=await import(pathToFileURL(path.join(project,'src/render/pub.ts')).href);
+const {createPropInstaller}=await import(pathToFileURL(path.join(project,'src/render/asset-installer.ts')).href);
 const scene=new THREE.Scene(),installer=createPropInstaller();
 const started=performance.now(),pub=buildPub(scene,installer);
 const settled=await installer.settled();
@@ -56,6 +55,6 @@ scene.traverseVisible(object=>{
   contributors.push({name:`${owner}/${object.name||list[0].name||object.geometry.type}`,triangles:Math.round(groups.reduce((sum,group)=>sum+group.count/3,0)*instances),instances});
   for(const group of groups){const material=list[group.materialIndex??0];if(!material?.visible)continue;materials.add(material);const passes=material.transparent&&material.side===THREE.DoubleSide&&!material.forceSinglePass?2:1;drawCalls+=passes;if(material.transparent)transparentDrawCalls+=passes;triangles+=group.count/3*(object instanceof THREE.InstancedMesh?object.count:1);}
 });
-console.log(JSON.stringify({fixture:baseline?'baseline':'current',loadedProps:settled.loaded.length,failedProps:settled.failed,meshes,drawCalls,transparentDrawCalls,triangles:Math.round(triangles),materials:materials.size,geometries:geometries.size,constructionMs:Math.round(performance.now()-started),errors,topTriangleContributors:contributors.sort((a,b)=>b.triangles-a.triangles).slice(0,8),diagnostics:pub.diagnostics?.()},null,2));
+console.log(JSON.stringify({loadedProps:settled.loaded.length,failedProps:settled.failed,meshes,drawCalls,transparentDrawCalls,triangles:Math.round(triangles),materials:materials.size,geometries:geometries.size,constructionMs:Math.round(performance.now()-started),errors,topTriangleContributors:contributors.sort((a,b)=>b.triangles-a.triangles).slice(0,8),diagnostics:pub.diagnostics?.()},null,2));
 installer.dispose();pub.dispose();
 if(errors.length||settled.failed.length)process.exitCode=1;
