@@ -37,6 +37,7 @@ let unsubscribeMatch: (()=>void) | undefined;
 let scene: PoolScene;
 let state: GameState;
 let presentation: GameState;
+let stateMatch: Match | undefined;
 let roomPlayers = 0;
 let roomReady = false;
 let isConnecting = false;
@@ -100,7 +101,6 @@ function toast(message: string) { $('toast').textContent = message; $('toast').c
 function anyDialog() { return !!document.querySelector('dialog[open]'); }
 function closeDialog(id: string) { $<HTMLDialogElement>(id).close(); }
 function openDialog(id: string) { input.cancel(); if (!$<HTMLDialogElement>(id).open) $<HTMLDialogElement>(id).showModal(); }
-function canAct() { return input.canAct; }
 function seatName(player: number) {
   return seatLabel(state,{mode:match.mode,difficulty:profile.preferences.difficulty,room:match.room},player);
 }
@@ -124,14 +124,14 @@ function syncMatch() {
   if(room&&!roomReady&&match.ready)closeDialog('invite-dialog');
   roomPlayers=room?.players.length||0;roomReady=match.connected&&!!room&&room.players.every(player=>player.connected)&&room.players.length===room.capacity;
   if(match.state===state)return;
-  const previousState=state;state=match.state;
+  const previousState=state,watched=stateMatch===match?previousState:null;state=match.state;stateMatch=match;
   const changedRack=!!previousState&&previousState.seed!==state.seed;
   if(changedRack){
     if(match.mode==='online'&&!coinResetting&&hasStarted)sound.playMechanism('coin');
     resultKey='';input.newRack();closeDialog('result-dialog');
     profile.set('level',normalizeLevel(state.arcade?.level));
   }else if(previousState&&(previousState.shotCount!==state.shotCount||activeSeat(previousState)!==activeSeat(state)))input.cancel();
-  if(state.phase==='over'&&(changedRack||previousState?.phase!=='over')){profile.recordResult(state,match.mode,match.seat,playerName);renderRecords();}
+  if(profile.recordResult(watched,state,match.mode,match.seat,playerName))renderRecords();
 }
 function installMatch(next:Match) {
   unsubscribeMatch?.();match?.dispose();match=next;syncMatch();presentation=next.presentation();
@@ -157,9 +157,9 @@ function chooseCamera(overhead:boolean) {
   profile.set('camera',overhead?'overhead':'angled');
 }
 async function chalkCue() {
-  if (!canAct() || state.phase !== 'ready' || state.chalked[state.turn]) return;
+  if (!input.canAct || state.phase !== 'ready' || state.chalked[state.turn]) return;
   await sound.unlock().catch(() => undefined);
-  if (canAct() && state.phase === 'ready') await command({type:'chalk'},'Chalk is available before your shot.');
+  if (input.canAct && state.phase === 'ready') await command({type:'chalk'},'Chalk is available before your shot.');
 }
 async function insertCoin() {
   if (coinResetting || anyDialog()) return;
@@ -198,7 +198,7 @@ function equipPreferredCue() {
 }
 function updateUI() {
   if (!state) return;
-  const room = match.room, ready = match.ready, interactive = canAct();
+  const room = match.room, ready = match.ready, interactive = input.canAct;
   const table = deriveTablePresentation(state, { mode: match.mode, difficulty: profile.preferences.difficulty, room, connected: match.connected, ready, controlsTurn: match.actor.canAct, canInteract: interactive, aiThinking: match.thinking, shotStage: input.setup.stage, adjustment: input.setup.adjustment, resetting: coinResetting });
   hud.write({ state, table, mode: match.mode, seat: match.seat, room, ready, canAct: interactive, canAdvance: match.capabilities.canAdvance, inspecting: inspectingTable, setup: input.setup, layout: profile.preferences.layout });
   if ($<HTMLDialogElement>('cue-dialog').open) renderCueLocker();
@@ -215,13 +215,13 @@ function newGame(nextMode:Mode=match.mode,nextFormat:GameFormat=state?.format??m
   input.newRack(.65);updateUI();equipPreferredCue();
 }
 async function shoot(shot:Shot) {
-  if(!canAct()||state.phase!=='ready')return;
+  if(!input.canAct||state.phase!=='ready')return;
   await sound.unlock().catch(()=>undefined);
-  if(!canAct()||state.phase!=='ready')return;
+  if(!input.canAct||state.phase!=='ready')return;
   input.cancel();await command({type:'shoot',shot},'That shot could not be played.');
 }
 async function place(point:{x:number;z:number}) {
-  if(!canAct()||state.phase!=='ball-in-hand')return;
+  if(!input.canAct||state.phase!=='ball-in-hand')return;
   void sound.unlock();await command({type:'place',...point},'Place the cue ball on clear felt.');
 }
 async function enterRoom(create:boolean) {
@@ -234,7 +234,7 @@ async function enterRoom(create:boolean) {
   $<HTMLButtonElement>('create-room').disabled=true;$<HTMLButtonElement>('join-room').disabled=true;
   let candidate:RemoteMatch|undefined;
   try{
-    const { RemoteMatch } = await import('./match/remote');
+    const { RemoteMatch } = await import('./match/remote').catch(()=>{throw new Error('Online play could not load. Check your connection and try again.');});
     if(intent!==sessionIntent)return;
     candidate=new RemoteMatch({identity:{token:identity,name},url:roomServer.url});
     const result=create?await candidate.create({layout:profile.preferences.layout,level:profile.preferences.level,format:$<HTMLSelectElement>('room-format').value==='doubles'?'doubles':'singles'}):await candidate.join(code);
@@ -388,13 +388,13 @@ function setupInput() {
   const chooseTip=(event:PointerEvent)=>{
     const rect=tip.getBoundingClientRect();input.setTip((event.clientX-rect.left)/rect.width*2-1,1-(event.clientY-rect.top)/rect.height*2);
   };
-  tip.onpointerdown=event=>{if(!canAct()||event.button!==0)return;tipPointer=event.pointerId;tip.setPointerCapture(event.pointerId);chooseTip(event);};
+  tip.onpointerdown=event=>{if(!input.canAct||event.button!==0)return;tipPointer=event.pointerId;tip.setPointerCapture(event.pointerId);chooseTip(event);};
   tip.onpointermove=event=>{if(tipPointer===event.pointerId)chooseTip(event);};
   tip.onpointerup=event=>{if(tipPointer===event.pointerId){chooseTip(event);tipPointer=null;tip.releasePointerCapture(event.pointerId);}};
   tip.onpointercancel=()=>{tipPointer=null;};
   tip.onkeydown=event=>{
     const deltas:Record<string,[number,number]>={ArrowLeft:[-.08,0],ArrowRight:[.08,0],ArrowUp:[0,.08],ArrowDown:[0,-.08]};
-    if(!deltas[event.key]||!canAct())return;event.preventDefault();event.stopPropagation();
+    if(!deltas[event.key]||!input.canAct)return;event.preventDefault();event.stopPropagation();
     const[x,y]=deltas[event.key];input.setTip(input.setup.tipX+x,input.setup.tipY+y);
   };
   window.addEventListener('blur',()=>{input.cancel();stopAI();});
@@ -417,7 +417,7 @@ function frame(now:number) {
   scene.aiPreview=match.aiPreview;scene.setAIControlled(match.actor.controller==='ai');
   const events=match.drainEvents();if(!document.hidden&&elapsed<=.5)for(const event of events)playEvent(event);
   input.frame(dt);
-  scene.update(presentation,dt,canAct());
+  scene.update(presentation,dt,input.canAct);
   sound.updateRolling(document.hidden?[]:presentation.balls);updateUI();requestAnimationFrame(frame);
 }
 async function boot() {

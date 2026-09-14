@@ -55,7 +55,6 @@ export class PlayerProfile {
     };
   }
   get preferences(): Readonly<Preferences> { return this.prefs; }
-  get unlockedLevel() { return this.unlocked; }
   /** Levels above the unlocked level cannot be chosen. */
   set<K extends keyof Preferences>(key: K, value: Preferences[K]) {
     const next = { ...this.prefs, [key]: value };
@@ -76,9 +75,12 @@ export class PlayerProfile {
       return { value: String(level), label: `${level} · ${LEVEL_NAMES[index]}${locked ? ' · Locked' : ''}`, disabled: locked };
     });
   }
-  /** Reports a finished rack once: unlocks the next level when the rack may advance and saves each local team's score. */
-  recordResult(state: GameState, mode: Mode, seat: number, teamName: (team: number) => string) {
-    if (state.phase !== 'over' || !state.arcade) return;
+  /**
+   * Reports a rack this seat watched end: `previous` is the same rack before it finished, as seen by this client.
+   * Unlocks the next level when the rack may advance and saves each local team's score. Returns whether it recorded.
+   */
+  recordResult(previous: GameState | null, state: GameState, mode: Mode, seat: number, teamName: (team: number) => string): boolean {
+    if (!previous || previous.seed !== state.seed || previous.phase === 'over' || state.phase !== 'over' || !state.arcade) return false;
     if (canAdvance(state, mode)) { this.unlocked = Math.max(this.unlocked, normalizeLevel(state.arcade.level + 1)); this.write('unlocked-level', String(this.unlocked)); }
     const records = this.records;
     for (const team of resultTeams(mode, seat)) {
@@ -88,6 +90,7 @@ export class PlayerProfile {
     }
     records.sort((a, b) => b.score - a.score || Number(b.win) - Number(a.win) || b.date.localeCompare(a.date));
     this.write('records', JSON.stringify(records.slice(0, MAX_RECORDS)));
+    return true;
   }
   private read(key: string) { try { return this.storage?.getItem(PREFIX + key) ?? null; } catch { return null; } }
   private write(key: string, value: string) { try { this.storage?.setItem(PREFIX + key, value); } catch { /* Playing does not require storage. */ } }
