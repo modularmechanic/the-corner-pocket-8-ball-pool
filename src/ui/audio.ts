@@ -34,7 +34,7 @@ export class TableAudio {
     for(let c=0;c<2;c++){const data=impulse.getChannelData(c);let filtered=0;for(let i=0;i<data.length;i++){const t=i/ctx.sampleRate;filtered=filtered*.64+(Math.random()*2-1)*.36;data[i]=filtered*Math.exp(-t*15)*.11*(t>.022?1:0);}for(const [t,g] of [[.023,.18],[.049,.12],[.083,.08]])data[Math.floor((t+c*.003)*ctx.sampleRate)]+=g;}
     room.buffer=impulse;this.roomSend.connect(room);room.connect(this.master);
     this.loading=Promise.all(Object.values(FILES).flat().map(async name=>{
-      const response=await fetch(`/audio/${name}.wav`);if(!response.ok)throw new Error(`Audio unavailable: ${name}`);
+      const response=await fetch(`audio/${name}.wav`);if(!response.ok)throw new Error(`Audio unavailable: ${name}`);
       this.buffers.set(name,await ctx.decodeAudioData(await response.arrayBuffer()));
     })).then(()=>{this.createRollingBed();}).catch(error=>{ console.warn('Table audio could not load:',error); });
     return this.loading;
