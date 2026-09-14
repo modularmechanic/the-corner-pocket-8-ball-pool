@@ -1,13 +1,19 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { canvasTexture } from './materials';
 import { PUB_LAYOUT, pubFrontZ, pubSideX } from './pub-layout';
 import { disposePubObject, instancePubModel, type PubPlacement } from './pub-models';
+import type { PropInstaller } from './asset-installer';
 
 export const PUB_DRINK_ASSETS = {
   bottles: ['bottle-copperfin','bottle-northstar','bottle-juniper','bottle-redharbor','bottle-orchard'],
   glasses: ['drink-martini','drink-citrus','drink-whisky','drink-redwine','drink-cola'],
 } as const;
+/** Prop paths relative to public/: shelf-sized bottle meshes, counter hero bottles and glassware. */
+export const PUB_DRINK_PROPS = {
+  shelfBottles: PUB_DRINK_ASSETS.bottles.map(name=>`models/pub/${name}-lod.glb`),
+  counterBottles: PUB_DRINK_ASSETS.bottles.map(name=>`models/pub/${name}.glb`),
+  glasses: PUB_DRINK_ASSETS.glasses.map(name=>`models/pub/${name}.glb`),
+};
 
 export interface PubDrinksLayout {
   shelfParent?: THREE.Group;
@@ -44,13 +50,12 @@ function shelfPositions(row:number):number[] {
 }
 
 /** Each authored material is instanced across its placements, including the glassware. */
-export function buildPubDrinks(room:THREE.Group,renderer:THREE.WebGLRenderer,options:Partial<PubDrinksLayout>={}) {
+export function buildPubDrinks(room:THREE.Group,installer:PropInstaller,options:Partial<PubDrinksLayout>={}) {
   const layout={...PUB_DRINK_LAYOUT,...options};
   const tabletopAssets=new THREE.Group(),shelfAssets=new THREE.Group();
   tabletopAssets.name='pub-cocktails-and-counter-bottles';shelfAssets.name='pub-fictional-spirit-shelves';
   room.add(tabletopAssets);(layout.shelfParent||room).add(shelfAssets);
-  let disposed=false,loaded=0;
-  const loader=new GLTFLoader();
+  let loaded=0;
   const bottleShelf:PubPlacement[][]=PUB_DRINK_ASSETS.bottles.map(()=>[]);
   const bottleCounter:PubPlacement[][]=PUB_DRINK_ASSETS.bottles.map(()=>[]);
   const cocktails:PubPlacement[][]=PUB_DRINK_ASSETS.glasses.map(()=>[]);
@@ -72,7 +77,7 @@ export function buildPubDrinks(room:THREE.Group,renderer:THREE.WebGLRenderer,opt
   const bottleColors=['#855326','#b6c5c6','#477343','#935325','#304c35'];
   const bottleLabels=['COPPERFIN','NORTHSTAR','JUNIPER & CO','RED HARBOR','ORCHARD'];
   const bottleTypes=['AGED RUM','VODKA','BOTANICAL GIN','WHISKY','RED RESERVE'];
-  function fallbackBottle(kind:number) {
+  function placeholderBottle(kind:number) {
     const group=new THREE.Group();
     const body=new THREE.Mesh(new THREE.LatheGeometry([
       new THREE.Vector2(0,0),new THREE.Vector2(.11,0),new THREE.Vector2(.135,.035),
@@ -91,7 +96,7 @@ export function buildPubDrinks(room:THREE.Group,renderer:THREE.WebGLRenderer,opt
     const cap=new THREE.Mesh(new THREE.CylinderGeometry(.047,.047,.055,16),new THREE.MeshStandardMaterial({color:kind===1?'#bdc6c8':'#b28d4d',metalness:.65,roughness:.31}));
     cap.position.y=.8175;group.add(body,paper,cap);return group;
   }
-  function fallbackDrink(kind:number) {
+  function placeholderDrink(kind:number) {
     const group=new THREE.Group(),stemmed=kind===0||kind===3;
     const glass=new THREE.MeshPhysicalMaterial({name:'Drink Glass Fallback',color:'#e0eeeb',transparent:true,opacity:.2,depthWrite:false,roughness:.035,clearcoat:.85,clearcoatRoughness:.025,envMapIntensity:.42,ior:1.45});
     const base=new THREE.Mesh(new THREE.CylinderGeometry(.15,.15,.02,24),new THREE.MeshStandardMaterial({color:'#98754a',roughness:.95}));base.position.y=.01;group.add(base);
@@ -106,69 +111,63 @@ export function buildPubDrinks(room:THREE.Group,renderer:THREE.WebGLRenderer,opt
     }
     return group;
   }
-  const install=(name:string,groups:{placements:PubPlacement[];parent:THREE.Group}[],fallback:THREE.Group)=>{
-    const visible=groups.filter(group=>group.placements.length>0);
-    if(!visible.length){disposePubObject(fallback);return;}
-    const placeholders=visible.map(({placements,parent})=>{
-      const model=instancePubModel(fallback,placements);model.name=`${name}-fallback`;parent.add(model);return model;
-    });
-    loader.load(`/models/pub/${name}.glb`,gltf=>{
-      if(disposed){disposePubObject(gltf.scene);return;}
-      gltf.scene.traverse(object=>{
-        if(!(object instanceof THREE.Mesh))return;
-        for(const material of Array.isArray(object.material)?object.material:[object.material]) {
-          if(material instanceof THREE.MeshStandardMaterial) {
-            if(material.name.startsWith('Drink Glass')) {
-              const clear=material.name.includes('Clear');
-              material.transparent=true;material.opacity=clear?.2:.24;
-              material.depthWrite=false;material.roughness=.035;material.metalness=0;
-              // The modeled vessels already have inner walls and rims. Rendering
-              // both sides of every wall doubles their haze and dulls the liquid.
-              material.side=THREE.FrontSide;
-              if(clear)material.color.set('#e0eeeb');
-              if(material instanceof THREE.MeshPhysicalMaterial) {
-                material.clearcoat=.85;material.clearcoatRoughness=.025;material.ior=1.45;
-                // Alpha keeps the visible modeled liquid intact and avoids a
-                // scene-color refraction pass for every shelf glass material.
-                material.transmission=0;
-              }
-            } else if(material.name.startsWith('Drink Ice')) {
-              material.transparent=true;material.opacity=.56;material.depthWrite=false;material.roughness=.12;
-            } else if(material.name.startsWith('Drink Liquid')) {
-              material.transparent=false;material.opacity=1;material.depthWrite=true;material.roughness=.18;material.metalness=0;
-            }
-            material.envMapIntensity=material.name.startsWith('Drink Glass')?.42:.65;
+  /** Glass, ice and liquid quirks, once per file on the shared source. */
+  const prepareDrink=(source:THREE.Object3D)=>source.traverse(object=>{
+    if(!(object instanceof THREE.Mesh))return;
+    for(const material of Array.isArray(object.material)?object.material:[object.material]) {
+      if(material instanceof THREE.MeshStandardMaterial) {
+        if(material.name.startsWith('Drink Glass')) {
+          const clear=material.name.includes('Clear');
+          material.transparent=true;material.opacity=clear?.2:.24;
+          material.depthWrite=false;material.roughness=.035;material.metalness=0;
+          // The modeled vessels already have inner walls and rims. Rendering
+          // both sides of every wall doubles their haze and dulls the liquid.
+          material.side=THREE.FrontSide;
+          if(clear)material.color.set('#e0eeeb');
+          if(material instanceof THREE.MeshPhysicalMaterial) {
+            material.clearcoat=.85;material.clearcoatRoughness=.025;material.ior=1.45;
+            // Alpha keeps the visible modeled liquid intact and avoids a
+            // scene-color refraction pass for every shelf glass material.
+            material.transmission=0;
           }
-          for(const value of Object.values(material))if(value instanceof THREE.Texture)value.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());
+        } else if(material.name.startsWith('Drink Ice')) {
+          material.transparent=true;material.opacity=.56;material.depthWrite=false;material.roughness=.12;
+        } else if(material.name.startsWith('Drink Liquid')) {
+          material.transparent=false;material.opacity=1;material.depthWrite=true;material.roughness=.18;material.metalness=0;
+        }
+        material.envMapIntensity=material.name.startsWith('Drink Glass')?.42:.65;
+      }
+    }
+  });
+  /** One placeholder source may stand in for both the shelf and the counter copy of a bottle;
+   * the installer frees its shared resources only once no placeholder still draws them. */
+  const install=(path:string,placements:PubPlacement[],parent:THREE.Group,source:THREE.Group)=>{
+    if(!placements.length)return;
+    const placeholder=instancePubModel(source,placements);placeholder.name=`${path}-placeholder`;parent.add(placeholder);
+    installer.model(path,{placeholder,prepare:prepareDrink,use:drink=>{
+      const model=instancePubModel(drink,placements);model.name=path;
+      model.traverse(object=>{
+        if(!(object instanceof THREE.Mesh))return;
+        const materials=Array.isArray(object.material)?object.material:[object.material];
+        if(materials.every(material=>material.name.startsWith('Drink Glass')||material.name.startsWith('Drink Ice'))) {
+          object.castShadow=false;
+          object.renderOrder=materials.some(material=>material.name.startsWith('Drink Glass'))?3:2;
         }
       });
-      visible.forEach(({placements,parent},i)=>{
-        const model=instancePubModel(gltf.scene,placements);model.name=`pub-${name}`;
-        model.traverse(object=>{
-          if(!(object instanceof THREE.Mesh))return;
-          const materials=Array.isArray(object.material)?object.material:[object.material];
-          if(materials.every(material=>material.name.startsWith('Drink Glass')||material.name.startsWith('Drink Ice'))) {
-            object.castShadow=false;
-            object.renderOrder=materials.some(material=>material.name.startsWith('Drink Glass'))?3:2;
-          }
-        });
-        parent.add(model);placeholders[i].visible=false;
-      });
-      loaded++;
-    },undefined,()=>{/* Authored silhouettes keep their complete fallback until a GLB is available. */});
+      parent.add(model);loaded++;
+    }});
   };
-  PUB_DRINK_ASSETS.bottles.forEach((name,i)=>{
-    const fallback=fallbackBottle(i);
-    install(`${name}-lod`,[{placements:bottleShelf[i],parent:shelfAssets}],fallback);
+  PUB_DRINK_ASSETS.bottles.forEach((_,i)=>{
+    const placeholder=placeholderBottle(i);
+    install(PUB_DRINK_PROPS.shelfBottles[i],bottleShelf[i],shelfAssets,placeholder);
     // Counter bottles remain the original hero meshes for close pub inspection.
-    install(name,[{placements:bottleCounter[i],parent:tabletopAssets}],fallback);
+    install(PUB_DRINK_PROPS.counterBottles[i],bottleCounter[i],tabletopAssets,placeholder);
   });
-  PUB_DRINK_ASSETS.glasses.forEach((name,i)=>install(name,[{placements:cocktails[i],parent:tabletopAssets}],fallbackDrink(i)));
+  PUB_DRINK_ASSETS.glasses.forEach((_,i)=>install(PUB_DRINK_PROPS.glasses[i],cocktails[i],tabletopAssets,placeholderDrink(i)));
   return {
     update(_time:number){/* Glassware and liquid remain still on their supporting surfaces. */},
     diagnostics:()=>({loadedModels:loaded,addedBottles:bottleShelf.flat().length+bottleCounter.flat().length,cocktails:cocktails.flat().length}),
     dispose(){
-      disposed=true;
       // Dispose the two ownership branches together so shared instanced resources
       // from a bottle model on both shelves and counter are released once.
       const release=new THREE.Group();release.add(shelfAssets,tabletopAssets);disposePubObject(release);release.clear();

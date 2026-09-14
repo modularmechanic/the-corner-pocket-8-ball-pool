@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { canvasTexture, woodTexture } from './materials';
 import { buildPubInterior, updateBilliardFixture } from './pub-interior';
@@ -9,56 +8,49 @@ import { buildPubGallery } from './pub-gallery';
 import { buildPubDrinks } from './pub-drinks';
 import { buildPubEntertainment } from './pub-entertainment';
 import { PUB_LAYOUT, pubBackZ, pubFrontZ, pubSideX } from './pub-layout';
-import { disposePubObject, instancePubModel, type PubPlacement } from './pub-models';
+import { disposePubObject, type PubPlacement } from './pub-models';
 import { batchPubStatic, pubBatchDiagnostics } from './pub-batching';
 import { buildPubClubDecor } from './pub-club-decor';
+import type { PropInstaller } from './asset-installer';
+import { requestWoodScan } from './table-surfaces';
 
 const FLOOR = -3.6;
+/** Prop paths relative to public/. The wood scans are shared with the table (WOOD_SCAN_MAPS). */
+export const PUB_PROPS = {
+  lamp:'models/pub/heritage-lamp.glb',jukebox:'models/pub/heritage-jukebox.glb',wallPanel:'models/pub/wall-panel.glb',
+  bench:'models/pub/booth-bench.glb',table:'models/pub/oak-pub-table.glb',chair:'models/pub/pub-chair.glb',pint:'models/pub/pub-pint.glb',
+  taps:'models/pub/brass-beer-taps.glb',stool:'models/stool/metal_stool_01.gltf',
+  bottles:['models/pub/liquor-amber-lod.glb','models/pub/liquor-green-lod.glb','models/pub/liquor-square-lod.glb','models/pub/liquor-decanter-lod.glb'],
+  stone:[['map','textures/pub/stone-color.webp'],['normalMap','textures/pub/stone-normal.webp'],['roughnessMap','textures/pub/stone-roughness.webp']],
+} as const;
+/** Material quirks of the bar's authored models, applied once per file. */
+const preparePubModel=(path:string)=>(source:THREE.Object3D)=>source.traverse(object=>{
+  if(!(object instanceof THREE.Mesh))return;
+  if(path===PUB_PROPS.jukebox){
+    const softenGlass=(material:THREE.Material)=>{
+      if(!material.name.startsWith('Optical glass'))return material;
+      const glass=new THREE.MeshPhysicalMaterial({name:material.name,color:'#c4d4c8',transparent:true,opacity:.035,roughness:.14,metalness:0,clearcoat:0,specularIntensity:.08,ior:1.15,depthWrite:false,side:THREE.FrontSide});
+      material.dispose();return glass;
+    };
+    object.material=Array.isArray(object.material)?object.material.map(softenGlass):softenGlass(object.material);
+  }
+  for(const material of Array.isArray(object.material)?object.material:[object.material]){
+    if(!(material instanceof THREE.MeshStandardMaterial))continue;
+    if(path!==PUB_PROPS.jukebox&&material.name.startsWith('Optical glass')){material.opacity=.07;material.roughness=.03;material.metalness=0;material.depthWrite=false;}
+    if(path===PUB_PROPS.jukebox&&material.name==='Black enamel'){material.roughness=.58;material.metalness=.06;material.envMapIntensity=.35;}
+    if(path===PUB_PROPS.wallPanel&&material.name==='Warm plaster'){material.color.set('#d8be86');material.roughness=.98;}
+  }
+});
 RectAreaLightUniformsLib.init();
-export function buildPub(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
+/** Dispose `installer` before the returned room, so no prop arrives into a disposed room. */
+export function buildPub(scene: THREE.Scene, installer: PropInstaller) {
   const room = new THREE.Group(); scene.add(room);
   const backBar=new THREE.Group(),backWallFittings=new THREE.Group();backBar.name='pub-rear-bar';backBar.position.z=PUB_LAYOUT.backShift;backBar.add(backWallFittings);room.add(backBar);
   let propsParent=room;
   const glows: THREE.MeshStandardMaterial[] = [];
-  let disposed = false;
-  const modelLoader=new GLTFLoader();
-  const installModel=(name:string,placements:PubPlacement[],fallbacks:THREE.Object3D[]=[],parent:THREE.Group=propsParent)=>{
-    modelLoader.load(`/models/pub/${name}.glb`,gltf=>{
-      if(disposed){disposePubObject(gltf.scene);return;}
-      gltf.scene.traverse(object=>{
-        if(!(object instanceof THREE.Mesh))return;
-        if(name==='heritage-jukebox'){
-          const softenGlass=(material:THREE.Material)=>{
-            if(!material.name.startsWith('Optical glass'))return material;
-            const glass=new THREE.MeshPhysicalMaterial({name:material.name,color:'#c4d4c8',transparent:true,opacity:.035,roughness:.14,metalness:0,clearcoat:0,specularIntensity:.08,ior:1.15,depthWrite:false,side:THREE.FrontSide});
-            material.dispose();return glass;
-          };
-          object.material=Array.isArray(object.material)?object.material.map(softenGlass):softenGlass(object.material);
-        }
-        for(const material of Array.isArray(object.material)?object.material:[object.material]){
-          if(material.transparent)material.depthWrite=false;
-          if(name!=='heritage-jukebox'&&material instanceof THREE.MeshStandardMaterial&&material.name.startsWith('Optical glass')){
-            material.opacity=.07;material.roughness=.03;material.metalness=0;material.depthWrite=false;
-          }
-          if(name==='heritage-jukebox'&&material instanceof THREE.MeshStandardMaterial&&material.name==='Black enamel'){
-            material.roughness=.58;material.metalness=.06;material.envMapIntensity=.35;
-          }
-          if(name==='wall-panel'&&material instanceof THREE.MeshStandardMaterial&&material.name==='Warm plaster'){
-            material.color.set('#d8be86');material.roughness=.98;
-          }
-          for(const value of Object.values(material))if(value instanceof THREE.Texture)value.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());
-        }
-      });
-      const model=instancePubModel(gltf.scene,placements);model.name=`pub-${name}`;
-      parent.add(model);
-      for(const fallback of fallbacks)fallback.visible=false;
-    },undefined,()=>{/* The complete procedural prop stays visible if its GLB is unavailable. */});
-  };
-  const loader = new THREE.TextureLoader();
-  const woodColor = loader.load('/wood-color.jpg'), woodNormal = loader.load('/wood-normal.jpg'), woodRoughness = loader.load('/wood-roughness.jpg');
-  woodColor.colorSpace = THREE.SRGBColorSpace;
-  for (const map of [woodColor, woodNormal, woodRoughness]) { map.wrapS = map.wrapT = THREE.RepeatWrapping; map.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy()); }
-  const walnut = new THREE.MeshStandardMaterial({ map:woodColor,normalMap:woodNormal,normalScale:new THREE.Vector2(.24,.24),roughnessMap:woodRoughness,color:'#b39172',roughness:.68 });
+  const installModel=(path:string,placements:PubPlacement[],placeholder:THREE.Object3D[]=[],parent:THREE.Group=propsParent)=>
+    installer.model(path,{parent,placements,placeholder,prepare:preparePubModel(path)});
+  const walnut = new THREE.MeshStandardMaterial({ normalScale:new THREE.Vector2(.24,.24),color:'#b39172',roughness:.68 });
   const brass = new THREE.MeshStandardMaterial({color:'#bc9556',metalness:.78,roughness:.32});
   const blackMetal = new THREE.MeshStandardMaterial({color:'#232b29',metalness:.7,roughness:.43});
   const leather = new THREE.MeshPhysicalMaterial({color:'#4e2025',roughness:.57,clearcoat:.18});
@@ -72,21 +64,25 @@ export function buildPub(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
   const neon=(color:string,intensity=2)=>{
     const material=new THREE.MeshStandardMaterial({color,emissive:color,emissiveIntensity:intensity,roughness:.3});glows.push(material);return material;
   };
-  const floor=loader.load('/textures/pub/stone-color.webp'),floorNormal=loader.load('/textures/pub/stone-normal.webp'),floorRoughness=loader.load('/textures/pub/stone-roughness.webp');floor.colorSpace=THREE.SRGBColorSpace;
-  for(const texture of [floor,floorNormal,floorRoughness]){texture.wrapS=texture.wrapT=THREE.RepeatWrapping;texture.repeat.set(4.5*PUB_LAYOUT.expansion,4*PUB_LAYOUT.expansion);texture.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());}
-  const floorMesh=new THREE.Mesh(new THREE.PlaneGeometry(38*PUB_LAYOUT.expansion,34*PUB_LAYOUT.expansion),new THREE.MeshStandardMaterial({map:floor,normalMap:floorNormal,normalScale:new THREE.Vector2(.35,.35),roughnessMap:floorRoughness,color:'#d6c7a9',roughness:.87,metalness:.01}));floorMesh.rotation.x=-Math.PI/2;floorMesh.position.set(0,FLOOR,-2*PUB_LAYOUT.expansion);floorMesh.receiveShadow=true;room.add(floorMesh);
+  const floor=new THREE.MeshStandardMaterial({normalScale:new THREE.Vector2(.35,.35),color:'#d6c7a9',roughness:.87,metalness:.01});
+  for(const [slot,path] of PUB_PROPS.stone)installer.texture(path,{
+    prepare:texture=>{if(slot==='map')texture.colorSpace=THREE.SRGBColorSpace;texture.wrapS=texture.wrapT=THREE.RepeatWrapping;texture.repeat.set(4.5*PUB_LAYOUT.expansion,4*PUB_LAYOUT.expansion);},
+    use:texture=>{floor[slot]=texture;floor.needsUpdate=true;},
+  });
+  const floorMesh=new THREE.Mesh(new THREE.PlaneGeometry(38*PUB_LAYOUT.expansion,34*PUB_LAYOUT.expansion),floor);floorMesh.rotation.x=-Math.PI/2;floorMesh.position.set(0,FLOOR,-2*PUB_LAYOUT.expansion);floorMesh.receiveShadow=true;room.add(floorMesh);
   const plaster=canvasTexture(256,256,ctx=>{ctx.fillStyle='#ddcda9';ctx.fillRect(0,0,256,256);for(let i=0;i<18000;i++){ctx.fillStyle=`rgba(16,20,13,${Math.random()*.045})`;ctx.fillRect(Math.random()*256,Math.random()*256,2,2);}});
   const wall=new THREE.MeshStandardMaterial({map:plaster,color:'#fff2dc',roughness:.98});
-  const interior=buildPubInterior(room,{wood:walnut,brass,wall,metal:blackMetal});
+  const interior=buildPubInterior(room,installer,{wood:walnut,brass,wall,metal:blackMetal});
   const billiardFixture=new THREE.Group();billiardFixture.name='billiard-light-fixture';room.add(billiardFixture);
-  installModel('heritage-lamp',[{x:0,y:3.75,z:0,height:2.5}],[],billiardFixture);
+  installModel(PUB_PROPS.lamp,[{x:0,y:3.75,z:0,height:2.5}],[],billiardFixture);
   propsParent=backBar;
   box(PUB_LAYOUT.bounds.right*2,2.15,.28,walnut,0,FLOOR+1.075,-11.22,.01);
   for(let x=PUB_LAYOUT.bounds.left+.8;x<=PUB_LAYOUT.bounds.right-.8;x+=1.4){box(.075,2.1,.07,brass,x,FLOOR+1.07,-11.045,.01);box(1.15,.055,.035,brass,x+.65,FLOOR+.22,-11.02,.01);}
   box(PUB_LAYOUT.bounds.right*2-.1,.14,.4,walnut,0,FLOOR+2.18,-11.07,.025);
   // Substantial raised bar, inset panels and a polished overhanging countertop.
   box(17.8,3.72,1.32,walnut,0,FLOOR+1.86,-8.1,.08);
-  const countertop=new THREE.MeshPhysicalMaterial({color:'#b79a78',map:woodColor,normalMap:woodNormal,normalScale:new THREE.Vector2(.13,.13),roughnessMap:woodRoughness,roughness:.36,clearcoat:.85,clearcoatRoughness:.17});
+  const countertop=new THREE.MeshPhysicalMaterial({color:'#b79a78',normalScale:new THREE.Vector2(.13,.13),roughness:.36,clearcoat:.85,clearcoatRoughness:.17});
+  requestWoodScan(installer,(slot,scan)=>{for(const material of [walnut,countertop]){material[slot]=scan;material.needsUpdate=true;}});
   box(18.25,.19,1.72,countertop,0,.23,-8.1,.075);
   const insetWood=new THREE.MeshStandardMaterial({color:'#39271d',roughness:.5});
   for(let x=-7.5;x<=7.5;x+=2.5){box(2.16,2.4,.025,insetWood,x,-1.48,-7.422,.05);for(const sx of [-1,1])box(.025,2.25,.03,brass,x+sx*1.02,-1.48,-7.398,.005);for(const sy of [-1,1])box(2.05,.025,.03,brass,x,-1.48+sy*1.12,-7.398,.005);}
@@ -106,11 +102,10 @@ export function buildPub(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
   tableApronBounce.position.set(0,-.4,6.6);tableApronBounce.lookAt(0,-2.3,0);room.add(tableApronBounce);
   const bottleColors=['#315e39','#654128','#385c5d','#75562c','#244d37','#6d2930'];
   const bottleGeometry=new THREE.LatheGeometry([new THREE.Vector2(0,0),new THREE.Vector2(.105,0),new THREE.Vector2(.13,.045),new THREE.Vector2(.13,.45),new THREE.Vector2(.09,.53),new THREE.Vector2(.047,.57),new THREE.Vector2(.047,.78),new THREE.Vector2(0,.79)],20);
-  const bottleNames=['liquor-amber','liquor-green','liquor-square','liquor-decanter'];
-  const bottlePlacements:PubPlacement[][]=bottleNames.map(()=>[]),bottleFallbacks:THREE.Group[]=bottleNames.map(()=>{const group=new THREE.Group();backBar.add(group);return group;});
+  const bottlePlacements:PubPlacement[][]=PUB_PROPS.bottles.map(()=>[]),bottleFallbacks:THREE.Group[]=PUB_PROPS.bottles.map(()=>{const group=new THREE.Group();backWallFittings.add(group);return group;});
   for(let row=0;row<3;row++)for(let i=0;i<24;i++){
     const cluster=Math.floor(i/4),within=i%4;
-    const x=-7.6+cluster*2.8+within*.32+((row+within)%3)*.04,y=shelfLevels[row]+.055,kind=(i+row*3)%bottleNames.length;
+    const x=-7.6+cluster*2.8+within*.32+((row+within)%3)*.04,y=shelfLevels[row]+.055,kind=(i+row*3)%PUB_PROPS.bottles.length;
     const bottle=new THREE.Mesh(bottleGeometry,new THREE.MeshPhysicalMaterial({color:bottleColors[(i+row*3)%bottleColors.length],roughness:.15,clearcoat:1,metalness:.08}));bottle.position.set(x,y,-10.56);bottle.scale.y=.8+((i*7+row)%5)*.12;bottle.castShadow=true;bottleFallbacks[kind].add(bottle);
     const label=new THREE.Mesh(new THREE.CylinderGeometry(.132,.132,.18,20),new THREE.MeshStandardMaterial({color:(i+row)%3?'#ccbc91':'#392b24',roughness:.9}));label.position.set(x,y+.29*bottle.scale.y,-10.56);bottleFallbacks[kind].add(label);
     bottlePlacements[kind].push({x,y,z:-10.56,height:.79*bottle.scale.y,rotation:((i*11+row)%7-3)*.07});
@@ -118,7 +113,7 @@ export function buildPub(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
   for(let i=0;i<8;i++){const kind=i%4,x=(i<4?-6.3:5.6)+(i%4)*.28;const bottle=new THREE.Mesh(bottleGeometry,new THREE.MeshPhysicalMaterial({color:bottleColors[kind],roughness:.14,clearcoat:1}));bottle.position.set(x,.325,-8.66);bottle.scale.y=.83+(i%3)*.1;bottleFallbacks[kind].add(bottle);bottlePlacements[kind].push({x,y:.325,z:-8.66,height:.79*bottle.scale.y,rotation:(i%3-.5)*.16});}
   // Shelf-sized bottles keep their authored labels and silhouettes; embossed
   // lettering and tiny radial bevels use the separately authored shelf meshes.
-  bottleNames.forEach((name,i)=>installModel(`${name}-lod`,bottlePlacements[i],[bottleFallbacks[i]],backWallFittings));
+  PUB_PROPS.bottles.forEach((path,i)=>installModel(path,bottlePlacements[i],[bottleFallbacks[i]],backWallFittings));
   const signTexture=canvasTexture(2048,384,ctx=>{ctx.fillStyle='#12251e';ctx.fillRect(0,0,2048,384);ctx.strokeStyle='#ad8e52';ctx.lineWidth=8;ctx.strokeRect(15,15,2018,354);ctx.fillStyle='#ead7a8';ctx.textAlign='center';ctx.font='96px Georgia';ctx.fillText('THE CORNER POCKET',1024,184);ctx.font='30px Georgia';ctx.fillStyle='#bd9c60';ctx.fillText('B I L L I A R D S   ·   B E E R   ·   G O O D   C O M P A N Y',1024,272);});
   const sign=new THREE.Mesh(new THREE.PlaneGeometry(9.5,1.78),new THREE.MeshStandardMaterial({map:signTexture,roughness:.7,emissive:'#dab578',emissiveIntensity:.15}));sign.position.set(0,4.9,-11.03);backBar.add(sign);
   for(const x of [-6.6,6.6]){
@@ -128,12 +123,7 @@ export function buildPub(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
   const stoolPositions=[-5.8,-2.9,0,2.9,5.8].map(x=>({x,z:-5.94}));
   const fallbackStools=new THREE.Group();backBar.add(fallbackStools);
   for(const {x,z}of stoolPositions){cylinder(.53,.5,.19,leather,x,FLOOR+2.81,z,fallbackStools);cylinder(.09,.15,2.58,blackMetal,x,FLOOR+1.31,z,fallbackStools);cylinder(.54,.61,.08,blackMetal,x,FLOOR+.06,z,fallbackStools);const rest=new THREE.Mesh(new THREE.TorusGeometry(.38,.035,8,36),brass);rest.rotation.x=Math.PI/2;rest.position.set(x,FLOOR+.95,z);fallbackStools.add(rest);}
-  new GLTFLoader().load('/models/stool/metal_stool_01.gltf',gltf=>{
-    if(disposed){disposePubObject(gltf.scene);return;}
-    const model=instancePubModel(gltf.scene,stoolPositions.map(({x,z})=>({x,y:FLOOR,z,height:2.99,rotation:Math.PI})));
-    model.name='pub-scanned-stools';backBar.add(model);
-    fallbackStools.visible=false;
-  },undefined,()=>{/* Keep the modeled fallback if the optional scanned asset cannot load. */});
+  installModel(PUB_PROPS.stool,stoolPositions.map(({x,z})=>({x,y:FLOOR,z,height:2.99,rotation:Math.PI})),[fallbackStools],backBar);
   const redSeatTexture=canvasTexture(128,128,ctx=>{ctx.fillStyle='#772e31';ctx.fillRect(0,0,128,128);for(let y=0;y<128;y+=4)for(let x=0;x<128;x+=4){ctx.fillStyle=(x+y)%8?'#ad62561c':'#220f122b';ctx.fillRect(x,y,2,2);}});
   const redSeat=new THREE.MeshStandardMaterial({map:redSeatTexture,roughness:.91});
   for(const {x,z}of stoolPositions)cylinder(.52,.53,.115,redSeat,x,FLOOR+3.025,z);
@@ -154,7 +144,7 @@ export function buildPub(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
   const glass=new THREE.Mesh(new THREE.PlaneGeometry(1.41,1.35),new THREE.MeshPhysicalMaterial({color:'#bddacf',transparent:true,opacity:.13,roughness:.06,metalness:.3,depthWrite:false}));glass.position.set(0,2.4,.53);jukebox.add(glass);
   for(let i=0;i<7;i++)box(.12,.095,.045,new THREE.MeshStandardMaterial({color:i%2?'#eee0b9':'#e5a662',roughness:.25}),-.51+i*.17,1.47,.53,.02,jukebox);
   const jukeboxLight=new THREE.PointLight('#eaa56a',3,5,2);jukeboxLight.position.set(PUB_LAYOUT.jukebox.x+.9,-.45,PUB_LAYOUT.jukebox.z);room.add(jukeboxLight);
-  installModel('heritage-jukebox',[{...PUB_LAYOUT.jukebox}],[jukebox]);
+  installModel(PUB_PROPS.jukebox,[{...PUB_LAYOUT.jukebox}],[jukebox]);
   // Blender-authored furniture replaces complete fallback groups after loading.
   const fallbackBenches=new THREE.Group(),fallbackTables=new THREE.Group(),fallbackPints=new THREE.Group(),fallbackChairs=new THREE.Group(),fallbackTaps=new THREE.Group();
   room.add(fallbackBenches,fallbackTables,fallbackPints,fallbackChairs,fallbackTaps);
@@ -210,10 +200,10 @@ export function buildPub(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
   box(.85,.13,.57,blackMetal,7.6,.405,-8.05,.04);const till=box(.8,.59,.09,blackMetal,7.6,.72,-8.2,.045);till.rotation.x=-.2;box(.65,.39,.012,new THREE.MeshStandardMaterial({color:'#74a894',emissive:'#86bfa9',emissiveIntensity:.13}),7.6,.74,-8.132,.02);
   for(const x of [-6.9,6.3]){const tray=cylinder(.33,.33,.045,brass,x,.36,-7.86);tray.material=brass;}
   propsParent=room;
-  installModel('booth-bench',benchPlacements,[fallbackBenches]);
-  installModel('oak-pub-table',tablePlacements,[fallbackTables]);
-  installModel('pub-chair',chairPlacements,[fallbackChairs]);
-  installModel('pub-pint',pintPlacements,[fallbackPints]);
+  installModel(PUB_PROPS.bench,benchPlacements,[fallbackBenches]);
+  installModel(PUB_PROPS.table,tablePlacements,[fallbackTables]);
+  installModel(PUB_PROPS.chair,chairPlacements,[fallbackChairs]);
+  installModel(PUB_PROPS.pint,pintPlacements,[fallbackPints]);
 
   // Local ambient occlusion under feet grounds furniture without a room-wide shadow pass.
   const contactMap=canvasTexture(128,128,ctx=>{const gradient=ctx.createRadialGradient(64,64,8,64,64,63);gradient.addColorStop(0,'rgba(0,0,0,.65)');gradient.addColorStop(.42,'rgba(0,0,0,.38)');gradient.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=gradient;ctx.fillRect(0,0,128,128);});
@@ -228,16 +218,16 @@ export function buildPub(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
   contacts.forEach(([x,z,w,d],i)=>contactShadows.setMatrixAt(i,new THREE.Matrix4().compose(new THREE.Vector3(x,FLOOR+.012,z),contactRotation,new THREE.Vector3(w,d,1))));
   contactShadows.name='furniture-contact-occlusion';contactShadows.computeBoundingSphere();room.add(contactShadows);
 
-  installModel('brass-beer-taps',tapPlacements,[fallbackTaps]);
+  installModel(PUB_PROPS.taps,tapPlacements,[fallbackTaps]);
   // Full moulded panels face inward along both side walls and the rear wings.
   const panels:PubPlacement[]=[];
   for(const x of [-16.5,-13.5,-10.5,10.5,13.5,16.5])panels.push({x,y:FLOOR,z:pubBackZ(-11.14)});
-  installModel('wall-panel',panels,[],interior.walls.back);
+  installModel(PUB_PROPS.wallPanel,panels,[],interior.walls.back);
   for(const side of [-1,1]){
     const sidePanels:PubPlacement[]=[];for(const z of [-11.9,-8.9,-5.9,-2.9,.1,3.1,6.1,9.1,12.1])sidePanels.push({x:pubSideX(side*14.57),y:FLOOR,z,rotation:-side*Math.PI/2,height:2.15});
-    installModel('wall-panel',sidePanels,[],side<0?interior.walls.left:interior.walls.right);
+    installModel(PUB_PROPS.wallPanel,sidePanels,[],side<0?interior.walls.left:interior.walls.right);
   }
-  installModel('wall-panel',[-15,-12,-9,-6,6,9,12,15].map(x=>({x,y:FLOOR,z:pubFrontZ(11.7),rotation:Math.PI,height:2.15})),[],interior.walls.front);
+  installModel(PUB_PROPS.wallPanel,[-15,-12,-9,-6,6,9,12,15].map(x=>({x,y:FLOOR,z:pubFrontZ(11.7),rotation:Math.PI,height:2.15})),[],interior.walls.front);
   propsParent=backBar;
   // Wall-mounted cue rack with full-length cues, chalk shelf and framed club prints.
   for(const x of [-12.55,-11.7,-10.85,-10]){const cue=cylinder(.028,.056,4.0,new THREE.MeshStandardMaterial({color:'#b89055',roughness:.4}),x,FLOOR+2.2,-10.77);cue.rotation.z=-.025;}
@@ -249,12 +239,12 @@ export function buildPub(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
   }
   // Back-wall fittings follow the rear cutaway too, so a rear orbit never looks through opaque framed prints.
   for(const object of [...backBar.children])if(object instanceof THREE.Mesh&&object.position.z< -10.2)backWallFittings.add(object);
-  const dressing=buildPubDressing(room,renderer,interior.walls);
-  const gallery=buildPubGallery(room,renderer,interior.walls);
-  const drinks=buildPubDrinks(room,renderer,{shelfParent:interior.walls.back});
-  const entertainment=buildPubEntertainment(room,renderer,interior.walls);
-  const clubDecor=buildPubClubDecor(interior.walls,renderer);
-  // Group boundaries remain intact: fallback visibility, walls, screens and the
+  const dressing=buildPubDressing(room,installer,interior.walls);
+  buildPubGallery(room,installer,interior.walls);
+  const drinks=buildPubDrinks(room,installer,{shelfParent:interior.walls.back});
+  const entertainment=buildPubEntertainment(room,installer,interior.walls);
+  const clubDecor=buildPubClubDecor(interior.walls,installer);
+  // Group boundaries remain intact: placeholder swaps, walls, screens and the
   // hanging fixture can still change independently. No work runs per frame.
   for(const section of [room,backBar,backWallFittings])batchPubStatic(section);
   return {
@@ -275,8 +265,7 @@ export function buildPub(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
       for(let i=0;i<glows.length;i++)glows[i].emissiveIntensity=1.7+Math.sin(time*.6+i)*.05;
     },
     dispose(){
-      disposed=true;
-      entertainment.dispose();drinks.dispose();gallery.dispose();dressing.dispose();clubDecor.dispose();
+      entertainment.dispose();drinks.dispose();clubDecor.dispose();
       room.removeFromParent();disposePubObject(room);
     },
   };

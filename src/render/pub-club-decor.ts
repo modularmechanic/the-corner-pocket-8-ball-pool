@@ -1,15 +1,17 @@
 import * as THREE from 'three';
 import { canvasTexture, woodTexture } from './materials';
 import { countPubDraws } from './pub-batching';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { disposePubObject } from './pub-models';
+import { pubResources } from './pub-models';
 import { seededRandom } from '../simulation/types';
+import type { PropInstaller } from './asset-installer';
 
 export const PUB_CLUB_DECOR = {
   posters:[{z:-6.72,y:.65},{z:7.4,y:1.25}],
   trophies:{z:.62,y:.22,width:2.8},
   neons:{front:{x:5.66,y:5.38,width:3.7,height:.73},left:{z:-6.72,y:4.55,width:2.15,height:.8}},
 } as const;
+/** Prop paths relative to public/, one Blender-authored model per wall. */
+export const PUB_CLUB_DECOR_PROPS = {left:'models/pub/club-decor-left.glb',right:'models/pub/club-decor-right.glb',front:'models/pub/club-decor-front.glb'} as const;
 
 function clubPrints() {
   const random=seededRandom('corner-pocket-aged-club-posters');
@@ -55,29 +57,27 @@ function neonAtlas() {
 
 /** Blender-authored wall models. Runtime code only binds textures/materials and
  * retains wall ownership; it never constructs the awards, boards or glass. */
-export function buildPubClubDecor(walls:{left:THREE.Group;right:THREE.Group;front:THREE.Group},renderer:THREE.WebGLRenderer) {
+export function buildPubClubDecor(walls:{left:THREE.Group;right:THREE.Group;front:THREE.Group},installer:PropInstaller) {
   const sections={left:new THREE.Group(),right:new THREE.Group(),front:new THREE.Group()};
   for(const [wall,section]of Object.entries(sections)){section.name=`pub-club-decor-${wall}`;walls[wall as keyof typeof sections].add(section);}
-  let disposed=false,loaded=0;
+  // Bound canvas maps get the installer's prop anisotropy with the rest of each model.
   const printMap=clubPrints(),glowMap=neonAtlas(),woodMap=woodTexture();
-  for(const map of [printMap,glowMap,woodMap]){map.flipY=false;map.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());}
-  const usedMaps=new Set<THREE.Texture>(),loader=new GLTFLoader();
-  for(const wall of Object.keys(sections)as (keyof typeof sections)[])loader.load(`/models/pub/club-decor-${wall}.glb`,gltf=>{
-    if(disposed){disposePubObject(gltf.scene);return;}
+  for(const map of [printMap,glowMap,woodMap])map.flipY=false;
+  const bindMaps=(source:THREE.Object3D)=>{
     const retiredMaterials=new Set<THREE.Material>(),retiredTextures=new Set<THREE.Texture>();
-    gltf.scene.traverse(object=>{
+    source.traverse(object=>{
       if(!(object instanceof THREE.Mesh))return;object.castShadow=true;object.receiveShadow=true;
       const bind=(material:THREE.Material)=>{
         const name=material.name.replace(/\.\d+$/,'');
         if(name==='Baked club neon glow'||name==='Club amber neon glass'||name==='Club cyan neon glass'){
           retiredMaterials.add(material);for(const value of Object.values(material))if(value instanceof THREE.Texture)retiredTextures.add(value);
           object.castShadow=false;object.receiveShadow=false;
-          if(name==='Baked club neon glow'){usedMaps.add(glowMap);return new THREE.MeshBasicMaterial({name,map:glowMap,transparent:true,depthWrite:false,toneMapped:false});}
+          if(name==='Baked club neon glow')return new THREE.MeshBasicMaterial({name,map:glowMap,transparent:true,depthWrite:false,toneMapped:false});
           return new THREE.MeshBasicMaterial({name,color:name.includes('amber')?'#ffe2a1':'#b8fff0',toneMapped:false});
         }
         if(material instanceof THREE.MeshStandardMaterial){
           const map=name==='Club archival print'?printMap:name==='Club display walnut'?woodMap:null;
-          if(map){if(material.map)retiredTextures.add(material.map);material.map=map;usedMaps.add(map);material.color.set(name==='Club archival print'?'#ffffff':'#75563c');material.needsUpdate=true;}
+          if(map){if(material.map)retiredTextures.add(material.map);material.map=map;material.color.set(name==='Club archival print'?'#ffffff':'#75563c');material.needsUpdate=true;}
           material.envMapIntensity=name.includes('silver')?.75:.8;
           if(name==='Club archival print'){material.roughness=.9;object.castShadow=false;}
         }
@@ -86,10 +86,11 @@ export function buildPubClubDecor(walls:{left:THREE.Group;right:THREE.Group;fron
       object.material=Array.isArray(object.material)?object.material.map(bind):bind(object.material);
     });
     for(const material of retiredMaterials)material.dispose();for(const texture of retiredTextures)texture.dispose();
-    sections[wall].add(gltf.scene);loaded++;
-  });
+  };
+  for(const wall of Object.keys(sections)as (keyof typeof sections)[])installer.model(PUB_CLUB_DECOR_PROPS[wall],{parent:sections[wall],prepare:bindMaps});
   return {
-    diagnostics(){let triangles=0;for(const section of Object.values(sections))section.traverse(object=>{if(object instanceof THREE.Mesh)triangles+=(object.geometry.index?.count??object.geometry.attributes.position.count)/3;});return {loadedModels:loaded,drawCalls:Object.values(sections).reduce((sum,section)=>sum+countPubDraws(section),0),triangles};},
-    dispose(){disposed=true;for(const map of [printMap,glowMap,woodMap])if(!usedMaps.has(map))map.dispose();},
+    diagnostics(){let triangles=0;for(const section of Object.values(sections))section.traverse(object=>{if(object instanceof THREE.Mesh)triangles+=(object.geometry.index?.count??object.geometry.attributes.position.count)/3;});return {loadedModels:Object.values(sections).filter(section=>section.children.length).length,drawCalls:Object.values(sections).reduce((sum,section)=>sum+countPubDraws(section),0),triangles};},
+    /** Maps the walls draw are released with the room; only the unbound ones are freed here. */
+    dispose(){const drawn=new Set<object>();for(const section of Object.values(sections))for(const resource of pubResources(section))drawn.add(resource);for(const map of [printMap,glowMap,woodMap])if(!drawn.has(map))map.dispose();},
   };
 }

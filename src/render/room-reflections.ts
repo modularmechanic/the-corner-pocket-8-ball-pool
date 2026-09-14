@@ -1,23 +1,26 @@
 import * as THREE from 'three';
+import type { PropInstaller } from './asset-installer';
 
 /** A filtered reflection of the actual enclosed pub, shared by the polished balls.
- * Capture only after static assets change; never render six extra views per frame. */
+ * Capture once the table is built, once more when the pub is settled (or has had long
+ * enough, if a prop never answers), then only after later prop swaps; never render six
+ * extra views per frame. */
 export class RoomReflections {
   private cube: THREE.WebGLCubeRenderTarget;
   private camera: THREE.CubeCamera;
   private pmrem: THREE.PMREMGenerator;
   private filtered?: THREE.WebGLRenderTarget;
-  private observed = '';
-  private captured = '';
-  private checkTime = 0;
-  private stableTime = 0;
+  /** Prop revision shown by the current capture; undefined until the first capture. */
+  private captured?: number;
+  private settled = false;
+  private age = 0;
   private cooldown = 0;
   private disposed = false;
   private resolution = 128;
-  private objects: THREE.Object3D[] = [];
   private consumers = new Set<THREE.MeshStandardMaterial>();
   constructor(private renderer: THREE.WebGLRenderer, private scene: THREE.Scene,
-    private staticObjects: () => THREE.Object3D[], private enclose: (capture: () => void) => void) {
+    private staticObjects: () => THREE.Object3D[], private enclose: (capture: () => void) => void,
+    private props: Pick<PropInstaller, 'revision' | 'settled'>) {
     this.cube = new THREE.WebGLCubeRenderTarget(this.resolution, {
       type: renderer.extensions.has('EXT_color_buffer_float') ? THREE.HalfFloatType : THREE.UnsignedByteType,
       generateMipmaps: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
@@ -25,46 +28,26 @@ export class RoomReflections {
     this.camera = new THREE.CubeCamera(.06, 95, this.cube);
     this.camera.position.set(0, .42, 0);
     this.pmrem = new THREE.PMREMGenerator(renderer);
+    props.settled().then(() => { this.settled = true; });
   }
   add(material: THREE.MeshStandardMaterial): void {
     this.consumers.add(material);
     if (this.filtered) { material.envMap = this.filtered.texture; material.needsUpdate = true; }
   }
-  invalidate(): void { this.captured = ''; this.checkTime = 0; this.cooldown = 0; }
+  invalidate(): void { this.captured = undefined; this.cooldown = 0; }
   setResolution(size:128|256):void {
     if(size===this.resolution)return;
     this.resolution=size;this.cube.setSize(size,size);this.invalidate();
   }
-  private fingerprint(objects: THREE.Object3D[]): string {
-    let count = 0, shape = 0, loaded = 0;
-    const textures = new Set<THREE.Texture>();
-    for (const root of objects) root.traverse(object => {
-      count++;
-      if (!(object instanceof THREE.Mesh)) return;
-      shape += object.geometry.id;
-      for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
-        for (const property of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap'] as const) {
-          const texture = (material as THREE.MeshStandardMaterial)[property];
-          if (texture) textures.add(texture);
-        }
-      }
-    });
-    for (const texture of textures) if (texture.image?.width) loaded += texture.image.width + texture.image.height;
-    return `${count}:${shape}:${textures.size}:${loaded}`;
-  }
   update(dt: number, idle: boolean): boolean {
     if (this.disposed) return false;
-    this.checkTime -= dt; this.cooldown -= dt; this.stableTime += dt;
-    if (this.checkTime <= 0) {
-      this.checkTime = 2;
-      this.objects=this.staticObjects();
-      const signature = this.fingerprint(this.objects);
-      if (signature !== this.observed) { this.observed = signature; this.stableTime = 0; }
-    }
-    // Wait for two asset checks to agree so several concurrent GLB/texture loads
-    // cause one six-view capture, rather than repeated startup stalls.
-    if (!idle || this.cooldown > 0 || this.stableTime < 2.1 || this.captured === this.observed) return false;
-    this.capture(this.objects); this.captured = this.observed; this.cooldown = 8;return true;
+    this.cooldown -= dt; this.age += dt;
+    if (!idle || this.cooldown > 0 || this.age < 2.1) return false;
+    // While props are still arriving, swaps wait for the settled capture rather than
+    // causing repeated six-view startup stalls. A hanging request cannot freeze them.
+    const revision = this.props.revision, settled = this.settled || this.age >= 15;
+    if (this.captured !== undefined && (!settled || this.captured === revision)) return false;
+    this.capture(this.staticObjects()); this.captured = revision; this.cooldown = 8; return true;
   }
   private capture(objects: THREE.Object3D[]): void {
     const renderer = this.renderer, target = renderer.getRenderTarget();
