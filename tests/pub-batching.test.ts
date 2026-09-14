@@ -30,6 +30,17 @@ test('repeated authored geometry retains nested world transforms and instance co
   assert.ok(batched.boundingSphere&&batched.boundingBox);disposePubObject(room);
 });
 
+test('merging quantized parts keeps their world placement',()=>{
+  // Normalized int16 positions, as KHR_mesh_quantization loads them, with the offset and scale on the mesh.
+  const quantized=()=>{const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.BufferAttribute(new Int16Array([-32767,0,0,32767,0,0,0,32767,0]),3,true));return geometry;};
+  const room=new THREE.Group(),material=new THREE.MeshStandardMaterial();
+  for(const x of [-6,6]){const mesh=new THREE.Mesh(quantized(),material);mesh.position.set(x,3,14);mesh.scale.setScalar(.5);room.add(mesh);}
+  const bounds=new THREE.Box3().setFromObject(room,true);
+  assert.deepEqual(batchPubStatic(room),{before:2,after:1,saved:1});
+  const after=new THREE.Box3().setFromObject(room,true);assert.ok(after.min.distanceTo(bounds.min)<1e-4);assert.ok(after.max.distanceTo(bounds.max)<1e-4);
+  disposePubObject(room);
+});
+
 test('static trim merges indexed and nonindexed parts without losing triangles or bounds',()=>{
   const room=new THREE.Group(),material=new THREE.MeshStandardMaterial();room.position.set(5,2,-7);room.rotation.y=.4;
   const box=new THREE.Mesh(new THREE.BoxGeometry(1,2,3),material),cylinder=new THREE.Mesh(new THREE.CylinderGeometry(.4,.4,2,12).toNonIndexed(),material);
