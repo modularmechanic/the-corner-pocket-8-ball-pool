@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { PoolPostprocessing, prewarmPrograms } from '../src/render/postprocessing';
+import { graphicsBudget } from '../src/render/performance';
 
 function fakeRenderer(){
   const previous=new THREE.WebGLRenderTarget(4,4),compiled:(THREE.WebGLRenderTarget|null)[]=[];
@@ -31,7 +32,9 @@ test('pass prewarm compiles every bloom and output program without drawing or si
     compile:(object:THREE.Mesh)=>{const material=object.material as THREE.Material;compiled.push({material,target:current,defines:{...(material as THREE.ShaderMaterial).defines}});return new Set();},
     outputColorSpace:THREE.SRGBColorSpace,toneMapping:THREE.ACESFilmicToneMapping,toneMappingExposure:1} as unknown as THREE.WebGLRenderer;
   const post=new PoolPostprocessing(renderer,new THREE.Scene(),new THREE.PerspectiveCamera());
-  post.prewarm();
+  for(const ceiling of [graphicsBudget('performance'),graphicsBudget('auto',0,true)])post.prewarm(ceiling);
+  assert.deepEqual([compiled.length,bound.length],[0,0],'a ceiling that never allows bloom skips the pass programs');
+  post.prewarm(graphicsBudget('ultra'));
   const passes=compiled.filter(entry=>!(entry.material as THREE.RawShaderMaterial).isRawShaderMaterial),output=compiled.filter(entry=>(entry.material as THREE.RawShaderMaterial).isRawShaderMaterial);
   assert.equal(new Set(passes.map(entry=>entry.material)).size,8,'high pass, five blurs, composite and blend');
   assert.ok(passes.every(entry=>entry.target?.isRenderTarget&&entry.target.width===1&&entry.target.height===1),'linear, untone-mapped variant against a 1×1 target');

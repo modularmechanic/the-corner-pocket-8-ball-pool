@@ -484,7 +484,7 @@ export class PoolScene {
       this.updateShadowBudget(frameDt);
       this.practicalLights.update(this.camera,frameDt);
       const captured=this.roomReflections?.update(frameDt,state.phase!=='rolling')||false;
-      if(captured){prewarmPrograms(this.renderer,this.scene,this.camera,!!this.postprocessing);this.postprocessing?.prewarm();}
+      if(captured){prewarmPrograms(this.renderer,this.scene,this.camera,!!this.postprocessing);this.postprocessing?.prewarm(this.performanceBudget.ceiling);}
       const maintenance=captured||this.maintenanceFrames>0;this.maintenanceFrames=Math.max(0,this.maintenanceFrames-1);
       if(this.postprocessing)this.postprocessing.render(this.scene,this.camera,frameDt);else this.renderer.render(this.scene,this.camera);
       this.gpuTimer.end(maintenance);

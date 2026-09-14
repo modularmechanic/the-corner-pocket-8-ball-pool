@@ -51,8 +51,10 @@ export class PoolPostprocessing {
     this.composer!.setPixelRatio(ratio);this.composer!.setSize(width,height);
   }
   /** Compile the bloom and output pass programs alongside `prewarmPrograms`, so turning bloom
-   * on never compiles mid-shot. Nothing draws; the passes keep 1×1 targets until bloom is enabled. */
-  prewarm() {
+   * on never compiles mid-shot. Nothing draws; the passes keep 1×1 targets until bloom is enabled.
+   * Skipped when the quality ceiling never allows bloom. */
+  prewarm(ceiling: RenderBudget) {
+    if (!ceiling.bloom) return;
     this.initialize();
     const renderer = this.renderer, previous = renderer.getRenderTarget(), target = new THREE.WebGLRenderTarget(1, 1), quad = new THREE.Mesh();
     try {
