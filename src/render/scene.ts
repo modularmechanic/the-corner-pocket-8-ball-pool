@@ -11,7 +11,7 @@ import { CueAppearance } from './cue-appearance';
 import { equippedCue } from '../simulation/cues';
 import { TableEffects } from './effects';
 import { buildPub } from './pub';
-import { PoolPostprocessing } from './postprocessing';
+import { PoolPostprocessing, prewarmPrograms } from './postprocessing';
 import { AdaptiveRenderBudget, RenderFrameHistory, GpuFrameTimer, ShadowRevision, budgetDpr, type RenderQuality } from './performance';
 import { PracticalLightBudget } from './light-budget';
 import { TableModel, drawTableTextures, enableTableShadows, TABLE_SHADOW_LAYER } from './table-model';
@@ -86,11 +86,6 @@ export class PoolScene {
   private renderedSeed = '';
   private renderedShotCount = 0;
   private arena = new ArenaVisuals(this.scene);
-  // The shadow budget watches these groups.
-  private tableOccluders: THREE.Object3D[] = [];
-  private obstacles = this.arena.obstacles;
-  private hazards = this.arena.hazards;
-  private pickups = this.arena.pickups;
   private pocketDrops = new Map<number, PocketDrop>();
   private outFades = new Map<number,OutFade>();
   private effects: TableEffects;
@@ -180,7 +175,7 @@ export class PoolScene {
     this.pub = buildPub(this.scene, this.propInstaller);
   }
   private buildTable() {
-    this.table=new TableModel(this.scene,this.surfaces,drawTableTextures(this.ballMaps));this.tableOccluders=this.table.occluders;
+    this.table=new TableModel(this.scene,this.surfaces,drawTableTextures(this.ballMaps));
   }
   private buildBalls() {
     const geo = new THREE.SphereGeometry(TABLE.radius, 64, 48);
@@ -282,11 +277,12 @@ export class PoolScene {
     this.quality=quality;this.performanceBudget.setQuality(quality);this.applyGraphicsBudget();
   }
   private applyGraphicsBudget() {
-    const budget=this.performanceBudget.budget;
-    this.practicalLights.configure(this.quality,budget.tier);
+    const budget=this.performanceBudget.budget,ceiling=this.performanceBudget.ceiling;
+    this.practicalLights.configure(this.quality,budget.tier,ceiling.tier);
     this.roomReflections?.setResolution(budget.reflectionSize);
     for(const [index,lamp]of this.tableLights.entries()){
-      lamp.castShadow=budget.shadowLights===3||index===1;
+      // Casters follow the ceiling (program keys); shadow intensity is a uniform.
+      lamp.castShadow=ceiling.shadowLights===3||index===1;lamp.shadow.intensity=budget.shadowLights===3||index===1?.8:0;
       const size=Math.min(this.renderer.capabilities.maxTextureSize,budget.shadowSize);
       if(lamp.shadow.mapSize.x!==size){lamp.shadow.map?.dispose();lamp.shadow.map=null;lamp.shadow.mapSize.setScalar(size);}
       lamp.shadow.radius=3.75*lamp.shadow.mapSize.x/1024;
@@ -302,20 +298,20 @@ export class PoolScene {
       values.push(object.id,object.visible?1:0,p.x,p.y,p.z,q.x,q.y,q.z,q.w,s.x,s.y,s.z);
     });
     const values=this.shadowValues;values.length=0;
-    for(const object of this.tableOccluders)gather(object,values);
+    for(const object of this.table.occluders)gather(object,values);
     for(const ball of this.balls)gather(ball,values);
     gather(this.cue,values);
-    for(const obstacle of this.obstacles.values())gather(obstacle.group,values);
+    for(const obstacle of this.arena.obstacles.values())gather(obstacle.group,values);
     const changed=this.shadowRevision.changed(values);
     const decorative=this.decorativeShadowValues;decorative.length=0;
-    for(const pickup of this.pickups.values())gather(pickup.group,decorative);
-    for(const hazard of this.hazards.values())gather(hazard.group,decorative);
+    for(const pickup of this.arena.pickups.values())gather(pickup.group,decorative);
+    for(const hazard of this.arena.hazards.values())gather(hazard.group,decorative);
     this.decorativeShadowsDirty=this.decorativeShadowRevision.changed(decorative)||this.decorativeShadowsDirty;
     this.decorativeShadowAge+=dt;
     // Gameplay motion always gets fresh shadows. Tiny spinning pickup details
     // may update at 30 Hz while the balls, cue and coin return are stationary.
     if(changed||(this.decorativeShadowsDirty&&this.decorativeShadowAge>=1/30)){
-      for(const lamp of this.tableLights)if(lamp.castShadow)lamp.shadow.needsUpdate=true;
+      for(const lamp of this.tableLights)if(lamp.castShadow&&lamp.shadow.intensity>0)lamp.shadow.needsUpdate=true;
       this.decorativeShadowsDirty=false;this.decorativeShadowAge=0;
     }
   }
@@ -488,6 +484,7 @@ export class PoolScene {
       this.updateShadowBudget(frameDt);
       this.practicalLights.update(this.camera,frameDt);
       const captured=this.roomReflections?.update(frameDt,state.phase!=='rolling')||false;
+      if(captured)prewarmPrograms(this.renderer,this.scene,this.camera,!!this.postprocessing);
       const maintenance=captured||this.maintenanceFrames>0;this.maintenanceFrames=Math.max(0,this.maintenanceFrames-1);
       if(this.postprocessing)this.postprocessing.render(this.scene,this.camera,frameDt);else this.renderer.render(this.scene,this.camera);
       this.gpuTimer.end(maintenance);

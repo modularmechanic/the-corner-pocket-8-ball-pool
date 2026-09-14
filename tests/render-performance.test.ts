@@ -7,10 +7,16 @@ function run(budget:AdaptiveRenderBudget,seconds:number,sample:FrameSample) {
   for(let i=0;i<Math.ceil(seconds*1000/sample.frameMs);i++)if(budget.observe(sample))changes++;
   return changes;
 }
+/** Feeds per-frame intervals and reports every target the budget held along the way. */
+function sequence(budget:AdaptiveRenderBudget,seconds:number,frameMs:(index:number)=>number,cost={cpuMs:2,gpuMs:null as number|null}) {
+  const targets=new Set<number>();let changes=0;
+  for(let elapsed=0,index=0;elapsed<seconds*1000;index++){const ms=frameMs(index);elapsed+=ms;if(budget.observe({frameMs:ms,...cost}))changes++;targets.add(budget.targetMs);}
+  return {targets,changes};
+}
 
 test('Auto starts with bounded native resolution and mobile uses a smaller direct-render budget',()=>{
   const desktop=new AdaptiveRenderBudget(),mobile=new AdaptiveRenderBudget(true);
-  assert.equal(desktop.targetMs,1000/120);assert.equal(mobile.targetMs,1000/60);
+  assert.equal(desktop.targetMs,1000/60,'desktop assumes 60 Hz until faster presentation is observed');assert.equal(mobile.targetMs,1000/60);
   assert.equal(desktop.budget.tier,'balanced');assert.equal(desktop.budget.bloom,false);
   assert.equal(mobile.budget.shadowLights,1);assert.equal(mobile.budget.bloom,false);
   assert.equal(budgetDpr(desktop.budget,1920,1080,1),1,'a 1× display must never be forced to 1.5×');
@@ -66,8 +72,62 @@ test('sustained misses after observed 120 Hz count as pressure, but an actual 60
   run(fastDisplay,4,{frameMs:1000/120,cpuMs:2,gpuMs:6.2});
   assert.equal(run(fastDisplay,2.3,{frameMs:8.9,cpuMs:2,gpuMs:6.2}),1);
   const normalDisplay=new AdaptiveRenderBudget();
-  assert.equal(run(normalDisplay,30,{frameMs:1000/60,cpuMs:2,gpuMs:6.2}),0);
-  assert.equal(normalDisplay.budget.tier,'balanced');
+  run(normalDisplay,30,{frameMs:1000/60,cpuMs:2,gpuMs:6.2});
+  assert.equal(normalDisplay.budget.tier,'refined','6.2 ms is headroom against a 16.7 ms deadline, not pressure');
+});
+
+test('the frame deadline follows the observed display refresh, clamped to 60-120 Hz',()=>{
+  for(const [frameMs,target]of [[1000/60,1000/60],[1000/75,1000/75],[1000/90,1000/90],[1000/120,1000/120],[1000/144,1000/120],[1000/240,1000/120],[1000/30,1000/60],[16.2,1000/60],[8.8,1000/120]] as const){
+    const budget=new AdaptiveRenderBudget();run(budget,4,{frameMs,cpuMs:1,gpuMs:1});
+    assert.equal(budget.targetMs,target,`${frameMs.toFixed(2)} ms cadence`);
+  }
+  const phone=new AdaptiveRenderBudget(true);run(phone,4,{frameMs:1000/120,cpuMs:1,gpuMs:1});assert.equal(phone.targetMs,1000/60);
+});
+
+test('jittery 60 Hz presentation, including a burst of alternating 8/25 ms frames, never locks a 120 Hz deadline',()=>{
+  const alternating=new AdaptiveRenderBudget();
+  const sustained=sequence(alternating,20,index=>index%2?25:8);
+  assert.deepEqual([...sustained.targets],[1000/60],'real stutter may still lower quality, but never against a 120 Hz deadline');
+  const burst=new AdaptiveRenderBudget();sequence(burst,6,()=>1000/60);
+  assert.deepEqual([...sequence(burst,2,index=>index%2?25:8).targets],[1000/60],'one short burst cannot switch the rate');
+  assert.deepEqual([...sequence(burst,10,()=>1000/60).targets],[1000/60]);
+});
+
+test('moving from a 120 Hz to a 60 Hz monitor lowers the deadline without degrading quality',()=>{
+  const budget=new AdaptiveRenderBudget();
+  sequence(budget,6,()=>1000/120);assert.equal(budget.targetMs,1000/120);
+  const moved=sequence(budget,6,()=>1000/60);
+  assert.equal(budget.targetMs,1000/60);assert.equal(moved.changes,0);assert.equal(budget.budget.tier,'balanced');
+  sequence(budget,6,()=>1000/120);assert.equal(budget.targetMs,1000/120,'and back up again');
+  budget.observe({frameMs:5000,cpuMs:2,gpuMs:null});
+  assert.deepEqual([...sequence(budget,2,()=>1000/60).targets],[1000/120],'a hidden-tab gap restarts agreement rather than switching early');
+});
+
+test('plus or minus 2 ms of frame jitter keeps the detected rate stable',()=>{
+  for(const hz of [60,120]){
+    const budget=new AdaptiveRenderBudget(),jitter=(index:number)=>1000/hz+2*Math.sin(index*2.39996);
+    const result=sequence(budget,20,jitter,{cpuMs:1,gpuMs:1});
+    assert.equal(budget.targetMs,1000/hz);assert.ok(result.targets.size<=2,'at most the single startup switch to 120 Hz');
+    assert.deepEqual([...sequence(budget,20,jitter,{cpuMs:1,gpuMs:1}).targets],[1000/hz]);
+  }
+});
+
+test('a 60 Hz display is not downgraded for GPU work that only misses a 120 Hz deadline',()=>{
+  const budget=new AdaptiveRenderBudget();
+  assert.equal(run(budget,30,{frameMs:1000/60,cpuMs:3,gpuMs:9}),0);
+  assert.equal(budget.budget.tier,'balanced');
+  assert.ok(run(budget,10,{frameMs:1000/60,cpuMs:3,gpuMs:15})>=1,'work near the real 60 Hz deadline still downgrades');
+});
+
+test('the budget ceiling that fixes shader structure never moves with the adaptive tier',()=>{
+  const desktop=new AdaptiveRenderBudget(),mobile=new AdaptiveRenderBudget(true);
+  assert.equal(desktop.ceiling.tier,'refined');assert.equal(desktop.ceiling.shadowLights,3);
+  assert.equal(mobile.ceiling.tier,'fast');assert.equal(mobile.ceiling.shadowLights,1);
+  const tiers=new Set<string>();
+  for(let i=0;i<20;i++){run(desktop,3,{frameMs:1000/120,cpuMs:12,gpuMs:14});tiers.add(desktop.budget.tier);
+    assert.deepEqual(desktop.ceiling,graphicsBudget('auto',0));assert.ok(desktop.budget.shadowLights<=desktop.ceiling.shadowLights);}
+  assert.ok(tiers.has('fast')&&tiers.has('minimum'));
+  for(const quality of ['performance','high','ultra'] as const){desktop.setQuality(quality);assert.deepEqual(desktop.ceiling,desktop.budget);}
 });
 
 test('asset captures, tab wake and occasional long frames do not pump quality',()=>{
