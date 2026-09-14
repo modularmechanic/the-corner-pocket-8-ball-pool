@@ -42,7 +42,9 @@ function addPoolClubGallery(walls:{front:THREE.Group;right:THREE.Group;back:THRE
   for(const [name,section]of Object.entries(sections)){section.name=`pub-pool-history-${name}`;walls[name as keyof typeof sections].add(section);}
   const isPrint=(material:THREE.Material)=>material.name.replace(/\.\d+$/,'')==='Gallery artwork';
   let printAspect=1;
-  source.traverse(object=>{if(object instanceof THREE.Mesh&&!Array.isArray(object.material)&&isPrint(object.material)){object.geometry.computeBoundingBox();const size=object.geometry.boundingBox!.getSize(new THREE.Vector3());printAspect=size.x/Math.max(.001,size.y);}});
+  // Measured through the node transforms, which carry a quantized mesh's scale.
+  source.updateMatrixWorld(true);
+  source.traverse(object=>{if(object instanceof THREE.Mesh&&!Array.isArray(object.material)&&isPrint(object.material)){const size=new THREE.Box3().setFromObject(object).getSize(new THREE.Vector3());printAspect=size.x/Math.max(.001,size.y);}});
   const place=(print:THREE.Material,placement:{x:number;y:number;z:number;height:number;rotation?:number},section:THREE.Group,aspect:number,index?:number)=>{
     const variant=source.clone(true);variant.scale.x*=aspect/printAspect;
     variant.traverse(object=>{if(object instanceof THREE.Mesh&&!Array.isArray(object.material)&&isPrint(object.material))object.material=print;});
