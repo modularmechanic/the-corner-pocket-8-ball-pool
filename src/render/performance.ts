@@ -54,6 +54,9 @@ function percentile(values:readonly number[],fraction:number):number {
   return sorted[Math.max(0,Math.ceil(sorted.length*fraction)-1)];
 }
 
+/** Common display rates, clamped to 60–120 Hz; jittery rAF cadence snaps to the nearest. */
+const REFRESH_RATES=[60,75,90,100,120] as const;
+
 /** Slow downgrades and much slower upgrades avoid quality pumping during a shot.
  * Stable 60 Hz presentation with 2 ms render cost is refresh-limited, not overload. */
 export class AdaptiveRenderBudget {
@@ -64,10 +67,18 @@ export class AdaptiveRenderBudget {
   private slowWindows=0;
   private fastWindows=0;
   private samples:FrameSample[]=[];
-  private refreshMs=Infinity;
-  readonly targetMs:number;
-  constructor(readonly mobile=false) {this.tierIndex=mobile?2:1;this.targetMs=1000/(mobile?60:120);}
+  private refreshMs=1000/60;
+  constructor(readonly mobile=false) {this.tierIndex=mobile?2:1;}
   get budget():RenderBudget {return graphicsBudget(this.quality,this.tierIndex,this.mobile);}
+  /** Best budget this quality can reach. Shader-structural state (shadow casters,
+   * light slots) follows it so adaptive tier changes never recompile programs. */
+  get ceiling():RenderBudget {return graphicsBudget(this.quality,0,this.mobile);}
+  /** Desktop frame deadline snapped to the display refresh observed so far. Phones stay at 60 Hz. */
+  get targetMs():number {
+    if(this.mobile)return 1000/60;
+    const hz=1000/this.refreshMs;
+    return 1000/REFRESH_RATES.reduce((best,rate)=>Math.abs(rate-hz)<Math.abs(best-hz)?rate:best);
+  }
   setQuality(quality:RenderQuality):void {
     this.quality=quality;this.tierIndex=this.mobile?2:1;this.resetWindow(3);
   }
@@ -85,6 +96,7 @@ export class AdaptiveRenderBudget {
     // A stable 30/20 FPS GPU bottleneck must not be mistaken for a slow monitor
     // when Safari exposes no GPU timer. Assume at least 60 Hz, never 120 Hz.
     this.refreshMs=Math.min(this.refreshMs,1000/60,Math.max(1000/360,cadence));
+    const target=this.targetMs;
     const cpu=percentile(samples.map(frame=>frame.cpuMs),.75);
     const gpuSamples=samples.flatMap(frame=>frame.gpuMs===null?[]:[frame.gpuMs]);
     const gpu=percentile(gpuSamples,.75);
@@ -93,14 +105,14 @@ export class AdaptiveRenderBudget {
     const renderCost=Math.max(cpu,gpu);
     // A 7.2 ms GPU workload left the measured 120 Hz session at ~114 FPS:
     // submission, compositing and presentation still need part of the 8.3 ms.
-    const missedHighRefresh=!this.mobile&&this.refreshMs<=8.4&&frame>this.targetMs*1.055
-      &&(!gpuSamples.length||renderCost>this.targetMs*.7);
-    const slow=renderCost>this.targetMs*.84 || (!gpuSamples.length&&missedRefresh) || missedHighRefresh;
+    const missedHighRefresh=!this.mobile&&this.refreshMs<=8.4&&frame>target*1.055
+      &&(!gpuSamples.length||renderCost>target*.7);
+    const slow=renderCost>target*.84 || (!gpuSamples.length&&missedRefresh) || missedHighRefresh;
     // Without GPU timers, do not raise quality until there is both CPU headroom
     // and an unbroken observed refresh cadence. Refresh-limited frames stay sharp.
     // Require substantial spare time before adding passes/pixels back. This
     // keeps a successful downgrade from immediately undoing its own headroom.
-    const fast=renderCost<this.targetMs*.5 && frame<this.refreshMs*1.12;
+    const fast=renderCost<target*.5 && frame<this.refreshMs*1.12;
     if(this.cooldown>0){this.slowWindows=0;this.fastWindows=0;return false;}
     this.slowWindows=slow?this.slowWindows+1:0;
     this.fastWindows=fast?this.fastWindows+1:0;
