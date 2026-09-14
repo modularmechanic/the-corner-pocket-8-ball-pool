@@ -616,7 +616,7 @@ function frame(now:number) {
   syncMatch();
   const events=match.drainEvents();if(!document.hidden&&elapsed<=.5)for(const event of events)playEvent(event);
   if(keyboardOrbit)scene.rotateView(((heldKeys.has('ArrowRight')?1:0)-(heldKeys.has('ArrowLeft')?1:0))*dt,((heldKeys.has('ArrowUp')?1:0)-(heldKeys.has('ArrowDown')?1:0))*dt*.65);
-  scene.update(presentation,dt,canAct(),false);
+  scene.update(presentation,dt,canAct());
   sound.updateRolling(document.hidden?[]:presentation.balls);updateUI();requestAnimationFrame(frame);
 }
 async function boot() {

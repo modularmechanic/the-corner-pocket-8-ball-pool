@@ -689,7 +689,7 @@ export class PoolScene {
     return { x: rect.left + (p.x + 1) * rect.width / 2, y: rect.top + (1 - p.y) * rect.height / 2 };
   }
   showPlacement(point: { x: number; z: number } | null) { this.placement.visible = !!point; if (point) this.placement.position.set(point.x, TABLE.radius, point.z); }
-  update(state: GameState, dt: number, canAim: boolean, _interpolate = false) {
+  update(state: GameState, dt: number, canAim: boolean) {
     const frameStart=performance.now(),frameMs=this.lastFrameAt?frameStart-this.lastFrameAt:0;this.lastFrameAt=frameStart;
     const frameDt = Math.min(.05, Math.max(0, dt)); this.clock += frameDt;this.chalkAge+=frameDt;
     this.cameraState=state;
