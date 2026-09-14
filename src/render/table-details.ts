@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import type { GameState } from '../simulation/types';
-import { ballTexture, canvasTexture } from './materials';
+import { canvasTexture } from './materials';
 
 /** The visible machinery beneath the playing surface; never part of ball collision simulation. */
 export class TableDetails {
@@ -16,7 +16,8 @@ export class TableDetails {
   private resetAge = Infinity;
   private seed = '';
   private indicator: THREE.MeshStandardMaterial;
-  constructor(scene: THREE.Scene) {
+  /** ballMaps are indexed by ball id and shared with the playing balls. */
+  constructor(scene: THREE.Scene, ballMaps: readonly THREE.Texture[]) {
     scene.add(this.group);
     const brushed=canvasTexture(512,512,ctx=>{
       ctx.fillStyle='#a7ada9';ctx.fillRect(0,0,512,512);
@@ -37,7 +38,7 @@ export class TableDetails {
     const strip=new THREE.Mesh(new THREE.BoxGeometry(5.85,.018,.02),new THREE.MeshStandardMaterial({color:'#f4dcaa',emissive:'#f4dcaa',emissiveIntensity:1.2}));strip.position.set(-.75,-.679,3.11);this.group.add(strip);
     const returnLight=new THREE.PointLight('#f7d9a5',1.2,2.5,2);returnLight.position.set(-.6,-.82,3.27);this.group.add(returnLight);
     for(let id=1;id<=15;id++){
-      const mesh=new THREE.Mesh(new THREE.SphereGeometry(.157,32,24),new THREE.MeshPhysicalMaterial({map:ballTexture(id),roughness:.18,clearcoat:1,clearcoatRoughness:.12}));
+      const mesh=new THREE.Mesh(new THREE.SphereGeometry(.157,32,24),new THREE.MeshPhysicalMaterial({map:ballMaps[id],roughness:.18,clearcoat:1,clearcoatRoughness:.12}));
       mesh.visible=false;mesh.position.set(2,-1.005,3.08);mesh.rotation.x=.1;this.group.add(mesh);this.returns.set(id,mesh);
     }
     this.coinControl.position.set(4.13,-.96,3.38);this.coinControl.userData.tableControl='coin';this.group.add(this.coinControl);

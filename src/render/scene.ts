@@ -38,6 +38,8 @@ export class PoolScene {
   get camera(): THREE.PerspectiveCamera | THREE.OrthographicCamera { return this.cameraTransition.active?this.cameraTransition.camera:this.selectedCamera; }
   private get selectedCamera():THREE.PerspectiveCamera|THREE.OrthographicCamera {return this.overhead&&!this.inspection&&!this.orbit?this.overheadCamera:this.perspectiveCamera;}
   private balls: THREE.Mesh[] = [];
+  // Canvas ball maps are large; the coin-return balls reuse them.
+  private ballMaps = Array.from({ length: 16 }, (_, id) => ballTexture(id));
   private ballPositions: THREE.Vector3[] = [];
   private ballContactMap?: THREE.Texture;
   private cue = new THREE.Group();
@@ -251,7 +253,7 @@ export class PoolScene {
     const chalk=this.box(.23,.18,.23,new THREE.MeshStandardMaterial({color:'#bfa975',roughness:.9}),-4.78,.32,3.27,.012);
     const chalkTop=this.box(.19,.014,.19,new THREE.MeshStandardMaterial({color:'#457e88',roughness:1}),-4.78,.417,3.27,.006);
     chalk.userData.tableControl='chalk';chalkTop.userData.tableControl='chalk';this.chalkControls=[chalk,chalkTop];
-    this.tableDetails=new TableDetails(this.scene);
+    this.tableDetails=new TableDetails(this.scene,this.ballMaps);
     this.tableOccluders=this.scene.children.slice(firstTableObject);
     for(const object of this.tableOccluders)this.enableTableShadows(object);
   }
@@ -264,7 +266,7 @@ export class PoolScene {
     this.ballContactMap=contactMap;
     const contactGeometry=new THREE.PlaneGeometry(TABLE.radius*2.8,TABLE.radius*2.8);
     for (let id = 0; id <= 15; id++) {
-      const mat = new THREE.MeshPhysicalMaterial({ map: ballTexture(id), roughness: .16, metalness: 0, clearcoat: 1, clearcoatRoughness: .075, envMapIntensity: .9, ior:1.56 });
+      const mat = new THREE.MeshPhysicalMaterial({ map: this.ballMaps[id], roughness: .16, metalness: 0, clearcoat: 1, clearcoatRoughness: .075, envMapIntensity: .9, ior:1.56 });
       const ball = new THREE.Mesh(geo, mat); ball.castShadow = true; ball.receiveShadow = true;
       ball.layers.enable(TABLE_SHADOW_LAYER);
       ball.rotation.set(-Math.PI / 2, 0, 0); this.balls.push(ball); this.ballPositions.push(new THREE.Vector3()); this.scene.add(ball);
