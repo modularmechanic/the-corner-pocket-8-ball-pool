@@ -36,19 +36,38 @@ _Avoid_: high score, leaderboard
 ## Rules
 
 **Rule set**:
-How a foul is paid for, chosen when a session starts and fixed until the session ends. Online, the host's rule set applies to every seat.
+Which English Pool Association eight-ball rules apply, chosen when a session starts and fixed until the session ends. Online, the host's rule set applies to every seat.
 _Avoid_: mode, ruleset toggle, house rules (that is the whole rulebook)
 
 **Old Rules**:
-The rule set in which a foul gives the opponent two shots. The default.
+The classic EPA pub rules: a foul gives two visits, a free shot and optional kitchen placement. The default.
 
 **New Rules**:
-The rule set in which a foul gives the opponent ball in hand anywhere and one visit.
+The EPA World Eightball rules: a foul gives two visits from where the cue ball lies, with a free ball only after a foul snooker.
 
-**Two shots**:
-The Old Rules allowance a team receives after the other side fouls. A legal pot turns it into an ordinary visit; a foul while holding it forfeits the rest and gives the other side one visit.
-_Avoid_: free shot, bonus shot, extra turn
+**Visit**:
+One player's (or team's) turn at the table, lasting one or more shots until a miss or a foul.
+_Avoid_: turn (a turn is whose visit it is), inning
+
+**Two visits**:
+What a team receives after the other side fouls. A pot continues the current visit and the second still follows; a foul during them gives the other side two visits.
+_Avoid_: two shots, bonus shot, extra turn
+
+**Free shot**:
+Old Rules: the first shot after a foul, which may hit any ball first and scores every ball it pots.
+_Avoid_: free ball (that is New Rules)
+
+**Foul snooker**:
+A foul that leaves the incoming player no straight line to any part of any ball they are on.
+
+**Free ball**:
+New Rules: after a foul snooker, the first shot may hit any ball first, and that ball counts as the player's own for the shot.
+_Avoid_: free shot (that is Old Rules)
 
 **Kitchen**:
-The area behind the head string, where the cue ball is placed after a scratch under Old Rules. Placing it there is head string placement.
-_Avoid_: baulk
+The area behind the head string, standing in for the EPA baulk area. A lost cue ball must be placed there; after some fouls placing it there is optional.
+_Avoid_: baulk, D
+
+**Group choice**:
+The shooter picking solids or stripes when balls of both groups drop on an open table, or after a New Rules break pot.
+_Avoid_: nomination, call

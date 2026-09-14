@@ -38,14 +38,44 @@ For friends on the same network, use the host computer's LAN address in place of
 
 ## House rules
 
-Choose **Old Rules** or **New Rules** on the setup screen; the choice holds for the whole session, including rematches and new levels. Old Rules is the default and your last choice is remembered. In a private room everyone plays the host's rules.
+Both rule sets follow the English Pool Association. **Old Rules** (the default) are the classic EPA pub rules; **New Rules** follow the EPA's World Eightball poster. Choose on the setup screen; the choice holds for the whole session, including rematches and new levels, and your last choice is remembered. In a private room everyone plays the host's rules. The head string stands in for the baulk line and solids/stripes for reds/yellows.
 
-- **New Rules:** after a foul, the opponent has ball in hand anywhere on the table and one normal visit.
-- **Old Rules:** after a foul, the opponent has two shots. If the cue ball was potted or left the table, they place it behind the head string; otherwise they play it from where it stopped. Both shots follow the normal contact rules. A legal pot on the first shot turns the two shots into an ordinary visit; a legal miss leaves the second shot, after which ordinary rules apply. A foul while holding two shots loses the remaining shot and gives the other side one visit. In doubles the two shots belong to the team, and partners still alternate.
+**Both rule sets**
 
-Doubles uses Scotch doubles: partners alternate after every completed shot, including a legal pot that keeps their team at the table. Each team shares its ball group, score, chalk and power-ups. Only the current teammate can shoot or place the cue ball; reconnecting preserves the seat and shot order.
+- Pot your group, then the black. Hit one of your own balls first; the black only once your group is gone.
+- Your first legal pot decides your group. If balls of both groups drop, you choose.
+- Potting the black on any break re-racks and the same player breaks again. A foul break re-racks and the opponent breaks with two visits.
+- Fouls: potting or losing the cue ball, missing every ball, hitting the wrong ball first, potting an opponent's ball, or sending any ball off the table.
+- After a foul the opponent has **two visits**. A pot continues the current visit and the second visit still follows; a miss on the first visit starts the second. A foul during those visits hands two visits back. In doubles the visits belong to the team and partners still alternate.
+- A potted or off-table cue ball is placed behind the head string.
+- A black knocked off the table is a foul, not a loss: it returns to its rack position, or the nearest clear point along the table's long axis.
+- You lose the rack by potting the black before your group is cleared, with your last ball, or on a foul (with the cue ball or an opponent's ball, for example).
 
-The game includes solids/stripes assignment, continued turns after legal pots, first-contact fouls, scratches, ball in hand, early-eight losses and legal-eight wins. Groups remain open on the break. A legal break pots a ball, hits an obstacle, or drives at least four object balls to cushions. Obstacle contact counts as a legal shot and a rail action; wrong-ball-first fouls still apply. An eight on the break is respotted. This house does not require called pockets. Off-centre contact supplies draw, follow and cushion sidespin. Raised side strikes curve on the cloth, with the response depending on power, elevation, tip contact and chalk. Hard low-tip strikes can jump: use more than 55% power and contact below the centre, or add cue elevation for lift. This low-tip scoop is an arcade allowance. Balls use real 3D collision height, gravity and cloth landings; they can clear or clip other balls. Airborne balls do not collect pickups or activate terrain and only enter pockets at cloth height. Leaving the table is a foul; object balls are respotted, and an off-table eight loses except on the break.
+**Old Rules**
+
+- A legal break pots a ball or drives at least two balls to cushions. Balls potted on a legal break decide the group.
+- No cushion is needed after contact.
+- After any foul the opponent may place the cue ball behind the head string or play it from where it lies, and their first shot is a **free shot**: any ball may be hit first and every ball it pots counts for them. The black still loses unless they are on it.
+- Potting the black together with any other ball loses, except on a free shot when only the black and the opponent's balls remain.
+
+**New Rules**
+
+- A legal break pots a ball or drives at least four balls to cushions. Losing the cue ball on a legal break only passes the turn.
+- A breaker who pots chooses a group. Choosing a group they did not pot only counts if they pot one of it on the next shot.
+- After contact a ball must be potted or reach a cushion.
+- After a foul the cue ball is played from where it lies. If the foul leaves the incoming player **foul snookered** (no straight line to any part of any of their balls) they get a **free ball**: they may place the cue ball behind the head string, and any ball may be hit first.
+
+**House simplifications and arcade exceptions**
+
+- Foul snookers are detected automatically; other balls, blocks, portals and pocket mouths block the line. The free ball is the first ball hit: potting it counts as your own for that shot. It is checked again if you move the cue ball.
+- With optional placement, click behind the head string to place the cue ball, or anywhere else to play from where it lies. Group choice is a prompt, so there is no failure-to-nominate foul.
+- The break is taken from a fixed spot on the head string. A black knocked off the table on the break is an ordinary foul; only a potted black re-racks.
+- Not modelled: touching balls, stalemate re-racks, the total-snooker cushion exemption, time limits, push or double hits and conduct fouls.
+- Arcade: obstacle contact counts as contact and as a cushion; hard low-tip jump shots are allowed; pockets are never called; the Scratch shield turns a rescued scratch into no foul; potting your own and an opponent's ball also applies the mixed-pot debuff; a fully blocked kitchen opens the whole table for placement.
+
+Doubles uses Scotch doubles: partners alternate after every completed shot, including a legal pot that keeps their team at the table. Each team shares its ball group, score, chalk and power-ups. Only the current teammate can shoot, place the cue ball or choose the group; reconnecting preserves the seat and shot order.
+
+Off-centre contact supplies draw, follow and cushion sidespin. Raised side strikes curve on the cloth, with the response depending on power, elevation, tip contact and chalk. Hard low-tip strikes can jump: use more than 55% power and contact below the centre, or add cue elevation for lift. This low-tip scoop is an arcade allowance. Balls use real 3D collision height, gravity and cloth landings; they can clear or clip other balls. Airborne balls do not collect pickups or activate terrain and only enter pockets at cloth height.
 
 ## Power-ups and fresh tables
 
