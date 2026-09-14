@@ -16,7 +16,7 @@ function nextFree(items: readonly Pooled[], from: number) { while (from < items.
 /** One draw call per effect kind: per-instance RGBA rides in an instanced `color` attribute (vertexColors with alpha). */
 function instanced<M extends THREE.Material>(name: string, geometry: THREE.BufferGeometry, material: M, capacity: number) {
   geometry.setAttribute('color', new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4).setUsage(THREE.DynamicDrawUsage));
-  const mesh = new THREE.InstancedMesh(geometry, material, capacity); mesh.name = name; mesh.count = 0; mesh.frustumCulled = false; mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  const mesh = new THREE.InstancedMesh(geometry, material, capacity); mesh.name = name; mesh.count = 0; mesh.visible = false; mesh.frustumCulled = false; mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   return mesh;
 }
 
@@ -27,7 +27,7 @@ export class TableEffects {
   private debris = pool<Debris>(70, () => ({ position: new THREE.Vector3(), velocity: new THREE.Vector3(), rotation: new THREE.Euler(), spin: new THREE.Vector3(), scale: new THREE.Vector3(), color: new THREE.Color(), steel: false }));
   private ripples = pool<Ripple>(16, () => ({ x: 0, z: 0, color: new THREE.Color(), size: 0 }));
   private sparkMesh = instanced('effect-sparks', new THREE.SphereGeometry(.012, 5, 4), new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }), 120);
-  private debrisMeshes = [.1, .6].map((metalness, steel) => instanced(steel ? 'effect-debris-steel' : 'effect-debris', new THREE.BoxGeometry(.075, .04, .045), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .65, metalness, transparent: true }), 70));
+  private debrisMeshes = [.1, .6].map((metalness, steel) => instanced(steel ? 'effect-debris-steel' : 'effect-debris', new THREE.BoxGeometry(.075, .04, .045), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .65, metalness, transparent: true, depthWrite: false }), 70));
   private rippleMesh = instanced('effect-ripples', new THREE.RingGeometry(.94, 1, 64), new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }), 16);
   private trails:TrailParticle[]=Array.from({length:80},()=>({position:new THREE.Vector3(),velocity:new THREE.Vector3(),age:1,life:0,ice:false}));
   private nextTrail=0;
@@ -40,7 +40,6 @@ export class TableEffects {
   private dummy=new THREE.Object3D();
   private color=new THREE.Color();
   constructor(scene: THREE.Scene) {
-    for (const mesh of this.debrisMeshes) mesh.castShadow = true;
     this.group.add(this.sparkMesh, ...this.debrisMeshes, this.rippleMesh);
     scene.add(this.group);this.fire.instanceMatrix.setUsage(THREE.DynamicDrawUsage);this.ice.instanceMatrix.setUsage(THREE.DynamicDrawUsage);this.fire.frustumCulled=false;this.ice.frustumCulled=false;this.fire.count=0;this.ice.count=0;this.group.add(this.fire,this.ice);
     for(let i=0;i<3;i++){
@@ -120,8 +119,13 @@ export class TableEffects {
   private write(mesh: THREE.InstancedMesh, index: number, color: THREE.Color, alpha: number) {
     mesh.setMatrixAt(index, this.dummy.matrix); mesh.geometry.getAttribute('color').setXYZW(index, color.r, color.g, color.b, alpha);
   }
+  /** Empty pools skip their draw; live pools upload only the instances written this frame. */
   private commit(mesh: THREE.InstancedMesh, count: number) {
-    mesh.count = count; mesh.instanceMatrix.needsUpdate = true; mesh.geometry.getAttribute('color').needsUpdate = true;
+    mesh.count = count; mesh.visible = count > 0;
+    if (!count) return;
+    for (const [attribute, size] of [[mesh.instanceMatrix, 16], [mesh.geometry.getAttribute('color') as THREE.InstancedBufferAttribute, 4]] as const) {
+      attribute.clearUpdateRanges(); attribute.addUpdateRange(0, count * size); attribute.needsUpdate = true;
+    }
   }
 
   update(dt: number) {
@@ -189,7 +193,7 @@ export class TableEffects {
 
   clear() {
     for (const items of [this.sparks, this.debris, this.ripples]) for (const item of items) item.age = item.life;
-    this.sparkMesh.count = 0; this.rippleMesh.count = 0; for (const mesh of this.debrisMeshes) mesh.count = 0;
+    for (const mesh of [this.sparkMesh, ...this.debrisMeshes, this.rippleMesh]) this.commit(mesh, 0);
     for(const particle of this.trails)particle.age=particle.life;this.fire.count=0;this.ice.count=0;this.trailClock=0;
     for(const flash of this.flashes){flash.age=1;flash.life=0;flash.light.intensity=0;flash.mesh.visible=false;}
     for(const arc of this.arcs){arc.age=1;arc.life=0;arc.line.visible=false;}
