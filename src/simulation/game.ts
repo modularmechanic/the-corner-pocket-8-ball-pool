@@ -1,5 +1,5 @@
 import { canEquipCue, equippedCue, normalizeCues } from './cues';
-import RAPIER from '@dimforge/rapier3d-compat';
+import type * as R from '@dimforge/rapier3d-compat';
 import { initialState, legalTargets, POCKETS, TABLE, other, seededRandom, type Ball, type GameState, type Shot, type ShotResult, type GameOptions, type TableEvent, type PowerUp } from './types';
 import { settleShot } from './settlement';
 import { isClearBallSpot, TABLE_RAILS, TABLE_NOSES, surfaceDragAt, rollingDeceleration, STICKY_DRAG, AIR_DRAG } from './table-geometry';
@@ -23,15 +23,22 @@ function readOnlyView<T extends object>(source:T):T {
 let initialization: Promise<void> | null = null;
 const GRAVITY = 14;
 const FLIGHT_EPSILON = .004;
-// The browser build aliases @dimforge/rapier3d, which instantiates its .wasm on import and has no init().
-export function initPhysics() { return initialization ??= Promise.resolve(RAPIER.init?.()); }
+let RAPIER: typeof R.default;
+// Loaded lazily so a failed .wasm download rejects here, inside the caller's error handling, not during bundle evaluation.
+export function initPhysics() {
+  return initialization ??= import('@dimforge/rapier3d-compat').then(module => {
+    RAPIER = module.default;
+    // Compat types declare init(), but the browser build aliases @dimforge/rapier3d, which instantiates on import and has none.
+    return RAPIER.init?.();
+  });
+}
 export class PoolGame {
   private current!: GameState;
   private stateView!: Readonly<GameState>;
-  private world!: RAPIER.World;
+  private world!: R.World;
   /** Read-only live view. Use snapshot() and arrange() to change an arrangement. */
   get state(): Readonly<GameState> { return this.stateView; }
-  private bodies = new Map<number, RAPIER.RigidBody>();
+  private bodies = new Map<number, R.RigidBody>();
   private colliderIds = new Map<number, number>();
   private colliderKeys = new Map<number,string>();
   private activeContacts = new Set<string>();
