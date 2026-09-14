@@ -32,7 +32,7 @@ height=n.new('ShaderNodeMapRange');height.inputs['To Min'].default_value=.46;hei
 bump=n.new('ShaderNodeBump');bump.inputs['Strength'].default_value=.4;bump.inputs['Distance'].default_value=.006;l.new(height.outputs['Result'],bump.inputs['Height']);l.new(bump.outputs['Normal'],bsdf.inputs['Normal'])
 bsdf.inputs['Specular IOR Level'].default_value=.18;bsdf.inputs['Roughness'].default_value=.93
 report=[]
-def bake(name,size,socket,normal=False,out=OUT):
+def bake(name,size,socket,normal=False,folder=OUT):
     image=bpy.data.images.new('Baize '+name,width=size,height=size,alpha=False,float_buffer=False)
     image.colorspace_settings.name='sRGB' if name=='color' else 'Non-Color'
     image_node.image=image;n.active=image_node
@@ -42,12 +42,12 @@ def bake(name,size,socket,normal=False,out=OUT):
         for link in list(emission.inputs['Color'].links):l.remove(link)
         l.new(socket,emission.inputs['Color']);l.new(emission.outputs['Emission'],out.inputs['Surface'])
     bpy.ops.object.bake(type='NORMAL' if normal else 'EMIT',use_clear=True)
-    image.filepath_raw=str(out/('baize-'+name+'.png'));image.file_format='PNG';image.save()
+    image.filepath_raw=str(folder/('baize-'+name+'.png'));image.file_format='PNG';image.save()
     report.append({'file':image.filepath_raw,'width':size,'height':size})
 bake('color',2048,color.outputs['Color'])
 bake('normal',1024,None,True)
-bake('height',1024,height.outputs['Result'],out=ART)
-bake('roughness',1024,rough.outputs['Result'],out=ART)
+bake('height',1024,height.outputs['Result'],folder=ART)
+bake('roughness',1024,rough.outputs['Result'],folder=ART)
 # Shared height (R) / roughness (G) texture: one browser allocation and no
 # per-frame procedural evaluation. Blue is deliberately unused.
 surface=n.new('ShaderNodeCombineColor');surface.mode='RGB';surface.inputs['Blue'].default_value=0
