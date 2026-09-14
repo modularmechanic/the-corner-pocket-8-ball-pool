@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env*
+!.env.example
+artifacts/
+.DS_Store
+.playwright-mcp/
+corner-pocket-first.png
+.omc/
+*.blend1

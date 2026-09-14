@@ -1,0 +1,16 @@
+<!doctype html><meta charset="utf-8"><title>Shot camera and surface review</title>
+<style>body{margin:0;background:#100e0c;color:#eee;font:14px system-ui}#scene{position:fixed;inset:0}nav{position:fixed;top:12px;left:12px;display:flex;gap:8px;z-index:2}button{background:#211e18;color:inherit;border:1px solid #6a5941;padding:9px 14px;border-radius:6px}</style>
+<div id="scene"></div><nav><button id="shot">Cut shot</button><button id="corner">Corner pocket</button><button id="middle">Middle pocket</button><button id="side">Table side</button><button id="overhead">Overhead</button></nav>
+<script type="module">
+import{PoolScene}from'/src/render/scene.ts';import{initialState}from'/src/simulation/types.ts';import{Vector3}from'three';
+const view=new PoolScene(document.querySelector('#scene'),()=>{});view.setQuality('high');const state=initialState('shot-review');state.shotCount=1;
+const positions={0:[-2.85,0],6:[-1.2,.16],7:[.1,-.65],10:[1.1,.7],12:[1.7,-.45],3:[3,.3],8:[4,1.65]};
+for(const ball of state.balls){ball.pocketed=!positions[ball.id];if(positions[ball.id])[ball.x,ball.z]=positions[ball.id];}
+view.aim.angle=0;view.aim.power=.02;
+document.querySelector('#shot').onclick=()=>view.resetView();
+document.querySelector('#corner').onclick=()=>view.setInspection(true,{position:new Vector3(3.9,1.35,.95),target:new Vector3(5.65,-.15,2.82)});
+document.querySelector('#middle').onclick=()=>view.setInspection(true,{position:new Vector3(1.35,1.15,1.2),target:new Vector3(0,-.18,2.95)});
+document.querySelector('#side').onclick=()=>view.setInspection(true);
+document.querySelector('#overhead').onclick=()=>view.setOverhead(true);
+let then=performance.now();function frame(now){view.update(state,Math.min(.06,(now-then)/1000),true);then=now;requestAnimationFrame(frame)}requestAnimationFrame(frame);
+</script>

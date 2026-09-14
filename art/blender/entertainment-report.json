@@ -1,0 +1,12 @@
+{
+  "slot-cabinet": {
+    "vertices": 33376,
+    "triangles": 59142,
+    "bytes": 1550012
+  },
+  "sports-tv": {
+    "vertices": 12806,
+    "triangles": 22870,
+    "bytes": 593544
+  }
+}

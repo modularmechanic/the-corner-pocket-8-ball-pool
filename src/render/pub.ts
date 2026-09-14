@@ -1,0 +1,283 @@
+import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
+import { canvasTexture, woodTexture } from './materials';
+import { buildPubInterior, updateBilliardFixture } from './pub-interior';
+import { buildPubDressing } from './pub-dressing';
+import { buildPubGallery } from './pub-gallery';
+import { buildPubDrinks } from './pub-drinks';
+import { buildPubEntertainment } from './pub-entertainment';
+import { PUB_LAYOUT, pubBackZ, pubFrontZ, pubSideX } from './pub-layout';
+import { disposePubObject, instancePubModel, type PubPlacement } from './pub-models';
+import { batchPubStatic, pubBatchDiagnostics } from './pub-batching';
+import { buildPubClubDecor } from './pub-club-decor';
+
+const FLOOR = -3.6;
+RectAreaLightUniformsLib.init();
+export function buildPub(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
+  const room = new THREE.Group(); scene.add(room);
+  const backBar=new THREE.Group(),backWallFittings=new THREE.Group();backBar.name='pub-rear-bar';backBar.position.z=PUB_LAYOUT.backShift;backBar.add(backWallFittings);room.add(backBar);
+  let propsParent=room;
+  const glows: THREE.MeshStandardMaterial[] = [];
+  let disposed = false;
+  const modelLoader=new GLTFLoader();
+  const installModel=(name:string,placements:PubPlacement[],fallbacks:THREE.Object3D[]=[],parent:THREE.Group=propsParent)=>{
+    modelLoader.load(`/models/pub/${name}.glb`,gltf=>{
+      if(disposed){disposePubObject(gltf.scene);return;}
+      gltf.scene.traverse(object=>{
+        if(!(object instanceof THREE.Mesh))return;
+        if(name==='heritage-jukebox'){
+          const softenGlass=(material:THREE.Material)=>{
+            if(!material.name.startsWith('Optical glass'))return material;
+            const glass=new THREE.MeshPhysicalMaterial({name:material.name,color:'#c4d4c8',transparent:true,opacity:.035,roughness:.14,metalness:0,clearcoat:0,specularIntensity:.08,ior:1.15,depthWrite:false,side:THREE.FrontSide});
+            material.dispose();return glass;
+          };
+          object.material=Array.isArray(object.material)?object.material.map(softenGlass):softenGlass(object.material);
+        }
+        for(const material of Array.isArray(object.material)?object.material:[object.material]){
+          if(material.transparent)material.depthWrite=false;
+          if(name!=='heritage-jukebox'&&material instanceof THREE.MeshStandardMaterial&&material.name.startsWith('Optical glass')){
+            material.opacity=.07;material.roughness=.03;material.metalness=0;material.depthWrite=false;
+          }
+          if(name==='heritage-jukebox'&&material instanceof THREE.MeshStandardMaterial&&material.name==='Black enamel'){
+            material.roughness=.58;material.metalness=.06;material.envMapIntensity=.35;
+          }
+          if(name==='wall-panel'&&material instanceof THREE.MeshStandardMaterial&&material.name==='Warm plaster'){
+            material.color.set('#d8be86');material.roughness=.98;
+          }
+          for(const value of Object.values(material))if(value instanceof THREE.Texture)value.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());
+        }
+      });
+      const model=instancePubModel(gltf.scene,placements);model.name=`pub-${name}`;
+      parent.add(model);
+      for(const fallback of fallbacks)fallback.visible=false;
+    },undefined,()=>{/* The complete procedural prop stays visible if its GLB is unavailable. */});
+  };
+  const loader = new THREE.TextureLoader();
+  const woodColor = loader.load('/wood-color.jpg'), woodNormal = loader.load('/wood-normal.jpg'), woodRoughness = loader.load('/wood-roughness.jpg');
+  woodColor.colorSpace = THREE.SRGBColorSpace;
+  for (const map of [woodColor, woodNormal, woodRoughness]) { map.wrapS = map.wrapT = THREE.RepeatWrapping; map.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy()); }
+  const walnut = new THREE.MeshStandardMaterial({ map:woodColor,normalMap:woodNormal,normalScale:new THREE.Vector2(.24,.24),roughnessMap:woodRoughness,color:'#b39172',roughness:.68 });
+  const brass = new THREE.MeshStandardMaterial({color:'#bc9556',metalness:.78,roughness:.32});
+  const blackMetal = new THREE.MeshStandardMaterial({color:'#232b29',metalness:.7,roughness:.43});
+  const leather = new THREE.MeshPhysicalMaterial({color:'#4e2025',roughness:.57,clearcoat:.18});
+  const box=(w:number,h:number,d:number,mat:THREE.Material,x:number,y:number,z:number,round=.035,parent:THREE.Group=propsParent)=>{
+    const geometry=new RoundedBoxGeometry(w,h,d,2,round);if(w>30){const uv=geometry.getAttribute('uv');for(let i=0;i<uv.count;i++)uv.setX(i,uv.getX(i)*PUB_LAYOUT.expansion);}
+    const mesh=new THREE.Mesh(geometry,mat);mesh.position.set(x,y,z);mesh.castShadow=true;mesh.receiveShadow=true;parent.add(mesh);return mesh;
+  };
+  const cylinder=(rt:number,rb:number,h:number,mat:THREE.Material,x:number,y:number,z:number,parent:THREE.Group=propsParent)=>{
+    const mesh=new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,32),mat);mesh.position.set(x,y,z);mesh.castShadow=true;mesh.receiveShadow=true;parent.add(mesh);return mesh;
+  };
+  const neon=(color:string,intensity=2)=>{
+    const material=new THREE.MeshStandardMaterial({color,emissive:color,emissiveIntensity:intensity,roughness:.3});glows.push(material);return material;
+  };
+  const floor=loader.load('/textures/pub/stone-color.webp'),floorNormal=loader.load('/textures/pub/stone-normal.webp'),floorRoughness=loader.load('/textures/pub/stone-roughness.webp');floor.colorSpace=THREE.SRGBColorSpace;
+  for(const texture of [floor,floorNormal,floorRoughness]){texture.wrapS=texture.wrapT=THREE.RepeatWrapping;texture.repeat.set(4.5*PUB_LAYOUT.expansion,4*PUB_LAYOUT.expansion);texture.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());}
+  const floorMesh=new THREE.Mesh(new THREE.PlaneGeometry(38*PUB_LAYOUT.expansion,34*PUB_LAYOUT.expansion),new THREE.MeshStandardMaterial({map:floor,normalMap:floorNormal,normalScale:new THREE.Vector2(.35,.35),roughnessMap:floorRoughness,color:'#d6c7a9',roughness:.87,metalness:.01}));floorMesh.rotation.x=-Math.PI/2;floorMesh.position.set(0,FLOOR,-2*PUB_LAYOUT.expansion);floorMesh.receiveShadow=true;room.add(floorMesh);
+  const plaster=canvasTexture(256,256,ctx=>{ctx.fillStyle='#ddcda9';ctx.fillRect(0,0,256,256);for(let i=0;i<18000;i++){ctx.fillStyle=`rgba(16,20,13,${Math.random()*.045})`;ctx.fillRect(Math.random()*256,Math.random()*256,2,2);}});
+  const wall=new THREE.MeshStandardMaterial({map:plaster,color:'#fff2dc',roughness:.98});
+  const interior=buildPubInterior(room,{wood:walnut,brass,wall,metal:blackMetal});
+  const billiardFixture=new THREE.Group();billiardFixture.name='billiard-light-fixture';room.add(billiardFixture);
+  installModel('heritage-lamp',[{x:0,y:3.75,z:0,height:2.5}],[],billiardFixture);
+  propsParent=backBar;
+  box(PUB_LAYOUT.bounds.right*2,2.15,.28,walnut,0,FLOOR+1.075,-11.22,.01);
+  for(let x=PUB_LAYOUT.bounds.left+.8;x<=PUB_LAYOUT.bounds.right-.8;x+=1.4){box(.075,2.1,.07,brass,x,FLOOR+1.07,-11.045,.01);box(1.15,.055,.035,brass,x+.65,FLOOR+.22,-11.02,.01);}
+  box(PUB_LAYOUT.bounds.right*2-.1,.14,.4,walnut,0,FLOOR+2.18,-11.07,.025);
+  // Substantial raised bar, inset panels and a polished overhanging countertop.
+  box(17.8,3.72,1.32,walnut,0,FLOOR+1.86,-8.1,.08);
+  const countertop=new THREE.MeshPhysicalMaterial({color:'#b79a78',map:woodColor,normalMap:woodNormal,normalScale:new THREE.Vector2(.13,.13),roughnessMap:woodRoughness,roughness:.36,clearcoat:.85,clearcoatRoughness:.17});
+  box(18.25,.19,1.72,countertop,0,.23,-8.1,.075);
+  const insetWood=new THREE.MeshStandardMaterial({color:'#39271d',roughness:.5});
+  for(let x=-7.5;x<=7.5;x+=2.5){box(2.16,2.4,.025,insetWood,x,-1.48,-7.422,.05);for(const sx of [-1,1])box(.025,2.25,.03,brass,x+sx*1.02,-1.48,-7.398,.005);for(const sy of [-1,1])box(2.05,.025,.03,brass,x,-1.48+sy*1.12,-7.398,.005);}
+  box(17.8,.065,.055,neon('#ffbc69',1.55),0,.065,-7.405,.008);
+  const footRail=cylinder(.055,.055,17.2,brass,0,FLOOR+.44,-6.91);footRail.rotation.z=Math.PI/2;
+  for(const x of [-7,-3.5,0,3.5,7]){const bracket=cylinder(.027,.027,.42,brass,x,FLOOR+.44,-7.12);bracket.rotation.x=Math.PI/2;}
+  const mirror=new THREE.Mesh(new THREE.PlaneGeometry(16.6,4.8),new THREE.MeshPhysicalMaterial({color:'#42514b',metalness:.82,roughness:.2,clearcoat:1}));mirror.position.set(0,1.0,-11.065);backBar.add(mirror);
+  for(const x of [-8.45,8.45])box(.13,5.15,.14,brass,x,1,-10.98,.02);for(const y of [-1.55,3.55])box(17.05,.13,.14,brass,0,y,-10.98,.02);
+  const shelfLevels=[-.95,.45,1.85];
+  for(const y of shelfLevels){box(16.5,.11,.9,walnut,0,y,-10.62,.025);box(16.4,.025,.035,neon('#efb56c',1.45),0,y-.048,-10.255,.006);}
+  // Broad shelf lighting gives glass and polished wood soft reflections.
+  const shelfLight=new THREE.RectAreaLight('#ffdbaf',3.8,15.4,.65);
+  shelfLight.position.set(0,3.1,-9.3);shelfLight.lookAt(0,.3,-10.65);backBar.add(shelfLight);
+  const barBounce=new THREE.RectAreaLight('#f0c39b',1.4,15,2.5);
+  barBounce.position.set(0,1.1,-4.9);barBounce.lookAt(0,-1.1,-8.1);backBar.add(barBounce);
+  const tableApronBounce=new THREE.RectAreaLight('#dfc5ab',.72,8,1.8);
+  tableApronBounce.position.set(0,-.4,6.6);tableApronBounce.lookAt(0,-2.3,0);room.add(tableApronBounce);
+  const bottleColors=['#315e39','#654128','#385c5d','#75562c','#244d37','#6d2930'];
+  const bottleGeometry=new THREE.LatheGeometry([new THREE.Vector2(0,0),new THREE.Vector2(.105,0),new THREE.Vector2(.13,.045),new THREE.Vector2(.13,.45),new THREE.Vector2(.09,.53),new THREE.Vector2(.047,.57),new THREE.Vector2(.047,.78),new THREE.Vector2(0,.79)],20);
+  const bottleNames=['liquor-amber','liquor-green','liquor-square','liquor-decanter'];
+  const bottlePlacements:PubPlacement[][]=bottleNames.map(()=>[]),bottleFallbacks:THREE.Group[]=bottleNames.map(()=>{const group=new THREE.Group();backBar.add(group);return group;});
+  for(let row=0;row<3;row++)for(let i=0;i<24;i++){
+    const cluster=Math.floor(i/4),within=i%4;
+    const x=-7.6+cluster*2.8+within*.32+((row+within)%3)*.04,y=shelfLevels[row]+.055,kind=(i+row*3)%bottleNames.length;
+    const bottle=new THREE.Mesh(bottleGeometry,new THREE.MeshPhysicalMaterial({color:bottleColors[(i+row*3)%bottleColors.length],roughness:.15,clearcoat:1,metalness:.08}));bottle.position.set(x,y,-10.56);bottle.scale.y=.8+((i*7+row)%5)*.12;bottle.castShadow=true;bottleFallbacks[kind].add(bottle);
+    const label=new THREE.Mesh(new THREE.CylinderGeometry(.132,.132,.18,20),new THREE.MeshStandardMaterial({color:(i+row)%3?'#ccbc91':'#392b24',roughness:.9}));label.position.set(x,y+.29*bottle.scale.y,-10.56);bottleFallbacks[kind].add(label);
+    bottlePlacements[kind].push({x,y,z:-10.56,height:.79*bottle.scale.y,rotation:((i*11+row)%7-3)*.07});
+  }
+  for(let i=0;i<8;i++){const kind=i%4,x=(i<4?-6.3:5.6)+(i%4)*.28;const bottle=new THREE.Mesh(bottleGeometry,new THREE.MeshPhysicalMaterial({color:bottleColors[kind],roughness:.14,clearcoat:1}));bottle.position.set(x,.325,-8.66);bottle.scale.y=.83+(i%3)*.1;bottleFallbacks[kind].add(bottle);bottlePlacements[kind].push({x,y:.325,z:-8.66,height:.79*bottle.scale.y,rotation:(i%3-.5)*.16});}
+  // Shelf-sized bottles keep their authored labels and silhouettes; embossed
+  // lettering and tiny radial bevels use the separately authored shelf meshes.
+  bottleNames.forEach((name,i)=>installModel(`${name}-lod`,bottlePlacements[i],[bottleFallbacks[i]],backWallFittings));
+  const signTexture=canvasTexture(2048,384,ctx=>{ctx.fillStyle='#12251e';ctx.fillRect(0,0,2048,384);ctx.strokeStyle='#ad8e52';ctx.lineWidth=8;ctx.strokeRect(15,15,2018,354);ctx.fillStyle='#ead7a8';ctx.textAlign='center';ctx.font='96px Georgia';ctx.fillText('THE CORNER POCKET',1024,184);ctx.font='30px Georgia';ctx.fillStyle='#bd9c60';ctx.fillText('B I L L I A R D S   ·   B E E R   ·   G O O D   C O M P A N Y',1024,272);});
+  const sign=new THREE.Mesh(new THREE.PlaneGeometry(9.5,1.78),new THREE.MeshStandardMaterial({map:signTexture,roughness:.7,emissive:'#dab578',emissiveIntensity:.15}));sign.position.set(0,4.9,-11.03);backBar.add(sign);
+  for(const x of [-6.6,6.6]){
+    box(.14,.58,.18,brass,x,4.55,-10.9,.03);const bulb=cylinder(.2,.16,.5,neon('#ffd89b',2),x,4.15,-10.75);bulb.castShadow=false;
+    const light=new THREE.PointLight('#ffc27d',22,7,2);light.position.set(x,3.9,-9.7);backBar.add(light);
+  }
+  const stoolPositions=[-5.8,-2.9,0,2.9,5.8].map(x=>({x,z:-5.94}));
+  const fallbackStools=new THREE.Group();backBar.add(fallbackStools);
+  for(const {x,z}of stoolPositions){cylinder(.53,.5,.19,leather,x,FLOOR+2.81,z,fallbackStools);cylinder(.09,.15,2.58,blackMetal,x,FLOOR+1.31,z,fallbackStools);cylinder(.54,.61,.08,blackMetal,x,FLOOR+.06,z,fallbackStools);const rest=new THREE.Mesh(new THREE.TorusGeometry(.38,.035,8,36),brass);rest.rotation.x=Math.PI/2;rest.position.set(x,FLOOR+.95,z);fallbackStools.add(rest);}
+  new GLTFLoader().load('/models/stool/metal_stool_01.gltf',gltf=>{
+    if(disposed){disposePubObject(gltf.scene);return;}
+    const model=instancePubModel(gltf.scene,stoolPositions.map(({x,z})=>({x,y:FLOOR,z,height:2.99,rotation:Math.PI})));
+    model.name='pub-scanned-stools';backBar.add(model);
+    fallbackStools.visible=false;
+  },undefined,()=>{/* Keep the modeled fallback if the optional scanned asset cannot load. */});
+  const redSeatTexture=canvasTexture(128,128,ctx=>{ctx.fillStyle='#772e31';ctx.fillRect(0,0,128,128);for(let y=0;y<128;y+=4)for(let x=0;x<128;x+=4){ctx.fillStyle=(x+y)%8?'#ad62561c':'#220f122b';ctx.fillRect(x,y,2,2);}});
+  const redSeat=new THREE.MeshStandardMaterial({map:redSeatTexture,roughness:.91});
+  for(const {x,z}of stoolPositions)cylinder(.52,.53,.115,redSeat,x,FLOOR+3.025,z);
+  propsParent=room;
+  // A curved, illuminated cabinet places a recognisable jukebox beside the table.
+  const jukebox=new THREE.Group();jukebox.position.set(PUB_LAYOUT.jukebox.x-.1,FLOOR,PUB_LAYOUT.jukebox.z);jukebox.rotation.y=PUB_LAYOUT.jukebox.rotation;room.add(jukebox);
+  const outline=new THREE.Shape();outline.moveTo(-1.07,0);outline.lineTo(1.07,0);outline.lineTo(1.07,2.65);outline.absarc(0,2.65,1.07,0,Math.PI,false);outline.lineTo(-1.07,0);
+  const shell=new THREE.Mesh(new THREE.ExtrudeGeometry(outline,{depth:.76,bevelEnabled:true,bevelSize:.06,bevelThickness:.06,bevelSegments:3,steps:1}),new THREE.MeshPhysicalMaterial({color:'#423126',map:woodTexture(),roughness:.32,clearcoat:.6}));shell.position.z=-.38;shell.castShadow=true;jukebox.add(shell);
+  for(let layer=0;layer<3;layer++){
+    const r=1.01-layer*.105,points=[new THREE.Vector3(-r,.12,.46),new THREE.Vector3(-r,2.65,.46)];
+    for(let i=0;i<=40;i++){const angle=Math.PI-i/40*Math.PI;points.push(new THREE.Vector3(Math.cos(angle)*r,2.65+Math.sin(angle)*r,.46));}points.push(new THREE.Vector3(r,.12,.46));
+    const tube=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points),96,.026,8,false),neon(['#ffc071','#65ccbd','#f59177'][layer],1.7));jukebox.add(tube);
+  }
+  box(1.52,1.05,.06,new THREE.MeshStandardMaterial({color:'#172520',roughness:.75}),0,.83,.43,.05,jukebox);
+  for(let x=-.67;x<=.68;x+=.135)box(.025,.92,.045,brass,x,.83,.48,.009,jukebox);
+  const record=cylinder(.54,.54,.035,new THREE.MeshStandardMaterial({color:'#171a16',roughness:.24}),0,2.38,.47,jukebox);record.rotation.x=Math.PI/2;
+  const recordLabel=cylinder(.15,.15,.04,new THREE.MeshStandardMaterial({color:'#c39a59',roughness:.55}),0,2.38,.48,jukebox);recordLabel.rotation.x=Math.PI/2;
+  const glass=new THREE.Mesh(new THREE.PlaneGeometry(1.41,1.35),new THREE.MeshPhysicalMaterial({color:'#bddacf',transparent:true,opacity:.13,roughness:.06,metalness:.3,depthWrite:false}));glass.position.set(0,2.4,.53);jukebox.add(glass);
+  for(let i=0;i<7;i++)box(.12,.095,.045,new THREE.MeshStandardMaterial({color:i%2?'#eee0b9':'#e5a662',roughness:.25}),-.51+i*.17,1.47,.53,.02,jukebox);
+  const jukeboxLight=new THREE.PointLight('#eaa56a',3,5,2);jukeboxLight.position.set(PUB_LAYOUT.jukebox.x+.9,-.45,PUB_LAYOUT.jukebox.z);room.add(jukeboxLight);
+  installModel('heritage-jukebox',[{...PUB_LAYOUT.jukebox}],[jukebox]);
+  // Blender-authored furniture replaces complete fallback groups after loading.
+  const fallbackBenches=new THREE.Group(),fallbackTables=new THREE.Group(),fallbackPints=new THREE.Group(),fallbackChairs=new THREE.Group(),fallbackTaps=new THREE.Group();
+  room.add(fallbackBenches,fallbackTables,fallbackPints,fallbackChairs,fallbackTaps);
+  const benchPlacements:PubPlacement[]=[],tablePlacements:PubPlacement[]=[],pintPlacements:PubPlacement[]=[],chairPlacements:PubPlacement[]=[];
+  const addTable=(x:number,z:number)=>{
+    box(2.62,.14,1.48,countertop,x,FLOOR+2.35,z,.11,fallbackTables);cylinder(.16,.2,2.18,blackMetal,x,FLOOR+1.11,z,fallbackTables);cylinder(.67,.67,.06,blackMetal,x,FLOOR+.04,z,fallbackTables);
+    tablePlacements.push({x,y:FLOOR,z,height:2.42});
+  };
+  const addPint=(x:number,y:number,z:number,rotation=0)=>{
+    cylinder(.13,.09,.41,new THREE.MeshPhysicalMaterial({color:'#b28430',roughness:.13,metalness:.2,clearcoat:1}),x,y+.215,z,fallbackPints);cylinder(.18,.18,.02,new THREE.MeshStandardMaterial({color:'#b49c74',roughness:.95}),x,y+.01,z,fallbackPints);
+    pintPlacements.push({x,y,z,height:.46,rotation});
+  };
+  // Opposed leather booths retain a clear aisle around the playing table.
+  for(const z of [-3.25,3.0]){
+    for(const sign of [-1,1]){
+      box(3.05,.52,.89,leather,pubSideX(10.55),FLOOR+1.31,z+sign*1.37,.16,fallbackBenches);box(3.15,1.58,.24,leather,pubSideX(10.55),FLOOR+2.0,z+sign*1.82,.13,fallbackBenches);box(3.0,.93,.67,walnut,pubSideX(10.55),FLOOR+.61,z+sign*1.37,.035,fallbackBenches);
+      for(const x of [9.4,10.18,10.95,11.7]){const button=new THREE.Mesh(new THREE.SphereGeometry(.035,8,6),brass);button.position.set(pubSideX(x),FLOOR+2.15,z+sign*1.675);fallbackBenches.add(button);}
+      benchPlacements.push({x:pubSideX(10.55),y:FLOOR,z:z+sign*1.55,rotation:sign<0?0:Math.PI,height:2.7});
+    }
+    addTable(pubSideX(10.55),z);addPint(pubSideX(10.1),FLOOR+2.42,z-.22,.15);addPint(pubSideX(10.8),FLOOR+2.42,z+.31,-.5);
+    const lampShade=cylinder(.32,.48,.4,new THREE.MeshStandardMaterial({color:'#b69457',roughness:.7}),pubSideX(11.4),FLOOR+3.05,z);lampShade.castShadow=false;cylinder(.045,.11,.55,brass,pubSideX(11.4),FLOOR+2.67,z);
+    const light=new THREE.PointLight('#eeba77',15,6,2);light.position.set(pubSideX(11.4),FLOOR+3.1,z);room.add(light);
+  }
+  for(const [oldX,oldZ]of [[-10.65,3.2],[-10.65,7.15],[9.7,7.25],[-5.25,8.35],[5.25,8.35]]){
+    const x=Math.abs(oldX)>8?pubSideX(oldX):oldX,z=oldZ>5?pubFrontZ(oldZ):oldZ;
+    addTable(x,z);addPint(x-.53,FLOOR+2.42,z-.1,.35);addPint(x+.48,FLOOR+2.42,z+.14,-.8);
+    for(const sign of [-1,1]){
+      const chair=new THREE.Group();chair.position.set(x,FLOOR,z+sign*1.45);chair.rotation.y=sign<0?0:Math.PI;fallbackChairs.add(chair);
+      box(1.02,.17,.94,leather,0,1.31,0,.08,chair);box(1.02,1.34,.15,walnut,0,2.01,-.39,.04,chair);
+      for(const cx of [-.4,.4])for(const cz of [-.35,.35])box(.095,1.27,.095,walnut,cx,.635,cz,.018,chair);
+      chairPlacements.push({x,y:FLOOR,z:z+sign*1.45,rotation:chair.rotation.y,height:2.76});
+    }
+  }
+  const tapPlacements:PubPlacement[]=[];fallbackTaps.position.z=PUB_LAYOUT.backShift;
+  for(const x of [-4.9,0,4.9]){
+    box(1.28,.045,.62,blackMetal,x,.3475,-8.12,.035,fallbackTaps);
+    for(const dx of [-.37,0,.37]){
+      cylinder(.055,.07,.85,brass,x+dx,.785,-8.21,fallbackTaps);
+      const spout=cylinder(.035,.035,.32,brass,x+dx,.99,-8.06,fallbackTaps);spout.rotation.x=Math.PI/2;
+      box(.11,.24,.1,leather,x+dx,1.2,-8.19,.025,fallbackTaps);
+    }
+    tapPlacements.push({x,y:.325,z:pubBackZ(-8.12),height:1.172});
+    addPint(x+.88,.325,pubBackZ(-7.78),.2);
+  }
+  // A working back bar: glass racks, folded towels, an order terminal and serving trays.
+  const glassMaterial=new THREE.MeshPhysicalMaterial({color:'#d5e6db',transparent:true,opacity:.23,roughness:.12,metalness:.03,clearcoat:1,depthWrite:false});
+  const glassGeometry=new THREE.CylinderGeometry(.095,.075,.31,14,1,true),stemGeometry=new THREE.CylinderGeometry(.02,.02,.16,8),footGeometry=new THREE.CylinderGeometry(.095,.095,.018,14);
+  const glasses=new THREE.InstancedMesh(glassGeometry,glassMaterial,42),stems=new THREE.InstancedMesh(stemGeometry,glassMaterial,42),feet=new THREE.InstancedMesh(footGeometry,glassMaterial,42),matrix=new THREE.Matrix4();
+  for(let i=0;i<42;i++){const x=-7.65+(i%14)*1.17,y=shelfLevels[Math.floor(i/14)]+.055;glasses.setMatrixAt(i,matrix.makeTranslation(x,y+.31,pubBackZ(-10.12)));stems.setMatrixAt(i,matrix.makeTranslation(x,y+.09,pubBackZ(-10.12)));feet.setMatrixAt(i,matrix.makeTranslation(x,y+.012,pubBackZ(-10.12)));}
+  interior.walls.back.add(glasses,stems,feet);
+  propsParent=backBar;
+  const towel=new THREE.MeshStandardMaterial({color:'#e4d9ba',roughness:1});for(const x of [-6.3,1.3]){box(.62,.06,.44,towel,x,.37,-7.89,.018);box(.025,.009,.39,leather,x-.19,.405,-7.89,.003);box(.025,.009,.39,leather,x+.19,.405,-7.89,.003);}
+  box(.85,.13,.57,blackMetal,7.6,.405,-8.05,.04);const till=box(.8,.59,.09,blackMetal,7.6,.72,-8.2,.045);till.rotation.x=-.2;box(.65,.39,.012,new THREE.MeshStandardMaterial({color:'#74a894',emissive:'#86bfa9',emissiveIntensity:.13}),7.6,.74,-8.132,.02);
+  for(const x of [-6.9,6.3]){const tray=cylinder(.33,.33,.045,brass,x,.36,-7.86);tray.material=brass;}
+  propsParent=room;
+  installModel('booth-bench',benchPlacements,[fallbackBenches]);
+  installModel('oak-pub-table',tablePlacements,[fallbackTables]);
+  installModel('pub-chair',chairPlacements,[fallbackChairs]);
+  installModel('pub-pint',pintPlacements,[fallbackPints]);
+
+  // Local ambient occlusion under feet grounds furniture without a room-wide shadow pass.
+  const contactMap=canvasTexture(128,128,ctx=>{const gradient=ctx.createRadialGradient(64,64,8,64,64,63);gradient.addColorStop(0,'rgba(0,0,0,.65)');gradient.addColorStop(.42,'rgba(0,0,0,.38)');gradient.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=gradient;ctx.fillRect(0,0,128,128);});
+  const contacts:Array<[number,number,number,number]>=[];
+  for(const p of stoolPositions)contacts.push([p.x,pubBackZ(p.z),1.6,1.6]);
+  for(const p of tablePlacements)contacts.push([p.x,p.z,1.9,1.65]);
+  for(const p of benchPlacements)contacts.push([p.x,p.z,3.4,1.5]);
+  for(const p of chairPlacements)for(const x of [-.4,.4])for(const z of [-.4,.4])contacts.push([p.x+x,p.z+z,.62,.62]);
+  contacts.push([PUB_LAYOUT.jukebox.x+.13,PUB_LAYOUT.jukebox.z,1.55,2.8],[pubSideX(-12.25),pubBackZ(-7.3),4.1,2.7]);
+  const contactShadows=new THREE.InstancedMesh(new THREE.PlaneGeometry(1,1),new THREE.MeshBasicMaterial({map:contactMap,transparent:true,depthWrite:false,toneMapped:false,opacity:.72}),contacts.length);
+  const contactRotation=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0),-Math.PI/2);
+  contacts.forEach(([x,z,w,d],i)=>contactShadows.setMatrixAt(i,new THREE.Matrix4().compose(new THREE.Vector3(x,FLOOR+.012,z),contactRotation,new THREE.Vector3(w,d,1))));
+  contactShadows.name='furniture-contact-occlusion';contactShadows.computeBoundingSphere();room.add(contactShadows);
+
+  installModel('brass-beer-taps',tapPlacements,[fallbackTaps]);
+  // Full moulded panels face inward along both side walls and the rear wings.
+  const panels:PubPlacement[]=[];
+  for(const x of [-16.5,-13.5,-10.5,10.5,13.5,16.5])panels.push({x,y:FLOOR,z:pubBackZ(-11.14)});
+  installModel('wall-panel',panels,[],interior.walls.back);
+  for(const side of [-1,1]){
+    const sidePanels:PubPlacement[]=[];for(const z of [-11.9,-8.9,-5.9,-2.9,.1,3.1,6.1,9.1,12.1])sidePanels.push({x:pubSideX(side*14.57),y:FLOOR,z,rotation:-side*Math.PI/2,height:2.15});
+    installModel('wall-panel',sidePanels,[],side<0?interior.walls.left:interior.walls.right);
+  }
+  installModel('wall-panel',[-15,-12,-9,-6,6,9,12,15].map(x=>({x,y:FLOOR,z:pubFrontZ(11.7),rotation:Math.PI,height:2.15})),[],interior.walls.front);
+  propsParent=backBar;
+  // Wall-mounted cue rack with full-length cues, chalk shelf and framed club prints.
+  for(const x of [-12.55,-11.7,-10.85,-10]){const cue=cylinder(.028,.056,4.0,new THREE.MeshStandardMaterial({color:'#b89055',roughness:.4}),x,FLOOR+2.2,-10.77);cue.rotation.z=-.025;}
+  box(3.45,.13,.4,walnut,-11.28,FLOOR+.2,-10.72,.025);box(3.45,.12,.23,walnut,-11.28,FLOOR+3.7,-10.75,.025);
+  for(const x of [-12.3,12.3]){
+    box(1.8,2.4,.15,brass,x,2.15,-11.02,.04);
+    const art=canvasTexture(256,384,ctx=>{ctx.fillStyle='#202f27';ctx.fillRect(0,0,256,384);ctx.fillStyle='#bb9b65';ctx.textAlign='center';ctx.font='32px Georgia';ctx.fillText(x<0?'EST. 1928':'OPEN LATE',128,67);ctx.beginPath();ctx.arc(128,205,78,0,Math.PI*2);ctx.fill();ctx.fillStyle='#26332a';ctx.beginPath();ctx.arc(128,205,62,0,Math.PI*2);ctx.fill();ctx.fillStyle='#d9c795';ctx.font='bold 65px Georgia';ctx.fillText('8',128,227);});
+    const print=new THREE.Mesh(new THREE.PlaneGeometry(1.62,2.23),new THREE.MeshStandardMaterial({map:art,roughness:.83}));print.position.set(x,2.15,-10.935);backBar.add(print);
+  }
+  // Back-wall fittings follow the rear cutaway too, so a rear orbit never looks through opaque framed prints.
+  for(const object of [...backBar.children])if(object instanceof THREE.Mesh&&object.position.z< -10.2)backWallFittings.add(object);
+  const dressing=buildPubDressing(room,renderer,interior.walls);
+  const gallery=buildPubGallery(room,renderer,interior.walls);
+  const drinks=buildPubDrinks(room,renderer,{shelfParent:interior.walls.back});
+  const entertainment=buildPubEntertainment(room,renderer,interior.walls);
+  const clubDecor=buildPubClubDecor(interior.walls,renderer);
+  // Group boundaries remain intact: fallback visibility, walls, screens and the
+  // hanging fixture can still change independently. No work runs per frame.
+  for(const section of [room,backBar,backWallFittings])batchPubStatic(section);
+  return {
+    group: room,
+    diagnostics:()=>({...pubBatchDiagnostics(room),clubDecor:clubDecor.diagnostics()}),
+    withEnclosedRoom(capture:()=>void) {
+      const objects=[...Object.values(interior.walls),backWallFittings,billiardFixture];
+      const visibility=objects.map(object=>object.visible);
+      try{for(const object of objects)object.visible=true;capture();}
+      finally{objects.forEach((object,index)=>object.visible=visibility[index]);}
+    },
+    update(time:number,camera:THREE.Camera){
+      interior.update(camera);
+      backWallFittings.visible=interior.walls.back.visible;
+      updateBilliardFixture(billiardFixture,camera);
+      dressing.update(time);
+      entertainment.update(time,camera);
+      for(let i=0;i<glows.length;i++)glows[i].emissiveIntensity=1.7+Math.sin(time*.6+i)*.05;
+    },
+    dispose(){
+      disposed=true;
+      entertainment.dispose();drinks.dispose();gallery.dispose();dressing.dispose();clubDecor.dispose();
+      room.removeFromParent();disposePubObject(room);
+    },
+  };
+}

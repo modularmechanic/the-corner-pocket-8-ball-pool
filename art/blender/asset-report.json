@@ -1,0 +1,57 @@
+{
+  "heritage-jukebox": {
+    "vertices": 43728,
+    "triangles": 78304,
+    "bytes": 7163120
+  },
+  "brass-beer-taps": {
+    "vertices": 16456,
+    "triangles": 30360,
+    "bytes": 803316
+  },
+  "pub-pint": {
+    "vertices": 5574,
+    "triangles": 10324,
+    "bytes": 283456
+  },
+  "liquor-amber": {
+    "vertices": 20102,
+    "triangles": 34288,
+    "bytes": 892772
+  },
+  "liquor-green": {
+    "vertices": 19122,
+    "triangles": 32600,
+    "bytes": 849432
+  },
+  "liquor-square": {
+    "vertices": 21160,
+    "triangles": 36160,
+    "bytes": 942820
+  },
+  "liquor-decanter": {
+    "vertices": 22838,
+    "triangles": 39248,
+    "bytes": 1023860
+  },
+  "pub-chair": {
+    "vertices": 5552,
+    "triangles": 10932,
+    "bytes": 5536516
+  },
+  "booth-bench": {
+    "vertices": 8190,
+    "triangles": 15460,
+    "bytes": 5652552
+  },
+  "oak-pub-table": {
+    "vertices": 1610,
+    "triangles": 3176,
+    "bytes": 5229316
+  },
+  "wall-panel": {
+    "vertices": 1824,
+    "triangles": 3572,
+    "bytes": 5239584
+  }
+}

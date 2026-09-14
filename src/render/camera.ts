@@ -1,0 +1,103 @@
+import * as THREE from 'three';
+
+export interface OrbitAngles { yaw:number;pitch:number }
+const DEG=Math.PI/180;
+const bounds:THREE.Vector3[]=[];
+for(const x of [-6.55,6.55])for(const z of [-3.68,3.68])for(const y of [-1.45,.55])bounds.push(new THREE.Vector3(x,y,z));
+for(const x of [-5.2,5.2])for(const z of [-2.85,2.85])bounds.push(new THREE.Vector3(x,-3.6,z));
+
+export function clampOrbit({yaw,pitch}:OrbitAngles):OrbitAngles {
+  yaw=THREE.MathUtils.euclideanModulo(yaw+Math.PI,Math.PI*2)-Math.PI;
+  // The rear and side walls require a higher sightline; the open front permits side inspection.
+  const wallFacing=Math.max(-Math.cos(yaw),Math.abs(Math.sin(yaw)));
+  const minimum=(22+24*THREE.MathUtils.smoothstep(wallFacing,.35,.9))*DEG;
+  return {yaw,pitch:THREE.MathUtils.clamp(pitch,minimum,78*DEG)};
+}
+export function orbitFromDirection(direction:THREE.Vector3):OrbitAngles {
+  return clampOrbit({yaw:Math.atan2(direction.x,direction.z),pitch:Math.atan2(direction.y,Math.hypot(direction.x,direction.z))});
+}
+export function advanceOrbit(angles:OrbitAngles,dx:number,dy:number):OrbitAngles {
+  if(!Number.isFinite(dx)||!Number.isFinite(dy))return {...angles};
+  return clampOrbit({yaw:angles.yaw-dx*.005,pitch:angles.pitch+dy*.004});
+}
+export function orbitDirection({yaw,pitch}:OrbitAngles):THREE.Vector3 {
+  return new THREE.Vector3(Math.sin(yaw)*Math.cos(pitch),Math.sin(pitch),Math.cos(yaw)*Math.cos(pitch));
+}
+/** Analytic framing keeps the full table visible without iterative projection or render-target work. */
+export function fitTableCamera(camera:THREE.PerspectiveCamera,target:THREE.Vector3,direction:THREE.Vector3,aspect:number):number {
+  camera.aspect=aspect;camera.up.set(0,1,0);
+  const forward=direction.clone().normalize(),right=new THREE.Vector3().crossVectors(camera.up,forward).normalize(),up=new THREE.Vector3().crossVectors(forward,right);
+  const tanV=Math.tan(camera.fov*DEG/2),tanH=tanV*aspect;
+  let distance=8;
+  for(const corner of bounds){
+    const offset=corner.clone().sub(target),x=offset.dot(right),y=offset.dot(up);
+    const depth=Math.max(Math.abs(x)/(.92*tanH),Math.abs(y)/((y>=0?.8:.86)*tanV));
+    distance=Math.max(distance,offset.dot(forward)+depth);
+  }
+  distance+=.025;camera.far=Math.max(100,distance+55);camera.position.copy(target).addScaledVector(forward,distance);camera.lookAt(target);camera.updateProjectionMatrix();camera.updateMatrixWorld(true);
+  return distance;
+}
+
+export function tableFramingBounds():THREE.Vector3[]{return bounds.map(point=>point.clone());}
+
+/** The table center stays at the viewport center in both screen orientations. */
+export function fitOverheadCamera(camera:THREE.OrthographicCamera,aspect:number):void {
+  aspect=Number.isFinite(aspect)&&aspect>0?aspect:16/9;
+  const portrait=aspect<1;
+  const horizontal=portrait?3.72:6.60,vertical=portrait?6.60:3.72;
+  const halfHeight=Math.max(vertical/.86,horizontal/(aspect*.9));
+  camera.left=-halfHeight*aspect;camera.right=halfHeight*aspect;camera.top=halfHeight;camera.bottom=-halfHeight;
+  // An exact vertical view needs a horizontal up vector to avoid a singular lookAt.
+  camera.up.set(portrait?1:0,0,portrait?0:-1);
+  camera.position.set(0,23,0);camera.lookAt(0,0,0);camera.updateProjectionMatrix();camera.updateMatrixWorld(true);
+}
+
+type ViewCamera=THREE.PerspectiveCamera|THREE.OrthographicCamera;
+export interface CameraViewSelection {
+  overhead:boolean;inspection:boolean;inspectionPose?:{position:THREE.Vector3;target:THREE.Vector3};
+  orbit:OrbitAngles|null;target:THREE.Vector3;
+}
+/** A held inspection can never overwrite the view to which release returns. */
+export class TemporaryCameraView {
+  private saved:CameraViewSelection|null=null;
+  get active():boolean{return this.saved!==null;}
+  begin(view:CameraViewSelection):void {
+    if(this.saved)return;
+    this.saved={...view,orbit:view.orbit?{...view.orbit}:null,target:view.target.clone(),
+      inspectionPose:view.inspectionPose?{position:view.inspectionPose.position.clone(),target:view.inspectionPose.target.clone()}:undefined};
+  }
+  release():CameraViewSelection|null {const result=this.saved;this.saved=null;return result;}
+  clear():void {this.saved=null;}
+}
+/** Blend view and projection together, avoiding a hard perspective/orthographic switch. */
+export class CameraTransition {
+  readonly camera=new THREE.PerspectiveCamera(47,1,.035,120);
+  private source:{position:THREE.Vector3;quaternion:THREE.Quaternion;projection:THREE.Matrix4;near:number;far:number}|null=null;
+  private age=0;
+  private duration=.65;
+  get active():boolean{return this.source!==null;}
+  begin(from:ViewCamera,duration=.65):void {
+    from.updateMatrixWorld(true);
+    this.source={position:from.position.clone(),quaternion:from.quaternion.clone(),projection:from.projectionMatrix.clone(),near:from.near,far:from.far};
+    this.duration=Math.max(.001,duration);this.age=0;
+    this.camera.position.copy(from.position);this.camera.quaternion.copy(from.quaternion);
+    this.camera.projectionMatrix.copy(from.projectionMatrix);this.camera.projectionMatrixInverse.copy(from.projectionMatrixInverse);this.camera.updateMatrixWorld(true);
+  }
+  update(to:ViewCamera,dt:number):void {
+    if(!this.source)return;
+    this.age+=Number.isFinite(dt)?Math.max(0,Math.min(.1,dt)):0;
+    const t=THREE.MathUtils.smootherstep(this.age,0,this.duration),from=this.source;
+    this.camera.position.lerpVectors(from.position,to.position,t);this.camera.quaternion.copy(from.quaternion).slerp(to.quaternion,t);
+    if(t===1)this.camera.projectionMatrix.copy(to.projectionMatrix);
+    else for(let i=0;i<16;i++)this.camera.projectionMatrix.elements[i]=THREE.MathUtils.lerp(from.projection.elements[i],to.projectionMatrix.elements[i],t);
+    this.camera.projectionMatrixInverse.copy(this.camera.projectionMatrix).invert();
+    this.camera.near=Math.min(from.near,to.near);this.camera.far=Math.max(from.far,to.far);this.camera.updateMatrixWorld(true);
+    if(t===1)this.source=null;
+  }
+}
+
+/** Ray unprojection also supports cameras whose projection is between lens types. */
+export function rayFromViewport(camera:ViewCamera,x:number,y:number):THREE.Ray {
+  const near=new THREE.Vector3(x,y,-1).unproject(camera),far=new THREE.Vector3(x,y,1).unproject(camera);
+  return new THREE.Ray(near,far.sub(near).normalize());
+}

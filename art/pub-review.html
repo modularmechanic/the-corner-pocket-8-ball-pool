@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><title>Pub lighting review</title><style>body{margin:0;background:#100e0c;color:#e9d4b1;font:14px system-ui}#scene{position:fixed;inset:0}nav{position:fixed;top:12px;left:12px;display:flex;flex-wrap:wrap;gap:8px;z-index:2}button{background:#211e18;color:inherit;border:1px solid #6a5941;padding:9px 14px;border-radius:6px}</style><div id="scene"></div><nav><button id="front">Table</button><button id="gallery">Fireplace & gallery</button><button id="side">Brick snug</button><button id="room">Pub interior</button><button id="photos">Photographs</button><button id="slots">Slot machines</button><button id="drinks">Cocktail bar</button><button id="tv">Sports TV</button><button id="music">Jukebox</button></nav><script type="module">
+import{PoolScene}from'/src/render/scene.ts';import{initialState}from'/src/simulation/types.ts';import{Vector3}from'three';
+const view=new PoolScene(document.querySelector('#scene'),()=>{});view.setQuality('high');const state=initialState('pub-review');
+function angle(pos,target){view.setInspection(true,{position:new Vector3(...pos),target:new Vector3(...target)});}
+document.querySelector('#front').onclick=()=>view.resetView();
+document.querySelector('#gallery').onclick=()=>angle([0,6,-18],[1,-.1,7]);
+document.querySelector('#side').onclick=()=>angle([-11,4.2,5],[12,.8,0]);
+document.querySelector('#room').onclick=()=>angle([12,4,12],[-1,1,-8]);
+document.querySelector('#photos').onclick=()=>angle([-8,2,5],[-14,2,14.3]);
+document.querySelector('#slots').onclick=()=>angle([-8,2,6],[-18,0,6]);
+document.querySelector('#drinks').onclick=()=>angle([0,2,-6],[0,.8,-13]);
+document.querySelector('#tv').onclick=()=>angle([8,2,-4],[18,3.4,-9]);
+document.querySelector('#music').onclick=()=>angle([-8,1,-2],[-18,-1.4,-2]);
+let then=performance.now();function frame(now){view.update(state,Math.min(.033,(now-then)/1000),false);then=now;requestAnimationFrame(frame)}requestAnimationFrame(frame);
+</script>

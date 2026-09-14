@@ -1,0 +1,25 @@
+{
+  "source": "https://polyhaven.com/a/monastery_stone_floor",
+  "author": "Amal Kumar",
+  "license": "CC0-1.0",
+  "maps": {
+    "stone-roughness.jpg": {
+      "originalBytes": 1744682,
+      "sha256": "61f87f8049b21153b6db25fdcd184c4297642ada2e31c07db03f6810c9f952c3",
+      "optimizedFile": "stone-roughness.webp",
+      "optimizedBytes": 292750
+    },
+    "stone-color.jpg": {
+      "originalBytes": 3021140,
+      "sha256": "aa12137fff1728bbbfe98b30480e33a34cba3b5c096575702c1d66939214e14a",
+      "optimizedFile": "stone-color.webp",
+      "optimizedBytes": 772798
+    },
+    "stone-normal.jpg": {
+      "originalBytes": 4248820,
+      "sha256": "8f3e131a9d6d9c3a95c872173393830f7c1de389cd60d4878b2211058d706d2c",
+      "optimizedFile": "stone-normal.webp",
+      "optimizedBytes": 2033768
+    }
+  }
+}

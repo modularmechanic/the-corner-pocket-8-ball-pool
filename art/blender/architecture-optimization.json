@@ -1,0 +1,22 @@
+{
+  "hearth-fireplace": {
+    "originalBytes": 16893820,
+    "optimizedBytes": 976928
+  },
+  "heritage-lamp": {
+    "originalBytes": 898428,
+    "optimizedBytes": 411408
+  },
+  "snug-divider": {
+    "originalBytes": 5331820,
+    "optimizedBytes": 371940
+  },
+  "memorabilia-frame": {
+    "originalBytes": 7371932,
+    "optimizedBytes": 1279512
+  },
+  "cask-stack": {
+    "originalBytes": 7068148,
+    "optimizedBytes": 1225920
+  }
+}

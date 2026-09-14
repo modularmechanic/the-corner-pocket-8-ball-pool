@@ -1,0 +1,32 @@
+{
+  "hearth-fireplace": {
+    "vertices": 7082,
+    "faces": 6163,
+    "materials": 9,
+    "bytes": 16893820
+  },
+  "heritage-lamp": {
+    "vertices": 18212,
+    "faces": 16850,
+    "materials": 6,
+    "bytes": 898428
+  },
+  "snug-divider": {
+    "vertices": 3660,
+    "faces": 3436,
+    "materials": 4,
+    "bytes": 5331820
+  },
+  "memorabilia-frame": {
+    "vertices": 47864,
+    "faces": 43322,
+    "materials": 5,
+    "bytes": 7371932
+  },
+  "cask-stack": {
+    "vertices": 38440,
+    "faces": 33662,
+    "materials": 9,
+    "bytes": 7068148
+  }
+}

@@ -1,0 +1,143 @@
+{
+  "fixture": "current",
+  "loadedRequests": 44,
+  "meshes": 334,
+  "drawCalls": 338,
+  "transparentDrawCalls": 30,
+  "triangles": 1243563,
+  "materials": 293,
+  "geometries": 312,
+  "constructionMs": 149,
+  "errors": [],
+  "topTriangleContributors": [
+    {
+      "name": "pub-scanned-stools/metal_stool_01",
+      "triangles": 41670,
+      "instances": 5
+    },
+    {
+      "name": "pub-pub-pint/Cone035_4",
+      "triangles": 41548,
+      "instances": 17
+    },
+    {
+      "name": "pub-pub-pint/Cone035_2",
+      "triangles": 38386,
+      "instances": 17
+    },
+    {
+      "name": "pub-pub-chair/Cone056_1",
+      "triangles": 33460,
+      "instances": 10
+    },
+    {
+      "name": "pub-memorabilia-frame-right/Cube035_1",
+      "triangles": 32236,
+      "instances": 1
+    },
+    {
+      "name": "pub-slot-machines/pub-batch:Ivory keys.006",
+      "triangles": 30198,
+      "instances": 3
+    },
+    {
+      "name": "pub-pub-pint/Cone035_5",
+      "triangles": 28220,
+      "instances": 17
+    },
+    {
+      "name": "pub-slot-machines/pub-batch:Printed dark ink.006",
+      "triangles": 27498,
+      "instances": 3
+    }
+  ],
+  "diagnostics": {
+    "visibleDrawCalls": 338,
+    "constructionSubmissionsRemoved": 402,
+    "sections": [
+      {
+        "name": "static pub props",
+        "before": 676,
+        "after": 675,
+        "saved": 1
+      },
+      {
+        "name": "pub-rear-bar",
+        "before": 310,
+        "after": 260,
+        "saved": 50
+      },
+      {
+        "name": "static pub props",
+        "before": 78,
+        "after": 15,
+        "saved": 63
+      },
+      {
+        "name": "pub-room-left",
+        "before": 97,
+        "after": 8,
+        "saved": 89
+      },
+      {
+        "name": "pub-slot-machines",
+        "before": 30,
+        "after": 12,
+        "saved": 18
+      },
+      {
+        "name": "pub-room-right",
+        "before": 71,
+        "after": 9,
+        "saved": 62
+      },
+      {
+        "name": "pub-sports-televisions",
+        "before": 12,
+        "after": 7,
+        "saved": 5
+      },
+      {
+        "name": "pub-pool-history-right",
+        "before": 32,
+        "after": 5,
+        "saved": 27
+      },
+      {
+        "name": "pub-room-front",
+        "before": 34,
+        "after": 9,
+        "saved": 25
+      },
+      {
+        "name": "pub-team-photographs",
+        "before": 16,
+        "after": 7,
+        "saved": 9
+      },
+      {
+        "name": "pub-pool-history-front",
+        "before": 48,
+        "after": 6,
+        "saved": 42
+      },
+      {
+        "name": "pub-room-ceiling",
+        "before": 18,
+        "after": 8,
+        "saved": 10
+      },
+      {
+        "name": "pub-room-details",
+        "before": 4,
+        "after": 3,
+        "saved": 1
+      }
+    ],
+    "clubDecor": {
+      "loadedModels": 3,
+      "drawCalls": 13,
+      "triangles": 4966
+    }
+  }
+}

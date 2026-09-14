@@ -1,0 +1,54 @@
+{
+  "fixture": "baseline",
+  "loadedRequests": 36,
+  "meshes": 456,
+  "drawCalls": 460,
+  "transparentDrawCalls": 28,
+  "triangles": 3171110,
+  "materials": 251,
+  "geometries": 379,
+  "constructionMs": 130,
+  "errors": [],
+  "topTriangleContributors": [
+    {
+      "name": "pub-liquor-decanter/Cube062_3",
+      "triangles": 177040,
+      "instances": 20
+    },
+    {
+      "name": "pub-liquor-square/Cube058_3",
+      "triangles": 162840,
+      "instances": 20
+    },
+    {
+      "name": "pub-liquor-amber/Formed_bottle_3",
+      "triangles": 145880,
+      "instances": 20
+    },
+    {
+      "name": "pub-liquor-decanter/Cube062_1",
+      "triangles": 142040,
+      "instances": 20
+    },
+    {
+      "name": "pub-liquor-amber/Formed_bottle_1",
+      "triangles": 142040,
+      "instances": 20
+    },
+    {
+      "name": "pub-liquor-square/Cube058_1",
+      "triangles": 142040,
+      "instances": 20
+    },
+    {
+      "name": "pub-liquor-green/Formed_bottle001_3",
+      "triangles": 136880,
+      "instances": 20
+    },
+    {
+      "name": "pub-liquor-green/Formed_bottle001_4",
+      "triangles": 130680,
+      "instances": 20
+    }
+  ]
+}

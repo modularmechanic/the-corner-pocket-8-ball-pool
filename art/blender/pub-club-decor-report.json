@@ -1,0 +1,20 @@
+{
+  "scene": "Corner Pocket - Club display authoring.001",
+  "assets": {
+    "club-decor-left": {
+      "triangles": 1010,
+      "materials": 5,
+      "bytes": 57472
+    },
+    "club-decor-right": {
+      "triangles": 3390,
+      "materials": 4,
+      "bytes": 108756
+    },
+    "club-decor-front": {
+      "triangles": 566,
+      "materials": 4,
+      "bytes": 24492
+    }
+  }
+}

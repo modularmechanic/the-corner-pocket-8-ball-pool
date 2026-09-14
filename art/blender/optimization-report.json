@@ -1,0 +1,46 @@
+{
+  "booth-bench.glb": {
+    "originalBytes": 5652552,
+    "optimizedBytes": 458080
+  },
+  "brass-beer-taps.glb": {
+    "originalBytes": 803316,
+    "optimizedBytes": 338484
+  },
+  "heritage-jukebox.glb": {
+    "originalBytes": 7163120,
+    "optimizedBytes": 1059024
+  },
+  "liquor-amber.glb": {
+    "originalBytes": 892772,
+    "optimizedBytes": 374556
+  },
+  "liquor-decanter.glb": {
+    "originalBytes": 1023860,
+    "optimizedBytes": 425768
+  },
+  "liquor-green.glb": {
+    "originalBytes": 849432,
+    "optimizedBytes": 363092
+  },
+  "liquor-square.glb": {
+    "originalBytes": 942820,
+    "optimizedBytes": 391892
+  },
+  "oak-pub-table.glb": {
+    "originalBytes": 5229316,
+    "optimizedBytes": 298256
+  },
+  "pub-chair.glb": {
+    "originalBytes": 5536516,
+    "optimizedBytes": 390284
+  },
+  "pub-pint.glb": {
+    "originalBytes": 283456,
+    "optimizedBytes": 184408
+  },
+  "wall-panel.glb": {
+    "originalBytes": 5239584,
+    "optimizedBytes": 283252
+  }
+}

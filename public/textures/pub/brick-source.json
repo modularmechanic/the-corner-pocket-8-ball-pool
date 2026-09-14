@@ -1,0 +1,118 @@
+{
+  "assetId": "medieval_red_brick",
+  "name": "Medieval Red Brick",
+  "provider": "Poly Haven",
+  "source": "https://polyhaven.com/a/medieval_red_brick",
+  "authors": {
+    "Rob Tuytel": "All"
+  },
+  "license": "CC0-1.0",
+  "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "providerLicenseUrl": "https://polyhaven.com/license",
+  "retrievedAt": "2026-09-14T04:34:20.167303+00:00",
+  "api": {
+    "info": "https://api.polyhaven.com/info/medieval_red_brick",
+    "files": "https://api.polyhaven.com/files/medieval_red_brick",
+    "filesHash": "0c85fc4d6307962d24b467ac6266c8cbce5a353f"
+  },
+  "physicalSizeMeters": [
+    2,
+    2
+  ],
+  "resolution": [
+    2048,
+    2048
+  ],
+  "notes": "Original photographic PBR material, weathered red/brown bricks and pale mortar. Apply color as sRGB; normal and roughness as non-color data. Normal is OpenGL (+Y). JPG originals are retained for Blender; WebP derivatives are for browser runtime.",
+  "files": [
+    {
+      "path": "art/blender/textures/brick-color.jpg",
+      "kind": "original",
+      "map": "color",
+      "colorSpace": "sRGB",
+      "bytes": 3392093,
+      "sha256": "6115ef3edd7c27a68dce57606ac6050b60313262565dcdc473c9a2ba8fd421e7",
+      "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/medieval_red_brick/medieval_red_brick_diff_2k.jpg",
+      "providerMd5": "6b91c83521af46571d5c59175c0c81fd",
+      "providerMd5Verified": true,
+      "providerSizeVerified": true
+    },
+    {
+      "path": "public/textures/pub/brick-color.webp",
+      "kind": "browser",
+      "map": "color",
+      "colorSpace": "sRGB",
+      "bytes": 1138594,
+      "sha256": "90d0f5b554e594908e18305965ec70c704f012304a0e64c1eb9b4a337aacd5f4",
+      "derivedFrom": "art/blender/textures/brick-color.jpg",
+      "conversion": {
+        "tool": "cwebp",
+        "quality": 90,
+        "method": 6,
+        "sharpYuv": true
+      }
+    },
+    {
+      "path": "art/blender/textures/brick-normal.jpg",
+      "kind": "original",
+      "map": "normal",
+      "colorSpace": "linear",
+      "bytes": 4720254,
+      "sha256": "bdb1e04f5e4d4b7e5716749ef597ae709766a9961f501e3af5da327c4467ca01",
+      "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/medieval_red_brick/medieval_red_brick_nor_gl_2k.jpg",
+      "providerMd5": "8798408548501d9db4a5b97a1d9bedd7",
+      "providerMd5Verified": true,
+      "providerSizeVerified": true
+    },
+    {
+      "path": "public/textures/pub/brick-normal.webp",
+      "kind": "browser",
+      "map": "normal",
+      "colorSpace": "linear",
+      "bytes": 2357330,
+      "sha256": "1e356ec64cfef8ada25777c5c439276eee7c7ac6b330136839a60c113bb79bbc",
+      "derivedFrom": "art/blender/textures/brick-normal.jpg",
+      "conversion": {
+        "tool": "cwebp",
+        "quality": 95,
+        "method": 6,
+        "sharpYuv": true
+      }
+    },
+    {
+      "path": "art/blender/textures/brick-roughness.jpg",
+      "kind": "original",
+      "map": "roughness",
+      "colorSpace": "linear",
+      "bytes": 1709093,
+      "sha256": "49f2779dda535487e20e0459713be7bbfd1e449b1ec8940d58b4eeb187abbb20",
+      "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/medieval_red_brick/medieval_red_brick_rough_2k.jpg",
+      "providerMd5": "f31aa7d5ef3c4726771a36c975c8b177",
+      "providerMd5Verified": true,
+      "providerSizeVerified": true
+    },
+    {
+      "path": "public/textures/pub/brick-roughness.webp",
+      "kind": "browser",
+      "map": "roughness",
+      "colorSpace": "linear",
+      "bytes": 263820,
+      "sha256": "4686cd8128f23114198d53a03d2b811bbee7dfe18ea20b8ee4185e2c18f5e222",
+      "derivedFrom": "art/blender/textures/brick-roughness.jpg",
+      "conversion": {
+        "tool": "cwebp",
+        "quality": 90,
+        "method": 6,
+        "sharpYuv": true
+      }
+    }
+  ],
+  "validation": {
+    "status": "passed",
+    "originalProviderMd5": "3/3 matched",
+    "originalProviderSize": "3/3 matched",
+    "copiedSha256": "6/6 matched",
+    "originalImageDimensions": "3/3 2048x2048",
+    "scope": "Source authenticity and copied-byte integrity; engine artistic integration remains a separate task."
+  }
+}

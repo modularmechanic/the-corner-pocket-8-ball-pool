@@ -1,0 +1,118 @@
+{
+  "generatedBy": "OpenAI built-in image generation",
+  "fictional": true,
+  "grid": {
+    "columns": 2,
+    "rows": 2,
+    "order": [
+      "top-left",
+      "top-right",
+      "bottom-left",
+      "bottom-right"
+    ]
+  },
+  "runtimeEncoding": {
+    "format": "WebP",
+    "width": 1024,
+    "height": 1024,
+    "quality": 87
+  },
+  "atlases": [
+    {
+      "era": "1980s",
+      "source": "public/textures/pub/pool-1980s-atlas.png",
+      "runtime": "public/textures/pub/pool-1980s-atlas.webp",
+      "scenes": [
+        "Top-left: five adult men and two adult women crowd around a green English pool table after a 1982 winter league final, friendly candid grins and one small silver trophy, dark timber pub interior.",
+        "Top-right: an adult woman with short curled hair leans into a pool shot during a 1985 ladies singles evening while two female friends watch from red upholstered chairs.",
+        "Bottom-left: an older adult male club captain presents a small cup to a young adult man in a striped polo beside a pub pool table during a 1987 club awards evening, bystanders caught mid-applause.",
+        "Bottom-right: a mixed adult doubles charity team of four, one Black man, two white women and one South Asian man, laughing beside a racked pool table in a 1989 neighborhood pub; brass lamps and patterned wallpaper."
+      ],
+      "sourceDimensions": [
+        1254,
+        1254
+      ],
+      "sourceBytes": 2332441,
+      "sourceSha256": "75ba34820e66b51ac6a8ae53c029e79e1514ba4b4de17383d06b7f48d282ba6b",
+      "runtimeBytes": 147322,
+      "runtimeSha256": "f64e3e786f273dbdcba4de80afc54129f68572fb465f21885d98069aae83aad8"
+    },
+    {
+      "era": "1990s",
+      "source": "public/textures/pub/pool-1990s-atlas.png",
+      "runtime": "public/textures/pub/pool-1990s-atlas.webp",
+      "scenes": [
+        "Top-left: 1991 adult mixed league team of six in mismatched casual shirts proudly holding a modest shield trophy beside a green pool table, crowded brick-walled local pub.",
+        "Top-right: candid 1994 doubles match, two adult women strategizing at the corner of a pool table with cue sticks, one seated opponent watches, warm brass overhead lamps.",
+        "Bottom-left: 1996 small charity pool marathon break, three adult men and two adult women sharing a laugh and a tray of sandwiches at the pool table edge, paper decorations without text.",
+        "Bottom-right: 1999 adult South Asian pool player receives a cup from an older white woman club organizer, two mates clap nearby; narrow pub league room with red bench seats."
+      ],
+      "sourceDimensions": [
+        1254,
+        1254
+      ],
+      "sourceBytes": 2357239,
+      "sourceSha256": "e7eaac8ec5c86d2a7e8e0231eda92c249d02f3b90da50741a5069b59fe4c6a13",
+      "runtimeBytes": 155422,
+      "runtimeSha256": "6b1b152ebb6a9e5d51f48f93294af3bbb47c96036de858dfc6d1d537c45fa4a0"
+    },
+    {
+      "era": "2000s",
+      "source": "public/textures/pub/pool-2000s-atlas.png",
+      "runtime": "public/textures/pub/pool-2000s-atlas.webp",
+      "scenes": [
+        "Top-left: 2002 local pool-club group of five adults, varied ages and backgrounds, smiling behind a freshly racked green table, two small league cups on rail, modest neighborhood pub.",
+        "Top-right: 2005 women\u2019s pool tournament semifinal, adult woman in a blue polo lining up a serious shot, three adult women in background watching quietly near timber bar.",
+        "Bottom-left: 2007 married adult mixed doubles partners cheering a successful shot, opponents laughing in the background, red booths and glass-front drinks cabinet.",
+        "Bottom-right: 2009 older adult club stalwart receives a retirement trophy from a young adult Black captain beside a pool table, candid warm applause from a small diverse adult crowd."
+      ],
+      "sourceDimensions": [
+        1254,
+        1254
+      ],
+      "sourceBytes": 2244962,
+      "sourceSha256": "8f319f9d27e3c4ca805d684c6623b4d62800b111a7eebc28a5cf600e841d2747",
+      "runtimeBytes": 136504,
+      "runtimeSha256": "00cf0a43c10b5b7e74e9925c26f3b4573b1a4851885bcd44344ffe077b01c153"
+    },
+    {
+      "era": "2010s",
+      "source": "public/textures/pub/pool-2010s-atlas.png",
+      "runtime": "public/textures/pub/pool-2010s-atlas.webp",
+      "scenes": [
+        "Top-left: 2011 mixed adult community pool team of seven crouching and standing behind a table for a club photo, one small trophy, relaxed uneven poses, busy welcoming pub.",
+        "Top-right: 2014 two adult women doubles partners at a tense deciding rack, one shoots while partner watches over cue, green felt and brass lamps, spectators soft in background.",
+        "Bottom-left: 2016 charity pool night, adult man in wheelchair and adult woman teammate joking with two standing adult opponents, spacious real pub pool aisle, cues held naturally.",
+        "Bottom-right: 2019 league presentation, older adult Asian woman player lifting a modest silver cup while her four adult teammates clap, worn wood bar and memorabilia behind."
+      ],
+      "sourceDimensions": [
+        1254,
+        1254
+      ],
+      "sourceBytes": 2222201,
+      "sourceSha256": "09dec9727e25094942ed802218b7cb1e4911dd602ac4e17071af64af4272d796",
+      "runtimeBytes": 143752,
+      "runtimeSha256": "f07269d2b3c819970f0038751cdb15a614e98cac5b322df2063efcb56aef40ff"
+    },
+    {
+      "era": "2020s",
+      "source": "public/textures/pub/pool-2020s-atlas.png",
+      "runtime": "public/textures/pub/pool-2020s-atlas.webp",
+      "scenes": [
+        "Top-left: 2021 neighborhood pool-club reopening celebration, six adult players in ordinary casual clothes around a green table with a small team cup, happy candid expressions, familiar timber pub.",
+        "Top-right: 2023 mixed adult doubles league game, a Black woman in a plain dark polo studies her shot, male teammate steps aside with cue, two opponents watch from a red booth.",
+        "Bottom-left: 2024 adult women\u2019s pool club group portrait, six diverse adult women aged twenties through sixties holding cues, relaxed asymmetrical arrangement by a green table and bar stools.",
+        "Bottom-right: 2025 intergenerational charity tournament, older adult man and young adult woman jointly accepting a small trophy, two adult organizers laughing, warm local pub with pool table foreground."
+      ],
+      "sourceDimensions": [
+        1254,
+        1254
+      ],
+      "sourceBytes": 2212935,
+      "sourceSha256": "7c027174bf2487d3149bb45809a1007fa0004c16029831d0d560c84fca8a5a2a",
+      "runtimeBytes": 148890,
+      "runtimeSha256": "f5748ad27fd329fb68ccde99d9e4b6df52d0e4cdb3b90d3e1dc99549605d1b31"
+    }
+  ],
+  "runtimeTotalBytes": 731890
+}

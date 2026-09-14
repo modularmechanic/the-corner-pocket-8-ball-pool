@@ -1,0 +1,26 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pool render benchmark</title>
+<style>body{margin:0;background:#100e0c;color:#eee;font:13px system-ui}#scene{position:fixed;inset:0}nav{position:fixed;top:12px;left:12px;display:flex;gap:8px;z-index:2}button,select{background:#211e18;color:inherit;border:1px solid #6a5941;padding:9px 14px;border-radius:6px}output{position:fixed;left:12px;bottom:12px;z-index:2;white-space:pre-wrap;background:#100e0cea;padding:12px;min-width:250px;pointer-events:none;font:12px/1.5 monospace}</style>
+<div id="scene"></div><nav><select id="quality" aria-label="Quality"><option value="auto">Auto</option><option value="performance">Performance</option><option value="high">High</option><option value="ultra">Ultra</option></select><button id="start">Measure 15 seconds</button><button id="overhead">Overhead</button><button id="cue">Cue view</button><button id="room">Room</button></nav><output id="metrics">Loading assets. Wait for reflections to settle before measuring.</output>
+<script type="module">
+import{PoolScene}from'/src/render/scene.ts';import{initialState}from'/src/simulation/types.ts';import{Vector3}from'three';
+const query=new URLSearchParams(location.search),quality=query.get('quality')||'auto';
+const view=new PoolScene(document.querySelector('#scene'),()=>{});view.setQuality(quality);document.querySelector('#quality').value=quality;
+const state=initialState('browser-performance');state.shotCount=1;
+const positions={0:[-2.85,0],6:[-1.2,.16],7:[.1,-.65],10:[1.1,.7],12:[1.7,-.45],3:[3,.3],8:[4,1.65]};
+for(const ball of state.balls){ball.pocketed=!positions[ball.id];if(positions[ball.id])[ball.x,ball.z]=positions[ball.id];}
+view.aim.angle=0;view.aim.power=.65;
+let samples=[],cpu=[],draws=[],triangles=[],deadline=0,last=performance.now(),nextUI=0,measured=false;
+const sorted=a=>[...a].sort((x,y)=>x-y),mean=a=>a.reduce((x,y)=>x+y,0)/Math.max(1,a.length),p95=a=>sorted(a)[Math.floor(a.length*.95)]||0;
+function result(){return{quality:document.querySelector('#quality').value,viewport:[innerWidth,innerHeight],render:view.getResolution(),frames:samples.length,fps:+(1000/mean(samples)).toFixed(1),frameP95Ms:+p95(samples).toFixed(2),cpuMeanMs:+mean(cpu).toFixed(2),cpuP95Ms:+p95(cpu).toFixed(2),meanDrawCalls:Math.round(mean(draws)),meanTriangles:Math.round(mean(triangles)),runtime:view.getPerformance?.()};}
+function reset(){samples=[];cpu=[];draws=[];triangles=[];deadline=performance.now()+15000;measured=false;}
+document.querySelector('#start').onclick=reset;
+document.querySelector('#quality').onchange=e=>{view.setQuality(e.target.value);deadline=0;measured=false;};
+document.querySelector('#overhead').onclick=()=>{view.setOverhead(true);deadline=0;measured=false;};
+document.querySelector('#cue').onclick=()=>{view.resetView();deadline=0;measured=false;};
+document.querySelector('#room').onclick=()=>{view.setInspection(true,{position:new Vector3(12,4,12),target:new Vector3(-1,1,-8)});deadline=0;measured=false;};
+view.renderer.info.autoReset=false;
+function frame(now){const delta=now-last;last=now;view.renderer.info.reset();const begin=performance.now();view.update(state,Math.min(.06,delta/1000),true);const cost=performance.now()-begin;
+if(deadline){samples.push(delta);cpu.push(cost);draws.push(view.renderer.info.render.calls);triangles.push(view.renderer.info.render.triangles);if(now>=deadline){deadline=0;measured=true;document.querySelector('#metrics').textContent=JSON.stringify(result(),null,2);}}
+if(!measured&&now>nextUI){nextUI=now+1000;document.querySelector('#metrics').textContent=deadline?`Measuring · ${Math.ceil((deadline-now)/1000)}s\n${samples.length} frames`:`Ready · ${document.querySelector('#quality').value}\n${JSON.stringify(view.getPerformance?.()||{drawCalls:view.renderer.info.render.calls,triangles:view.renderer.info.render.triangles,resolution:view.getResolution()},null,2)}`;}
+requestAnimationFrame(frame)}requestAnimationFrame(frame);
+</script>

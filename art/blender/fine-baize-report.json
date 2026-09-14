@@ -1,0 +1,30 @@
+{
+  "authoring": "Blender MCP",
+  "textures": [
+    {
+      "file": "/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/table/baize-color.png",
+      "width": 2048,
+      "height": 2048
+    },
+    {
+      "file": "/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/table/baize-normal.png",
+      "width": 1024,
+      "height": 1024
+    },
+    {
+      "file": "/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/table/baize-height.png",
+      "width": 1024,
+      "height": 1024
+    },
+    {
+      "file": "/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/table/baize-roughness.png",
+      "width": 1024,
+      "height": 1024
+    },
+    {
+      "file": "/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/table/baize-surface.png",
+      "width": 1024,
+      "height": 1024
+    }
+  ]
+}

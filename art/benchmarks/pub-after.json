@@ -1,0 +1,126 @@
+{
+  "fixture": "current",
+  "loadedRequests": 41,
+  "meshes": 306,
+  "drawCalls": 310,
+  "transparentDrawCalls": 28,
+  "triangles": 1181561,
+  "materials": 274,
+  "geometries": 294,
+  "constructionMs": 150,
+  "errors": [],
+  "topTriangleContributors": [
+    {
+      "name": "pub-scanned-stools/metal_stool_01",
+      "triangles": 41670,
+      "instances": 5
+    },
+    {
+      "name": "pub-pub-pint/Cone035_4",
+      "triangles": 41548,
+      "instances": 17
+    },
+    {
+      "name": "pub-pub-pint/Cone035_2",
+      "triangles": 38386,
+      "instances": 17
+    },
+    {
+      "name": "pub-pub-chair/Cone056_1",
+      "triangles": 33460,
+      "instances": 10
+    },
+    {
+      "name": "pub-memorabilia-frame-right/Cube035_1",
+      "triangles": 32236,
+      "instances": 1
+    },
+    {
+      "name": "pub-slot-machines/pub-batch:Ivory keys.006",
+      "triangles": 30198,
+      "instances": 3
+    },
+    {
+      "name": "pub-pub-pint/Cone035_5",
+      "triangles": 28220,
+      "instances": 17
+    },
+    {
+      "name": "pub-slot-machines/pub-batch:Printed dark ink.006",
+      "triangles": 27498,
+      "instances": 3
+    }
+  ],
+  "diagnostics": {
+    "visibleDrawCalls": 310,
+    "constructionSubmissionsRemoved": 333,
+    "sections": [
+      {
+        "name": "static pub props",
+        "before": 676,
+        "after": 675,
+        "saved": 1
+      },
+      {
+        "name": "pub-rear-bar",
+        "before": 310,
+        "after": 260,
+        "saved": 50
+      },
+      {
+        "name": "static pub props",
+        "before": 78,
+        "after": 15,
+        "saved": 63
+      },
+      {
+        "name": "pub-room-left",
+        "before": 97,
+        "after": 8,
+        "saved": 89
+      },
+      {
+        "name": "pub-slot-machines",
+        "before": 30,
+        "after": 12,
+        "saved": 18
+      },
+      {
+        "name": "pub-room-right",
+        "before": 71,
+        "after": 9,
+        "saved": 62
+      },
+      {
+        "name": "pub-sports-televisions",
+        "before": 12,
+        "after": 7,
+        "saved": 5
+      },
+      {
+        "name": "pub-room-front",
+        "before": 34,
+        "after": 9,
+        "saved": 25
+      },
+      {
+        "name": "pub-team-photographs",
+        "before": 16,
+        "after": 7,
+        "saved": 9
+      },
+      {
+        "name": "pub-room-ceiling",
+        "before": 18,
+        "after": 8,
+        "saved": 10
+      },
+      {
+        "name": "pub-room-details",
+        "before": 4,
+        "after": 3,
+        "saved": 1
+      }
+    ]
+  }
+}
