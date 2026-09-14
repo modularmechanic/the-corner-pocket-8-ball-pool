@@ -23,7 +23,8 @@ function readOnlyView<T extends object>(source:T):T {
 let initialization: Promise<void> | null = null;
 const GRAVITY = 14;
 const FLIGHT_EPSILON = .004;
-export function initPhysics() { return initialization ??= RAPIER.init(); }
+// The browser build aliases @dimforge/rapier3d, which instantiates its .wasm on import and has no init().
+export function initPhysics() { return initialization ??= Promise.resolve(RAPIER.init?.()); }
 export class PoolGame {
   private current!: GameState;
   private stateView!: Readonly<GameState>;
