@@ -71,6 +71,17 @@ test('an idle match shares one frozen state view across frames until a command o
   } finally { match.dispose(); }
 });
 
+test('a warm cached view picks up idle pickup spawns and expiries', () => {
+  const match = new LocalMatch({ seed: 'warm-cache', mode: 'local' });
+  try {
+    assert.ok(match.state.arcade);
+    for (const seconds of [10, 15]) {
+      match.update(seconds);
+      assert.deepEqual(match.state.arcade!.pickups, match.snapshot().arcade!.pickups);
+    }
+  } finally { match.dispose(); }
+});
+
 test('all three AI seats use authorized commands; humans cannot take over a doubles AI partner', () => {
   const match = new LocalMatch({ seed: 'ai-seats', mode: 'ai', options: { format: 'doubles' }, random: () => .5 });
   try {

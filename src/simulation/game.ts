@@ -372,6 +372,8 @@ export class PoolGame {
     arcade.pickups=arcade.pickups.filter(p=>p.available);arcade.pickups.push(pickup);
     this.emit({kind:'spawn',x,z,pickup:pickup.id,power:pickup.power,strength:.45});
   }
+  // LocalMatch reuses its frozen state view on a quiet table and refreshes only the clock.
+  // Every other visible idle change here (spawn, expiry) must emit an event to invalidate that view.
   private advancePickups(dt:number) {
     const arcade=this.current.arcade;if(!arcade)return;
     arcade.clock=(arcade.clock||0)+dt;
