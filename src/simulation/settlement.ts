@@ -1,5 +1,5 @@
 import { spawnTemporaryPortals } from './arcade';
-import { isClearBallSpot, snookered, type BallClearancePolicy } from './table-geometry';
+import { HEAD_STRING_X, isClearBallSpot, snookered, type BallClearancePolicy } from './table-geometry';
 import {
   BLACK_SPOT,
   groupOf,
@@ -135,7 +135,7 @@ export function settleShot(input: GameState, result: ShotResult, context: Settle
   const respotEight = offTable.includes(8);
   if (!eightBreak)
     for (const id of [...offTable].sort((a, b) => (a === 8 ? -1 : b === 8 ? 1 : a - b)))
-      if (id > 0 && !respot(id, blackSpots(), id === 8 ? 'eight-respot' : 'object-respot'))
+      if (id > 0 && !respot(id, blackSpots(old), id === 8 ? 'eight-respot' : 'object-respot'))
         respot(id, objectSpots(), 'object-respot');
   const rerack = eightBreak || (foul && illegalBreak);
   if (eightPotted) {
@@ -177,15 +177,16 @@ export function settleShot(input: GameState, result: ShotResult, context: Settle
       state.message = 'Foul break. Re-racked: the other side breaks with two visits.';
     }
   } else if (foul) {
-    // New Rules: a cue ball lost on a fair break only passes the turn.
-    const turnOnly = !old && isBreak && scratched && offTable.every((id) => id === 0);
+    // New Rules: an in-off on a fair break only passes the turn; any ball off the table is a standard foul.
+    const turnOnly = !old && isBreak && shot.potted.includes(0) && offTable.length === 0;
     state.turn = other(shooter);
     state.shotsLeft = turnOnly ? 0 : 2;
     // A lost cue ball must be placed in the kitchen. Otherwise Old Rules offer a free shot and optional kitchen
-    // placement; New Rules offer both only when the incoming player is foul snookered. The EPA poster is silent on a
-    // snooker after an in-off, so a lost cue ball never earns a free ball here, even if every kitchen spot is snookered.
-    state.freeShot = old ? true : !scratched && snookered(state, state.turn);
-    state.phase = scratched || state.freeShot ? 'ball-in-hand' : 'ready';
+    // placement; New Rules offer both only when the incoming player is foul snookered, judged below once this shot's
+    // portals have opened or closed. The EPA poster is silent on a snooker after an in-off, so a lost cue ball never
+    // earns a free ball here, even if every kitchen spot is snookered.
+    state.freeShot = old;
+    state.phase = scratched || old ? 'ball-in-hand' : 'ready';
     const reason = offTable.length
       ? 'Ball left the table'
       : scratched
@@ -213,8 +214,10 @@ export function settleShot(input: GameState, result: ShotResult, context: Settle
           ? 'No pot. Your second visit.'
           : 'Over to the other side. Make it count.';
   }
-  // A black on the break re-racks for the same breaker, so the partners do not rotate.
-  if (state.format === 'doubles' && !eightBreak) state.teamOrder[shooter] = other(state.teamOrder[shooter]);
+  // A black on the break re-racks for the same breaker, so the partners do not rotate; the player who potted makes a
+  // group choice, and the partners rotate once it is made.
+  if (state.format === 'doubles' && !eightBreak && !choosing)
+    state.teamOrder[shooter] = other(state.teamOrder[shooter]);
   if (arcade) {
     const lostCue = scratched && !eightBreak;
     arcade.combo = foul ? 0 : ownPotted;
@@ -234,8 +237,9 @@ export function settleShot(input: GameState, result: ShotResult, context: Settle
     };
     if (state.winner === null) {
       if (arcade.scratchStreak[shooter] >= 2) award(['overdrive', 'ward', 'focus'], 'scratch-streak');
-      // Arcade debuff on top of the foul for potting an opponent's ball alongside your own.
-      if (ownPotted > 0 && opponentPotted > 0) award(['frozen', 'jammed', 'sticky'], 'mixed-pot');
+      // Arcade debuff on top of the foul for potting an opponent's ball alongside your own; a legal mixed pot (the
+      // shot that decides a New Rules nomination) carries none.
+      if (foul && ownPotted > 0 && opponentPotted > 0) award(['frozen', 'jammed', 'sticky'], 'mixed-pot');
       if (previous <= 4 && arcade.potStreak[shooter] > 4) award(['frozen', 'jammed', 'sticky'], 'pot-streak');
     }
     const created = context.pendingPortal && state.winner === null && spawnTemporaryPortals(state);
@@ -244,6 +248,10 @@ export function settleShot(input: GameState, result: ShotResult, context: Settle
       arcade.hazards = arcade.hazards.filter((h) => h.kind !== 'portal');
       arcade.portalTurns = 0;
     }
+  }
+  if (foul && !old && !scratched && !eightPotted && !rerack && snookered(state, state.turn)) {
+    state.freeShot = true;
+    state.phase = 'ball-in-hand';
   }
   return {
     state,
@@ -268,26 +276,38 @@ export function settleShot(input: GameState, result: ShotResult, context: Settle
 export function groupChoice(
   state: GameState,
   group: unknown,
-): Pick<GameState, 'groups' | 'nominated' | 'phase' | 'message'> | null {
+): Pick<GameState, 'groups' | 'nominated' | 'phase' | 'message' | 'teamOrder'> | null {
   if (state.phase !== 'choose-group' || (group !== 'solids' && group !== 'stripes')) return null;
   const potted = state.lastPotted.some((id) => groupOf(id) === group),
-    groups: GameState['groups'] = [null, null];
+    groups: GameState['groups'] = [null, null],
+    teamOrder: GameState['teamOrder'] = [...state.teamOrder];
   groups[state.turn] = group;
   groups[other(state.turn)] = group === 'solids' ? 'stripes' : 'solids';
+  // Doubles partners rotate after the shot only once its player has chosen.
+  if (state.format === 'doubles') teamOrder[state.turn] = other(teamOrder[state.turn]);
   return potted
-    ? { groups, nominated: null, phase: 'ready', message: `You are on ${group}.` }
-    : { groups: [null, null], nominated: group, phase: 'ready', message: `Pot one of the ${group} to claim them.` };
+    ? { groups, nominated: null, phase: 'ready', message: `You are on ${group}.`, teamOrder }
+    : {
+        groups: [null, null],
+        nominated: group,
+        phase: 'ready',
+        message: `Pot one of the ${group} to claim them.`,
+        teamOrder,
+      };
 }
 
 function* wardSpots() {
   for (let x = -2.85; x < 5.2; x += 0.4) for (let z = -2.3; z < 2.4; z += 0.4) yield { x, z };
 }
-/** The black's rack position, then the nearest clear point along the table's long axis. EPA spotting works along
- * that line; at equal distance the side toward the foot cushion is tried first. */
-function* blackSpots() {
+/** The black's rack position, then the nearest clear point on the long axis: New Rules (EPA S2d) go toward the foot
+ * cushion and only then toward the head string; Old Rules (EPA 5G) go toward the head string only. */
+function* blackSpots(old: boolean) {
   yield BLACK_SPOT;
-  for (let step = 1; step < 32; step++)
-    for (const side of [1, -1]) yield { x: BLACK_SPOT.x + side * step * TABLE.radius * 2.2, z: 0 };
+  for (const side of old ? [-1] : [1, -1])
+    for (let x = BLACK_SPOT.x + side * TABLE.radius * 2.2; x >= HEAD_STRING_X && x <= TABLE.halfWidth;) {
+      yield { x, z: 0 };
+      x += side * TABLE.radius * 2.2;
+    }
 }
 function* objectSpots() {
   for (let ring = 0; ring < 28; ring++)

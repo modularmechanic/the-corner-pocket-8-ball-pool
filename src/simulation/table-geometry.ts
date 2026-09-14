@@ -145,7 +145,10 @@ export interface TableContact extends Point {
 /** Grounded-ball contact query shared by guides and AI. Portals end the local path.
  * Pocket circles occupy real gaps between the rail segments. Flying balls use
  * their sphere cross-section at the grounded moving ball's height. */
-export function firstTableBoundary(state: GameState, origin: Point, angle: number): TableContact {
+/** A snooker line ignores straight cushions, and jaws and pocket mouths farther than this from the cue ball (EPA: a
+ * cushion never snookers, a jaw only when it is close to the cue ball). Two ball diameters. */
+export const JAW_SNOOKER_RANGE = TABLE.radius * 4;
+export function firstTableBoundary(state: GameState, origin: Point, angle: number, snookerLine = false): TableContact {
   const dx = Math.cos(angle),
     dz = Math.sin(angle);
   let nearest: TableContact = { kind: 'edge', id: -1, distance: Infinity, x: origin.x, z: origin.z };
@@ -153,22 +156,26 @@ export function firstTableBoundary(state: GameState, origin: Point, angle: numbe
     if (length < nearest.distance)
       nearest = { kind, id, distance: length, x: origin.x + dx * length, z: origin.z + dz * length };
   };
-  for (const [id, rail] of TABLE_RAILS.entries())
-    accept(
-      'rail',
-      id,
-      roundedBoxRay(origin, dx, dz, { ...rail, width: rail.halfWidth * 2, depth: rail.halfDepth * 2 }, TABLE.radius),
-    );
+  const jaw = (kind: TableContact['kind'], id: number, length: number) => {
+    if (!snookerLine || length <= JAW_SNOOKER_RANGE) accept(kind, id, length);
+  };
+  if (!snookerLine)
+    for (const [id, rail] of TABLE_RAILS.entries())
+      accept(
+        'rail',
+        id,
+        roundedBoxRay(origin, dx, dz, { ...rail, width: rail.halfWidth * 2, depth: rail.halfDepth * 2 }, TABLE.radius),
+      );
   for (const [id, nose] of TABLE_NOSES.entries()) {
     const radius = Math.sqrt((TABLE.radius + nose.radius) ** 2 - (TABLE.radius - nose.y) ** 2);
-    accept('rail', TABLE_RAILS.length + id, circleRay(origin, dx, dz, nose, radius));
+    jaw('rail', TABLE_RAILS.length + id, circleRay(origin, dx, dz, nose, radius));
   }
   for (const obstacle of state.arcade?.obstacles ?? [])
     if (obstacle.hp > 0) accept('obstacle', obstacle.id, roundedBoxRay(origin, dx, dz, obstacle, TABLE.radius));
   for (const hazard of state.arcade?.hazards ?? [])
     if (hazard.kind === 'portal') accept('portal', hazard.id, circleRay(origin, dx, dz, hazard, hazard.radius));
   for (const [id, pocket] of POCKETS.entries())
-    accept('pocket', id, circleRay(origin, dx, dz, pocket, TABLE.pocketRadius));
+    jaw('pocket', id, circleRay(origin, dx, dz, pocket, TABLE.pocketRadius));
   // A grazing path may miss both a jaw and the pocket. Bound the preview at the
   // outer table, without inventing a cushion across that opening.
   if (!Number.isFinite(nearest.distance)) {
@@ -178,10 +185,16 @@ export function firstTableBoundary(state: GameState, origin: Point, angle: numbe
   }
   return nearest;
 }
-export function firstTableContact(state: GameState, origin: Point, angle: number, ignoreBall = 0): TableContact {
+export function firstTableContact(
+  state: GameState,
+  origin: Point,
+  angle: number,
+  ignoreBall = 0,
+  snookerLine = false,
+): TableContact {
   const dx = Math.cos(angle),
     dz = Math.sin(angle);
-  let nearest = firstTableBoundary(state, origin, angle);
+  let nearest = firstTableBoundary(state, origin, angle, snookerLine);
   for (const ball of state.balls) {
     if (ball.id === ignoreBall || ball.pocketed || (ball.elevation ?? 0) >= TABLE.radius * 2) continue;
     const length = circleRay(origin, dx, dz, ball, Math.sqrt((TABLE.radius * 2) ** 2 - (ball.elevation ?? 0) ** 2));
@@ -229,15 +242,15 @@ export function isCueLie(state: GameState, point: Point): boolean {
   return !cue.pocketed && point.x === cue.x && point.z === cue.z;
 }
 /** Foul snooker test (EPA): the player cannot hit both extreme edges of any ball they are on in a straight line. Other
- * balls, blocks, portals, pocket mouths and cushion noses block; balls the player is on never do, and a ball already
- * touching the cue ball is never snookered.
+ * balls, blocks and portals block, and jaws and pocket mouths within JAW_SNOOKER_RANGE of the cue ball; straight
+ * cushions and balls the player is on never do, and a ball already touching the cue ball is never snookered.
  * ponytail: each edge is one ray aimed just inside the extreme (6.3 / 6), so a blocker grazing the very rim is missed. */
 export function snookered(state: GameState, player: 0 | 1): boolean {
   const cue = state.balls[0];
   if (cue.pocketed) return false;
   const targets = legalTargets({ ...state, freeShot: false }, player);
   const reaches = (angle: number) => {
-    const contact = firstTableContact(state, cue, angle);
+    const contact = firstTableContact(state, cue, angle, 0, true);
     return contact.kind === 'ball' && targets.some((ball) => ball.id === contact.id);
   };
   return (

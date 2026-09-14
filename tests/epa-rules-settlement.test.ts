@@ -112,7 +112,7 @@ test('black on the break: re-rack and the same player breaks again, ignoring eve
     }
 });
 
-test('New Rules: a cue ball lost on a fair break only passes the turn and is placed behind the head string', () => {
+test('New Rules: an in-off on a fair break only passes the turn and is placed behind the head string', () => {
   const lost = settle(breaking('new'), { potted: [0, 3] }).state;
   assert.deepEqual(view(lost), { turn: 1, phase: 'ball-in-hand', shotsLeft: 0, foul: true, freeShot: false });
   assert.equal(lost.balls[0].pocketed, true);
@@ -123,6 +123,12 @@ test('New Rules: a cue ball lost on a fair break only passes the turn and is pla
     'Old Rules treat it as any other foul',
   );
   assert.equal(settle(breaking('new'), { potted: [0], offTable: [5] }).state.shotsLeft, 2, 'a ball off is standard');
+  const jumped = settle(breaking('new'), { potted: [3], offTable: [0] }).state;
+  assert.deepEqual(
+    [jumped.turn, jumped.shotsLeft, jumped.phase, jumped.foul],
+    [1, 2, 'ball-in-hand', true],
+    'a cue ball off the table on a fair break is a standard foul: two visits',
+  );
 });
 
 test('groups: Old Rules decide from a single-group break pot; balls of both groups, or any New Rules break pot, ask for a choice', () => {
@@ -252,19 +258,31 @@ test('the black: off the table is a foul and is spotted on its rack position, ne
       [settled.state.balls[8].x, settled.state.balls[8].z, settled.state.balls[8].pocketed],
       [BLACK_SPOT.x, 0, false],
     );
+  }
+  // An occupied spot moves along the long axis: New Rules fill the foot side first, then toward the head string;
+  // Old Rules go toward the head string only. Object balls follow the black along the same line.
+  const step = TABLE.radius * 2.2,
+    footSteps = Math.floor((TABLE.halfWidth - BLACK_SPOT.x) / step);
+  for (const [rules, black, nine, farFoot] of [
+    ['new', BLACK_SPOT.x + step, BLACK_SPOT.x + 2 * step, BLACK_SPOT.x - step],
+    ['old', BLACK_SPOT.x - step, BLACK_SPOT.x - 2 * step, BLACK_SPOT.x - step],
+  ] as const) {
     const covered = sparse(rules);
     Object.assign(covered.balls[4], { x: BLACK_SPOT.x, z: 0, pocketed: false });
     const spotted = settle(covered, { firstContact: 1, offTable: [8, 9] }).state;
     assert.deepEqual(
-      [spotted.balls[8].x, spotted.balls[8].z],
-      [BLACK_SPOT.x + TABLE.radius * 2.2, 0],
-      'an occupied spot moves to the nearest clear point along the long axis, foot side first',
+      [spotted.balls[8].x, spotted.balls[8].z, spotted.balls[9].x, spotted.balls[9].z, spotted.balls[9].pocketed],
+      [black, 0, nine, 0, false],
+      rules,
     );
-    assert.deepEqual(
-      [spotted.balls[9].x, spotted.balls[9].z, spotted.balls[9].pocketed],
-      [BLACK_SPOT.x - TABLE.radius * 2.2, 0, false],
-      'object balls follow the black along the same line',
+    // With every foot-side point taken as well, New Rules turn toward the head string.
+    const crowded = sparse(rules);
+    const blockers = [4, 5, 6, 7, 10, 11, 12].slice(0, footSteps + 1);
+    blockers.forEach((id, i) =>
+      Object.assign(crowded.balls[id], { x: BLACK_SPOT.x + i * step, z: 0, pocketed: false }),
     );
+    const line = settle(crowded, { firstContact: 1, offTable: [8] }).state;
+    assert.equal(line.balls[8].x, farFoot, `${rules}: the black past a full foot side`);
   }
   const breakOff = settle(sparse('old', 0), { offTable: [8] });
   assert.deepEqual(
@@ -396,6 +414,73 @@ test('New Rules free ball with the black: potting the black early loses, with th
   );
   const second = settle(free(onTheBlack('new')), { firstContact: 9, potted: [9, 10] }).state;
   assert.deepEqual([second.foul, second.turn, second.winner], [true, 1, null], 'a second opponent ball is a foul');
+});
+
+test('doubles: the player who potted on the break chooses the group, then partners rotate', () => {
+  for (const rules of BOTH) {
+    const state = breaking(rules);
+    state.format = 'doubles';
+    const broke = settle(state, { potted: [2, 9] }).state;
+    assert.deepEqual([broke.phase, broke.teamOrder, activeSeat(broke)], ['choose-group', [0, 0], 0], rules);
+    const chosen = { ...broke, ...groupChoice(broke, 'solids')! };
+    assert.deepEqual([chosen.phase, chosen.teamOrder, activeSeat(chosen)], ['ready', [1, 0], 2], rules);
+  }
+});
+
+test('the mixed-pot debuff comes only with a foul, never on the legal shot that decides a New Rules nomination', () => {
+  const broke = settle(breaking('new', 'mixed-debuff'), { potted: [2] }).state;
+  const nominated = { ...broke, ...groupChoice(broke, 'stripes')! };
+  nominated.arcade = createArcade('crossfire', nominated.seed);
+  Object.assign(nominated.arcade, { obstacles: [], hazards: [], pickups: [] });
+  const decided = settle(nominated, { firstContact: 10, potted: [10, 3] });
+  assert.deepEqual([decided.state.groups, decided.state.foul], [['stripes', 'solids'], false]);
+  assert.deepEqual(decided.events, [], 'no debuff on a legal shot');
+  const fouled = settle(arranged('new'), { firstContact: 1, potted: [1, 9] });
+  assert.deepEqual(
+    fouled.events.map((event) => event.reason),
+    ['mixed-pot'],
+  );
+});
+
+test('New Rules free ball is judged after this shot’s portals close', () => {
+  const state = sparse('new');
+  // The stripe hides behind a portal that expires with this shot, so the incoming player is not snookered.
+  Object.assign(state.balls[0], { x: -2, z: 0 });
+  Object.assign(state.balls[9], { x: 2, z: 0 });
+  Object.assign(state.balls[1], { x: -3, z: 2 });
+  state.arcade!.hazards = [
+    { id: 0, kind: 'portal', x: 0, z: 0, radius: 0.34, link: 1 },
+    { id: 1, kind: 'portal', x: 0, z: 2.2, radius: 0.34, link: 0 },
+  ];
+  state.arcade!.portalTurns = 2;
+  assert.equal(snookered(state, 1), true, 'the open portal blocks the line');
+  assert.equal(settle(state, { firstContact: 9 }).state.freeShot, true, 'a portal that stays open still snookers');
+  state.arcade!.portalTurns = 1;
+  const closed = settle(state, { firstContact: 9 }).state;
+  assert.deepEqual([closed.arcade!.hazards, closed.freeShot, closed.phase], [[], false, 'ready']);
+});
+
+test('foul snooker lines: straight cushions and far jaws never snooker, a jaw beside the cue ball does', () => {
+  const table = (cue: { x: number; z: number }, stripe: { x: number; z: number }) => {
+    const state = sparse('new');
+    Object.assign(state.balls[1], { x: -4, z: -2 });
+    Object.assign(state.balls[0], cue);
+    Object.assign(state.balls[9], stripe);
+    return state;
+  };
+  assert.equal(snookered(table({ x: -2, z: 0 }, { x: 1, z: 2.52 }), 1), false, 'a ball close to the long cushion');
+  assert.equal(
+    snookered(table({ x: -2, z: 0 }, { x: 1, z: TABLE.halfDepth - TABLE.radius }), 1),
+    false,
+    'a ball frozen on the long cushion',
+  );
+  assert.equal(snookered(table({ x: -2, z: 0 }, { x: 0, z: 2.55 }), 1), false, 'a ball in a side-pocket mouth');
+  assert.equal(
+    snookered(table({ x: -0.75, z: 2.65 }, { x: 0.8, z: 2.62 }), 1),
+    true,
+    'the cue ball tight against a jaw that blocks the path',
+  );
+  assert.equal(snookered(table({ x: -0.75, z: 1.6 }, { x: 0.8, z: 1.6 }), 1), false, 'the same path away from it');
 });
 
 test('doubles: a black on the break re-racks for the same breaker without rotating partners', () => {
