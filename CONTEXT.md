@@ -1,0 +1,24 @@
+# The Corner Pocket
+
+A 3D arcade eight-ball game played on a pub table, solo against the house, pass-and-play, or online with friends.
+
+## Room
+
+**Pub**:
+The enclosed room around the table: walls, bar, furniture and decor. Presentation only; it never affects play.
+_Avoid_: level, environment, interior (the interior is only the pub's walls)
+
+**Prop**:
+A file-backed model or surface texture placed in the pub or on the table.
+_Avoid_: asset (too broad), dressing, model
+
+**Placeholder**:
+The built-in stand-in shown for a prop until its file arrives, and kept if the file fails to load.
+_Avoid_: fallback, stand-in, proxy
+
+**Settled**:
+The pub is settled when every requested prop has either arrived or failed.
+_Avoid_: loaded, ready (ready belongs to Match)
+
+**Cutaway**:
+The walls and wall fittings hidden so the camera can see the table from outside the room.
