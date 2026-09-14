@@ -1,0 +1,7 @@
+dist/
+public/
+art/
+package-lock.json
+*.md
+tests/*-snapshot.json
+tests/*-snapshot.ts
