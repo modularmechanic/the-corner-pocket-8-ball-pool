@@ -39,7 +39,7 @@ export function shell() {
       <div id="scene"></div><div class="stage-vignette"></div>
       <header class="hud">
         <button class="brand" id="play-nav" title="Main menu" aria-label="Open main menu"><span class="brand-ball"><span>8</span></span></button>
-        <div class="scoreboard" aria-label="Scoreboard">
+        <div class="scoreboard" id="scoreboard" aria-label="Scoreboard">
           <div class="player active" id="player-0"><div class="avatar" id="avatar-0">Y</div><div class="player-detail"><div class="player-heading"><strong id="name-0">You</strong><b id="score-0" class="player-score">0</b></div><div id="roster-0" class="team-roster" aria-label="Team one players" hidden></div><div class="ball-rack" id="rack-0"></div><div class="buffs" id="buffs-0"></div></div><span id="turn-0" class="turn-light" aria-label="Current player"></span></div>
           <div class="player player-two" id="player-1"><span id="turn-1" class="turn-light" hidden aria-label="Current player"></span><div class="player-detail"><div class="player-heading"><strong id="name-1">The Regular</strong><b id="score-1" class="player-score">0</b></div><div id="roster-1" class="team-roster" aria-label="Team two players" hidden></div><div class="ball-rack" id="rack-1"></div><div class="buffs" id="buffs-1"></div></div><div class="avatar" id="avatar-1">${icon('cue')}</div></div>
         </div>

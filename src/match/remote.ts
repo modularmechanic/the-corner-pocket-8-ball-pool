@@ -51,7 +51,7 @@ export class RemoteMatch implements Match {
   get ready() { return this.connected && !this.recovering && !!this.roomInfo && this.roomInfo.players.length === this.roomInfo.capacity && this.roomInfo.players.every(player => player.connected); }
   get capabilities() { return matchCapabilities(this.state, this.mode, this.ready, this.pending, this.connected); }
   get actor(): MatchActor {
-    const state = this.state, shown = this.presentation();
+    const state = this.state, shown = this.timeline.shown(this.now()) || state;
     return { seat: activeSeat(state), team: state.turn, controller: 'human', canAct: this.ready && !this.pending && humanControls(state, 'online', this.ownSeat)
       && (state.phase === 'ready' || state.phase === 'ball-in-hand') && shown.phase === state.phase && shown.shotCount === state.shotCount && activeSeat(shown) === activeSeat(state) };
   }

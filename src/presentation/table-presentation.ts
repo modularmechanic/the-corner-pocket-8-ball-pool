@@ -75,5 +75,6 @@ export function deriveTablePresentation(state:GameState,viewer:TableViewer) {
     status:{text,waiting:waiting||state.phase==='rolling'||!!viewer.aiThinking,foul:state.phase==='ball-in-hand'},
     effects,
     teams:([0,1] as const).map(team=>({name:teamLabel(state,viewer,team),pills:effects.teams[team].pills})),
+    seats:Array.from({length:seatCount(state.format)},(_,seat)=>seatLabel(state,viewer,seat)),
   };
 }

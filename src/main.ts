@@ -1,19 +1,19 @@
 import './style.css';
 import { initPhysics } from './simulation/game';
-import { LocalMatch, RemoteMatch, type Match, type MatchCommand, type RoomSnapshot } from './match';
+import { LocalMatch, RemoteMatch, type Match, type MatchCommand } from './match';
 import { LAYOUTS } from './simulation/arcade';
 import { normalizeLevel } from './simulation/level-policy';
 import { CUE_CATALOG, canEquipCue, equippedCue } from './simulation/cues';
 import { POWER_UPS, STATUS_EFFECTS } from './presentation/effects';
 import { deriveTablePresentation, seatLabel, teamLabel } from './presentation/table-presentation';
-import { TABLE, activeSeat, seatCount, type GameFormat, type ArenaLayout, type Difficulty, type GameState, type Mode, type Shot, type TableEvent } from './simulation/types';
+import { activeSeat, type GameFormat, type ArenaLayout, type Difficulty, type GameState, type Mode, type Shot, type TableEvent } from './simulation/types';
 import { PoolScene, type Quality } from './render/scene';
-import { BALL_COLORS } from './render/materials';
 import { shell, icon } from './ui/shell';
 import { TableAudio } from './ui/audio';
 import { createIdentity } from './ui/identity';
 import { ShotInputController, type PointerInput, type ShotInputView } from './ui/shot-input-controller';
-import { PlayerProfile, levelName } from './ui/player-profile';
+import { PlayerProfile } from './ui/player-profile';
+import { HudWriter, type HudElement } from './ui/hud-writer';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 $('app').innerHTML = shell();
@@ -21,7 +21,6 @@ const profile = new PlayerProfile((() => { try { return localStorage; } catch { 
 const sound = new TableAudio();
 sound.enabled = profile.preferences.sound;
 sound.volume = profile.preferences.volume;
-let mode: Mode = 'ai';
 function renderLevels() {
   const select = $<HTMLSelectElement>('menu-level');
   select.replaceChildren(...profile.levelOptions().map(({ value, label, disabled }) => {
@@ -35,23 +34,22 @@ let unsubscribeMatch: (()=>void) | undefined;
 let scene: PoolScene;
 let state: GameState;
 let presentation: GameState;
-let room: RoomSnapshot | null = null;
-let seat = 0;
-let connected = false;
+let roomPlayers = 0;
+let roomReady = false;
 let isConnecting = false;
 let sessionIntent = 0;
 let initialized = false;
 let hasStarted = false;
-let lastUI = '';
+const hud = new HudWriter(id => $(id) as unknown as HudElement);
+let cueLockerKey = '';
 let toastTimer = 0;
 let resultKey = '';
 let input: ShotInputController;
 let cueFocusRestore='';
 let coinResetting = false;
 let inspectingTable = false;
-let menuMode: Mode = mode;
+let menuMode: Mode = 'ai';
 let menuFormat: GameFormat = profile.preferences.format;
-let aiMessage = false;
 let identity: string;
 try { identity = sessionStorage.getItem('corner-pocket:identity') || createIdentity(); sessionStorage.setItem('corner-pocket:identity', identity); } catch { identity = createIdentity(); }
 function renderRecords() {
@@ -88,11 +86,11 @@ function refreshMenuFormat() {
 }
 function showMainMenu() {
   menuFormat = state.format;
-  setMenuPanel(false); selectMenuMode(mode);
+  setMenuPanel(false); selectMenuMode(match.mode);
   stopAI(); renderRecords(); renderLevels();
   $<HTMLButtonElement>('menu-resume').hidden = !hasStarted || state.phase === 'over';
   $<HTMLSelectElement>('menu-difficulty').value = profile.preferences.difficulty;
-  $('menu-session-note').textContent = mode === 'online' && room ? `Room ${room.code} keeps playing while this menu is open.` : 'Singles or doubles · Up to four players';
+  $('menu-session-note').textContent = match.mode === 'online' && match.room ? `Room ${match.room.code} keeps playing while this menu is open.` : 'Singles or doubles · Up to four players';
   openDialog('main-menu');
 }
 function toast(message: string) { $('toast').textContent = message; $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = window.setTimeout(() => $('toast').classList.remove('show'), 3000); }
@@ -101,28 +99,11 @@ function closeDialog(id: string) { $<HTMLDialogElement>(id).close(); }
 function openDialog(id: string) { input.cancel(); if (!$<HTMLDialogElement>(id).open) $<HTMLDialogElement>(id).showModal(); }
 function canAct() { return input.canAct; }
 function seatName(player: number) {
-  return seatLabel(state,{mode,difficulty:profile.preferences.difficulty,room},player);
+  return seatLabel(state,{mode:match.mode,difficulty:profile.preferences.difficulty,room:match.room},player);
 }
 function playerName(team: number) {
-  return teamLabel(state,{mode,difficulty:profile.preferences.difficulty,room},team);
+  return teamLabel(state,{mode:match.mode,difficulty:profile.preferences.difficulty,room:match.room},team);
 }
-function renderInvite() {
-  const roster = $('invite-roster'); roster.replaceChildren(); roster.hidden = !room;
-  if (!room) return;
-  const capacity = seatCount(state.format), filled = room.players.filter(p => p.connected).length;
-  $('invite-status').textContent = match.ready ? `All ${capacity} players are ready.` : `${filled}/${capacity} connected · Waiting for ${capacity === 4 ? 'the teams' : 'your friend'}…`;
-  for (const team of [0, 1]) {
-    const section = document.createElement('section'); section.className = 'invite-team';
-    const title = document.createElement('h3'); title.textContent = state.format === 'doubles' ? `Team ${team + 1}` : `Player ${team + 1}`; section.append(title);
-    for (const player of state.format === 'doubles' ? [team, team + 2] : [team]) {
-      const entry = room.players[player], row = document.createElement('div'); row.className = `invite-seat${entry?.connected ? '' : ' waiting'}`;
-      row.textContent = `${player + 1} · ${entry?.name || 'Open seat'}${player === seat ? ' (you)' : ''}${entry && !entry.connected ? ' · Reconnecting' : ''}`;
-      section.append(row);
-    }
-    roster.append(section);
-  }
-}
-
 function playEvent(event: TableEvent) {
   sound.play(event); scene.handleEvent(event);
   if (event.kind === 'pickup' && event.power) toast(POWER_UPS[event.power].name);
@@ -131,45 +112,37 @@ function playEvent(event: TableEvent) {
     toast(event.reason === 'scratch-streak' ? `Comeback · ${label}` : `Debuff · ${label}`);
   }
 }
-function stopAI() { match?.pauseAI(); aiMessage = false; if (scene) scene.aiPreview = null; }
+function stopAI() { match?.pauseAI(); if (scene) scene.aiPreview = null; }
+/** Detects room and table transitions once per change; the HUD reads the match directly. */
 function syncMatch() {
-  if (!match) return;
-  const previousState=state,previousPlayers=room?.players.length||0,wasReady=connected&&!!room&&room.players.every(player=>player.connected)&&room.players.length===room.capacity;
-  state=match.state;presentation=match.presentation();mode=match.mode;room=match.room;seat=match.seat;connected=match.connected;aiMessage=match.thinking;
-  if(scene){scene.aiPreview=match.aiPreview;scene.setAIControlled(match.actor.controller==='ai');}
+  if(!match)return;
+  const room=match.room;
+  if(room&&room.players.length>roomPlayers)toast(`${room.players.at(-1)!.name} joined.`);
+  if(room&&!roomReady&&match.ready)closeDialog('invite-dialog');
+  roomPlayers=room?.players.length||0;roomReady=match.connected&&!!room&&room.players.every(player=>player.connected)&&room.players.length===room.capacity;
+  if(match.state===state)return;
+  const previousState=state;state=match.state;
   const changedRack=!!previousState&&previousState.seed!==state.seed;
   if(changedRack){
-    if(mode==='online'&&!coinResetting&&hasStarted)sound.playMechanism('coin');
+    if(match.mode==='online'&&!coinResetting&&hasStarted)sound.playMechanism('coin');
     resultKey='';input.newRack();closeDialog('result-dialog');
     profile.set('level',normalizeLevel(state.arcade?.level));
   }else if(previousState&&(previousState.shotCount!==state.shotCount||activeSeat(previousState)!==activeSeat(state)))input.cancel();
-  if(room&&room.players.length>previousPlayers)toast(`${room.players.at(-1)!.name} joined.`);
-  if(room&&!wasReady&&match.ready)closeDialog('invite-dialog');
-  if(state.phase==='over'&&(changedRack||previousState?.phase!=='over')){profile.recordResult(state,mode,seat,playerName);renderRecords();}
+  if(state.phase==='over'&&(changedRack||previousState?.phase!=='over')){profile.recordResult(state,match.mode,match.seat,playerName);renderRecords();}
 }
 function installMatch(next:Match) {
-  unsubscribeMatch?.();match?.dispose();match=next;syncMatch();
+  unsubscribeMatch?.();match?.dispose();match=next;syncMatch();presentation=next.presentation();
   unsubscribeMatch=next.subscribe(change=>{
     if(match!==next)return;
     if(change.type==='replaced'){toast('Your seat was opened in another tab.');newGame('ai');return;}
     if(change.type==='error'){toast(change.error);if(!next.room){newGame('ai');return;}}
-    syncMatch();if(change.type==='connection'&&!next.connected)input.cancel();updateUI(true);
+    syncMatch();if(change.type==='connection'&&!next.connected)input.cancel();
   });
 }
 async function command(command:MatchCommand,fallback:string) {
   const current=match,result=await current.execute(command);
   if(match!==current)return false;
-  syncMatch();if(!result.ok)toast(result.error||fallback);updateUI(true);return result.ok;
-}
-function refreshShotSetup() {
-  const setup = input.setup, percent = Math.round(setup.power * 100), degrees = Math.round(setup.elevation * 180 / Math.PI);
-  $('cue-setup').hidden = !setup.adjustment || !canAct() || state.phase !== 'ready';
-  $('spin-button').setAttribute('aria-pressed', String(setup.adjustment === 'spin'));
-  $('elevation-button').setAttribute('aria-pressed', String(setup.adjustment === 'elevation'));
-  $('tip-marker').style.left = `${50 + setup.tipX * 50}%`; $('tip-marker').style.top = `${50 - setup.tipY * 50}%`;
-  $<HTMLInputElement>('cue-angle').value = String(degrees); $('cue-angle-value').textContent = `${degrees}°`;
-  $<HTMLInputElement>('power').value = String(percent);
-  $('power-fill').style.height = `${setup.power * 100}%`; $('power-value').innerHTML = `${percent}<span>%</span>`;
+  syncMatch();if(!result.ok)toast(result.error||fallback);updateUI();return result.ok;
 }
 function chooseCamera(overhead:boolean) {
   input.cameraChanged();inspectingTable=false;
@@ -178,8 +151,7 @@ function chooseCamera(overhead:boolean) {
   $('camera-toggle').setAttribute('aria-label',overhead?'Switch to cue view':'Switch to overhead view');
   $('camera-toggle').setAttribute('aria-pressed',String(overhead));
   $('fps-view').setAttribute('aria-pressed',String(!overhead));
-  $('table-view').setAttribute('aria-pressed','false');
-  profile.set('camera',overhead?'overhead':'angled');updateUI(true);
+  profile.set('camera',overhead?'overhead':'angled');
 }
 async function chalkCue() {
   if (!canAct() || state.phase !== 'ready' || state.chalked[state.turn]) return;
@@ -192,14 +164,16 @@ async function insertCoin() {
   if (!match.capabilities.canReset) return toast('Finish this rack with everyone connected to reset the table.');
   const current=match,seed=state.seed;
   input.cancel();stopAI();coinResetting=true;inspectingTable=true;scene.setInspection(true);
-  await sound.unlock().catch(()=>undefined);const duration=scene.animateCoinReset();sound.playMechanism('coin');updateUI(true);
+  await sound.unlock().catch(()=>undefined);const duration=scene.animateCoinReset();sound.playMechanism('coin');updateUI();
   window.setTimeout(async()=>{
     try{if(match===current&&state.seed===seed)await command({type:'reset'},'The table cannot be reset yet.');}
-    finally{coinResetting=false;updateUI(true);}
+    finally{coinResetting=false;updateUI();}
   },duration);
 }
-function renderCueLocker() {
-  const owner=mode==='local'?activeSeat(state):seat,current=equippedCue(state,owner);
+function renderCueLocker(force=false) {
+  const owner=match.mode==='local'?activeSeat(state):match.seat,current=equippedCue(state,owner);
+  const key=`${owner}:${seatName(owner)}:${current.id}:${state.arcade?.level}:${match.capabilities.canEquip}:${match.pending}`;
+  if(!force&&key===cueLockerKey)return;cueLockerKey=key;
   const focused=document.activeElement as HTMLElement|null;
   if(focused?.dataset.cue)cueFocusRestore=focused.dataset.cue;
   $('cue-owner').textContent=`${seatName(owner)} · Level ${state.arcade?.level} · ${current.name}`;
@@ -209,82 +183,33 @@ function renderCueLocker() {
     button.style.setProperty('--cue-wood',cue.color);button.style.setProperty('--cue-accent',cue.accent);
     const stat=(name:string,value:number)=>`<span>${name}<b>${Math.round(value*100)}%</b><i style="--stat:${value/1.2*100}%"></i></span>`;
     button.innerHTML=`<i class="cue-swatch" aria-hidden="true"></i><div class="cue-card-title"><strong>${cue.name}</strong><span>${selected?'Equipped':unlocked?'Equip':`Level ${cue.unlockLevel}`}</span></div><small>${cue.wood} · ${cue.weightOz} oz</small><p>${cue.description}</p><div class="cue-stats">${stat('Power',cue.power)}${stat('Spin',cue.spin)}${stat('Curve',cue.curve)}</div>`;
-    button.onclick=async()=>{if(await command({type:'equip',cue:cue.id},'This cue cannot be equipped yet.'))profile.set('cue',cue.id);renderCueLocker();};
+    button.onclick=async()=>{if(await command({type:'equip',cue:cue.id},'This cue cannot be equipped yet.'))profile.set('cue',cue.id);renderCueLocker(true);};
     return button;
   }));
   if(cueFocusRestore&&!match.pending){const target=$('cue-collection').querySelector<HTMLButtonElement>(`[data-cue="${cueFocusRestore}"]`);if(target&&!target.disabled)target.focus();cueFocusRestore='';}
 }
-function openCueLocker(){openDialog('cue-dialog');renderCueLocker();}
+function openCueLocker(){openDialog('cue-dialog');renderCueLocker(true);}
 function equipPreferredCue() {
   const preferred=profile.preferences.cue;
   if(canEquipCue(preferred,state.arcade?.level)&&match.capabilities.canEquip)void command({type:'equip',cue:preferred},'This cue is not available at this table.');
 }
-function updateUI(force = false) {
+function updateUI() {
   if (!state) return;
-  const arcadeUI = state.arcade ? { ...state.arcade, clock: undefined } : undefined;
-  const key = JSON.stringify([input.orbiting,input.setup.adjustment,input.setup.stage,state.cues,state.chalked, coinResetting, state.phase, presentation?.phase, presentation?.shotCount, presentation ? activeSeat(presentation) : null, state.turn, state.format, state.teamOrder, state.groups, state.shotCount, state.message, state.balls.filter(b => b.pocketed).map(b => b.id), state.winner, arcadeUI, profile.preferences.difficulty, mode, room?.players, connected, aiMessage, anyDialog(), match.pending, document.hidden]);
-  if (!force && key === lastUI) return; lastUI = key;
-  const viewModel=deriveTablePresentation(state,{mode,difficulty:profile.preferences.difficulty,room,connected,ready:match.ready,controlsTurn:match.actor.canAct,canInteract:canAct(),aiThinking:aiMessage,shotStage:input.setup.stage,adjustment:input.setup.adjustment,resetting:coinResetting});
-  for (const player of [0, 1]) {
-    $(`name-${player}`).textContent = playerName(player);
-    const roster = $(`roster-${player}`); roster.hidden = state.format !== 'doubles'; roster.replaceChildren();
-    if (state.format === 'doubles') for (const member of [player, player + 2]) {
-      const label = document.createElement('span'); label.className = 'roster-player'; label.textContent = seatName(member);
-      const current = activeSeat(state) === member && state.phase !== 'over';
-      label.classList.toggle('active', current); if (current) label.setAttribute('aria-current', 'true');
-      label.title = `${seatName(member)}${current ? ' · Shooting' : ''}`; roster.append(label);
-    }
-    $(`player-${player}`).classList.toggle('active', state.turn === player && state.phase !== 'over');
-    $(`turn-${player}`).hidden = state.turn !== player || state.phase === 'over';
-    const group = state.groups[player];
-    const ids = group === 'solids' ? [1,2,3,4,5,6,7] : group === 'stripes' ? [9,10,11,12,13,14,15] : [];
-    $(`rack-${player}`).innerHTML = group ? ids.map(id => `<span class="mini-ball ${id > 8 ? 'stripe' : ''} ${state.balls[id].pocketed ? 'potted' : ''}" style="--ball:${BALL_COLORS[id]}" title="${id}${state.balls[id].pocketed ? ' · potted' : ''}"><span>${id}</span></span>`).join('') : Array.from({length:7}, () => '<span class="mini-ball unassigned"></span>').join('');
-    $(`rack-${player}`).setAttribute('aria-label', group ? `${group}: ${ids.filter(id => state.balls[id].pocketed).length} potted` : 'Open table');
-    $(`score-${player}`).textContent = Math.round(state.arcade?.scores[player] || 0).toLocaleString();
-    $(`buffs-${player}`).innerHTML = viewModel.teams[player].pills.map(pill=>`<span class="buff-pill ${pill.className}" style="--effect-color:${pill.color}" title="${pill.title}" data-active="${pill.active}" data-queued="${pill.queued}">${icon(pill.icon,10)}</span>`).join('');
-  }
-  document.querySelector('.scoreboard')?.classList.toggle('doubles', state.format === 'doubles');
-  renderInvite();if($<HTMLDialogElement>('cue-dialog').open)renderCueLocker();
-  $('avatar-0').textContent = mode === 'ai' ? 'Y' : playerName(0).charAt(0).toUpperCase();
-  $('avatar-1').innerHTML = mode === 'ai' ? icon('cue',23) : '';
-  if (mode !== 'ai') $('avatar-1').textContent = playerName(1).charAt(0).toUpperCase();
-  for (const m of ['ai','online','local']) { $(`mode-${m}`).classList.toggle('selected', mode === m); $(`mode-${m}`).setAttribute('aria-pressed', String(mode === m)); }
-  $<HTMLSelectElement>('difficulty').disabled = mode !== 'ai';
-  $<HTMLSelectElement>('layout').disabled = mode === 'online';
-  $<HTMLSelectElement>('layout').value = state.arcade?.layout || profile.preferences.layout;
-  $('level-badge').textContent = `LV ${state.arcade?.level || 1}`;
-  $('level-badge').title = levelName(state.arcade?.level);
-  $('portal-badge').hidden = !state.arcade?.portalTurns;
-  $('portal-badge').textContent = `◎ ${state.arcade?.portalTurns || 0}`;
-  $('status-text').textContent = viewModel.status.text;
-  $<HTMLButtonElement>('chalk-button').disabled = !canAct() || state.phase !== 'ready' || !!state.chalked?.[state.turn];
-  $('chalk-button').setAttribute('aria-pressed', String(!!state.chalked?.[state.turn]));
-  $('table-view').setAttribute('aria-pressed', String(inspectingTable));
-  $('shoot-button').setAttribute('aria-label', input.setup.stage === 'aim' ? 'Lock aim' : 'Take shot');
-  refreshShotSetup();
-  $('shot-status').classList.toggle('foul', viewModel.status.foul);
-  $('shot-status').classList.toggle('waiting', viewModel.status.waiting);
-  $<HTMLButtonElement>('shoot-button').disabled = state.phase !== 'ready' || !canAct() || !!input.setup.adjustment;
-  $<HTMLInputElement>('power').disabled = state.phase !== 'ready' || !canAct() || input.setup.stage !== 'power';
-  if (state.phase === 'over' && presentation.phase === 'over') {
+  const room = match.room, ready = match.ready, interactive = canAct();
+  const table = deriveTablePresentation(state, { mode: match.mode, difficulty: profile.preferences.difficulty, room, connected: match.connected, ready, controlsTurn: match.actor.canAct, canInteract: interactive, aiThinking: match.thinking, shotStage: input.setup.stage, adjustment: input.setup.adjustment, resetting: coinResetting });
+  hud.write({ state, table, mode: match.mode, seat: match.seat, room, ready, canAct: interactive, canAdvance: match.capabilities.canAdvance, inspecting: inspectingTable, setup: input.setup, layout: profile.preferences.layout });
+  if ($<HTMLDialogElement>('cue-dialog').open) renderCueLocker();
+  if (state.phase === 'over' && presentation?.phase === 'over') {
     const key = `${state.seed}:${state.shotCount}:${state.winner}`;
-    if (key !== resultKey && !$<HTMLDialogElement>('main-menu').open) {
-      resultKey = key;
-      $('result-title').textContent = mode === 'ai' ? state.winner === 0 ? 'The table is yours.' : 'The house takes this one.' : `${playerName(state.winner!)} takes the rack.`;
-      $('result-message').textContent = state.message;
-      $('next-level-button').hidden = !match.capabilities.canAdvance;
-      $('next-level-button').textContent = `Level ${(state.arcade?.level || 1) + 1} →`;
-      $('rematch-button').innerHTML = `Replay level ${state.arcade?.level || 1} ${icon('reset',17)}`;
-      openDialog('result-dialog');
-    }
+    if (key !== resultKey && !$<HTMLDialogElement>('main-menu').open) { resultKey = key; openDialog('result-dialog'); }
   }
 }
-function newGame(nextMode:Mode=mode,nextFormat:GameFormat=state?.format??menuFormat) {
+function newGame(nextMode:Mode=match.mode,nextFormat:GameFormat=state?.format??menuFormat) {
   if(nextMode==='online')return;
   sessionIntent++;
   installMatch(new LocalMatch({seed:createIdentity().slice(0,8),mode:nextMode,difficulty:profile.preferences.difficulty,options:{layout:profile.preferences.layout,level:profile.preferences.level,format:nextFormat}}));
   initialized=true;stopAI();resultKey='';
-  input.newRack(.65);updateUI(true);equipPreferredCue();
+  input.newRack(.65);updateUI();equipPreferredCue();
 }
 async function shoot(shot:Shot) {
   if(!canAct()||state.phase!=='ready')return;
@@ -310,10 +235,10 @@ async function enterRoom(create:boolean) {
     if(intent!==sessionIntent){candidate.dispose();return;}
     if(!result.ok)throw new Error(result.error||'Could not open the table.');
     profile.set('name',name);hasStarted=true;installMatch(candidate);resultKey='';input.newRack();
-    closeDialog('main-menu');closeDialog('room-dialog');$('invite-code').textContent=room!.code;void sound.unlock();
+    closeDialog('main-menu');closeDialog('room-dialog');$('invite-code').textContent=match.room!.code;void sound.unlock();
     if(create||!match.ready)openDialog('invite-dialog');else toast('You’re in.');
-    if(state.cues[seat]==='ash-house')equipPreferredCue();
-    updateUI(true);
+    if(state.cues[match.seat]==='ash-house')equipPreferredCue();
+    updateUI();
   }catch(error){candidate.dispose();if(intent===sessionIntent)$('room-error').textContent=error instanceof Error?error.message:'Could not open the table.';}
   finally{isConnecting=false;$<HTMLButtonElement>('create-room').disabled=false;$<HTMLButtonElement>('join-room').disabled=false;}
 }
@@ -323,11 +248,20 @@ async function copy(text: string, message: string) {
     const success = document.execCommand('copy'); area.remove(); toast(success ? message : `Copy this: ${text}`);
   }
 }
+/** A matching open room shows its invitation; otherwise open a table in the menu's format. */
+function openLobby(format: GameFormat) {
+  if (match.mode === 'online' && match.room && format === state.format) { $('invite-code').textContent = match.room.code; openDialog('invite-dialog'); }
+  else { $<HTMLSelectElement>('room-format').value = menuFormat; openDialog('room-dialog'); }
+}
+function chooseDifficulty(difficulty: Difficulty) {
+  $<HTMLSelectElement>('menu-difficulty').value = difficulty; $<HTMLSelectElement>('difficulty').value = difficulty;
+  profile.set('difficulty', difficulty); match.setDifficulty(difficulty); stopAI(); updateUI();
+}
 function setupUI() {
   document.querySelectorAll<HTMLButtonElement>('[data-close]').forEach(button => button.onclick = () => button.closest('dialog')!.close());
   document.querySelectorAll<HTMLDialogElement>('dialog').forEach(dialog => {
     dialog.addEventListener('click', event => { if (dialog.id !== 'main-menu' && event.target === dialog) { const r = dialog.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) dialog.close(); } });
-    dialog.addEventListener('close', () => updateUI(true));
+    dialog.addEventListener('close', () => updateUI());
   });
   $('help-button').onclick = () => openDialog('rules-dialog');
   $('play-nav').onclick = showMainMenu;
@@ -337,15 +271,14 @@ function setupUI() {
   renderLevels(); refreshMenuFormat();
   $('menu-format').onchange = () => { menuFormat = $<HTMLSelectElement>('menu-format').value === 'doubles' ? 'doubles' : 'singles'; profile.set('format', menuFormat); refreshMenuFormat(); };
   $('menu-level').onchange = () => profile.set('level', normalizeLevel($<HTMLSelectElement>('menu-level').value));
-  const openLobby = () => { if (mode === 'online' && room && menuFormat === state.format) { $('invite-code').textContent = room.code; openDialog('invite-dialog'); } else { $<HTMLSelectElement>('room-format').value = menuFormat; openDialog('room-dialog'); } };
   $('menu-begin').onclick = () => { setMenuPanel(true); selectMenuMode(menuMode); $('menu-session-start').focus(); };
   $('menu-back').onclick = () => { setMenuPanel(false); $('menu-begin').focus(); };
   $('menu-start').onclick = () => selectMenuMode('ai');
   $('menu-local').onclick = () => selectMenuMode('local');
   $('menu-online').onclick = () => selectMenuMode('online');
-  $('menu-lobby').onclick = openLobby;
-  $('menu-session-start').onclick = () => { if (menuMode === 'online') openLobby(); else startFromMenu(menuMode); };
-  $('menu-difficulty').onchange = () => { const difficulty = $<HTMLSelectElement>('menu-difficulty').value as Difficulty; $<HTMLSelectElement>('difficulty').value = difficulty; profile.set('difficulty', difficulty); match.setDifficulty(difficulty); stopAI(); updateUI(true); };
+  $('menu-lobby').onclick = () => openLobby(menuFormat);
+  $('menu-session-start').onclick = () => { if (menuMode === 'online') openLobby(menuFormat); else startFromMenu(menuMode); };
+  $('menu-difficulty').onchange = () => chooseDifficulty($<HTMLSelectElement>('menu-difficulty').value as Difficulty);
   const resolutionNote = () => { const perf=scene.getPerformance();$('resolution-note').textContent = `${Math.round(perf.fps)} FPS · ${perf.width} × ${perf.height} · ${perf.tier}. ${perf.gpuMs!==null?`GPU ${perf.gpuMs.toFixed(1)} ms · `:''}${perf.drawCalls} draws. Auto adjusts effects and resolution for smooth play.`; };
   window.setInterval(()=>{if($<HTMLDialogElement>('settings-dialog').open)resolutionNote();},1000);
   $('settings-button').onclick = () => { resolutionNote(); openDialog('settings-dialog'); };
@@ -365,21 +298,21 @@ function setupUI() {
   $('camera-toggle').onclick=()=>chooseCamera($<HTMLSelectElement>('camera').value!=='overhead');
   $('fps-view').onclick=()=>chooseCamera(false);
   $('reset-view').onclick=()=>{scene.setFPSView();chooseCamera(false);};
-  $('spin-button').onclick=()=>{input.toggleAdjustment('spin');refreshShotSetup();};
-  $('elevation-button').onclick=()=>{input.toggleAdjustment('elevation');refreshShotSetup();};
+  $('spin-button').onclick=()=>input.toggleAdjustment('spin');
+  $('elevation-button').onclick=()=>input.toggleAdjustment('elevation');
   $('cue-locker-button').onclick=openCueLocker;
   $('aim-guide').onchange = () => { scene.aim.visible = $<HTMLInputElement>('aim-guide').checked; };
   $('layout').onchange = () => {
-    if (mode === 'online') return;
+    if (match.mode === 'online') return;
     const layout = $<HTMLSelectElement>('layout').value as ArenaLayout; profile.set('layout', layout); newGame(); closeDialog('settings-dialog'); toast(LAYOUTS[layout].name);
   };
-  $('power').oninput = () => { input.setPower(Number($<HTMLInputElement>('power').value) / 100); refreshShotSetup(); };
-  $('shoot-button').onclick = () => { input.advance(); refreshShotSetup(); };
+  $('power').oninput = () => input.setPower(Number($<HTMLInputElement>('power').value) / 100);
+  $('shoot-button').onclick = () => input.advance();
   $('chalk-button').onclick = () => void chalkCue();
   $('coin-button').onclick = () => void insertCoin();
-  $('table-view').onclick = () => { input.cancel(); inspectingTable = !inspectingTable; scene.setInspection(inspectingTable); updateUI(true); };
-  $('cue-angle').oninput = () => { input.setElevation(Number($<HTMLInputElement>('cue-angle').value) * Math.PI / 180); refreshShotSetup(); };
-  $('tip-center').onclick = () => { input.setTip(0, 0); refreshShotSetup(); };
+  $('table-view').onclick = () => { input.cancel(); inspectingTable = !inspectingTable; scene.setInspection(inspectingTable); };
+  $('cue-angle').oninput = () => input.setElevation(Number($<HTMLInputElement>('cue-angle').value) * Math.PI / 180);
+  $('tip-center').onclick = () => input.setTip(0, 0);
   $('reset-button').onclick = () => { if (!match.capabilities.canReset) return toast('Finish this rack with everyone connected to reset the table.'); if (match.capabilities.canRematch) return openDialog('result-dialog'); openDialog('reset-dialog'); };
   $('confirm-reset').onclick = async () => { if(await command({type:'reset'},'The table cannot be reset yet.')){closeDialog('reset-dialog');toast('Fresh rack.');} };
   $('next-level-button').onclick = async () => {
@@ -389,17 +322,17 @@ function setupUI() {
   $('rematch-button').onclick = async () => {
     if(await command({type:'rematch'},'The rack cannot restart yet.'))closeDialog('result-dialog');
   };
-  $('mode-ai').onclick = () => { if (mode !== 'ai') newGame('ai'); };
-  $('mode-local').onclick = () => { if (mode !== 'local') newGame('local'); };
-  $('mode-online').onclick = () => { if (mode === 'online' && room) { $('invite-code').textContent = room.code; openDialog('invite-dialog'); } else { $<HTMLSelectElement>('room-format').value = menuFormat; openDialog('room-dialog'); } };
+  $('mode-ai').onclick = () => { if (match.mode !== 'ai') newGame('ai'); };
+  $('mode-local').onclick = () => { if (match.mode !== 'local') newGame('local'); };
+  $('mode-online').onclick = () => openLobby(state.format);
   $<HTMLSelectElement>('difficulty').value = profile.preferences.difficulty;
-  $('difficulty').onchange = () => { const difficulty = $<HTMLSelectElement>('difficulty').value as Difficulty; $<HTMLSelectElement>('menu-difficulty').value = difficulty; profile.set('difficulty', difficulty); match.setDifficulty(difficulty); stopAI(); updateUI(true); };
+  $('difficulty').onchange = () => chooseDifficulty($<HTMLSelectElement>('difficulty').value as Difficulty);
   $<HTMLInputElement>('player-name').value = profile.preferences.name;
   $('create-room').onclick = () => void enterRoom(true); $('join-room').onclick = () => void enterRoom(false);
   $('room-code').oninput = () => { $<HTMLInputElement>('room-code').value = $<HTMLInputElement>('room-code').value.toUpperCase().replace(/[^A-Z0-9]/g, ''); };
   $('room-code').onkeydown = event => { if (event.key === 'Enter') void enterRoom(false); };
-  $('copy-code').onclick = () => { if (room) void copy(room.code, 'Room code copied.'); };
-  $('copy-link').onclick = () => { if (room) { const url = new URL(location.href); url.search = ''; url.searchParams.set('room', room.code); void copy(url.href, 'Invitation link copied.'); } };
+  $('copy-code').onclick = () => { if (match.room) void copy(match.room.code, 'Room code copied.'); };
+  $('copy-link').onclick = () => { if (match.room) { const url = new URL(location.href); url.search = ''; url.searchParams.set('room', match.room.code); void copy(url.href, 'Invitation link copied.'); } };
 }
 function createShotInput() {
   const canvas = scene.renderer.domElement;
@@ -434,21 +367,20 @@ function createShotInput() {
 function setupInput() {
   const canvas = scene.renderer.domElement;
   const pointer = (event: PointerEvent): PointerInput => ({ id: event.pointerId, x: event.clientX, y: event.clientY, button: event.button, buttons: event.buttons, primary: event.isPrimary, shift: event.shiftKey });
-  const forward = (handle: (input: PointerInput) => void) => (event: PointerEvent) => { handle(pointer(event)); refreshShotSetup(); };
-  canvas.addEventListener('pointerenter', forward(event => input.pointerEnter(event)));
+  canvas.addEventListener('pointerenter', event => input.pointerEnter(pointer(event)));
   canvas.addEventListener('pointerleave', () => input.pointerLeave());
-  canvas.addEventListener('pointermove', forward(event => input.pointerMove(event)));
+  canvas.addEventListener('pointermove', event => input.pointerMove(pointer(event)));
   canvas.addEventListener('pointerdown', event => {
     if (event.button === 2) event.preventDefault(); else if (event.button === 0) void sound.unlock();
-    input.pointerDown(pointer(event)); refreshShotSetup();
+    input.pointerDown(pointer(event));
   });
-  canvas.addEventListener('pointerup', forward(event => input.pointerUp(event)));
-  canvas.addEventListener('pointercancel', () => { input.cancel(); refreshShotSetup(); });
-  canvas.addEventListener('lostpointercapture', event => { input.pointerLost(event.pointerId); refreshShotSetup(); });
+  canvas.addEventListener('pointerup', event => input.pointerUp(pointer(event)));
+  canvas.addEventListener('pointercancel', () => input.cancel());
+  canvas.addEventListener('lostpointercapture', event => input.pointerLost(event.pointerId));
   canvas.addEventListener('contextmenu', event => event.preventDefault());
   const tip=$('tip-control');let tipPointer:number|null=null;
   const chooseTip=(event:PointerEvent)=>{
-    const rect=tip.getBoundingClientRect();input.setTip((event.clientX-rect.left)/rect.width*2-1,1-(event.clientY-rect.top)/rect.height*2);refreshShotSetup();
+    const rect=tip.getBoundingClientRect();input.setTip((event.clientX-rect.left)/rect.width*2-1,1-(event.clientY-rect.top)/rect.height*2);
   };
   tip.onpointerdown=event=>{if(!canAct()||event.button!==0)return;tipPointer=event.pointerId;tip.setPointerCapture(event.pointerId);chooseTip(event);};
   tip.onpointermove=event=>{if(tipPointer===event.pointerId)chooseTip(event);};
@@ -457,26 +389,26 @@ function setupInput() {
   tip.onkeydown=event=>{
     const deltas:Record<string,[number,number]>={ArrowLeft:[-.08,0],ArrowRight:[.08,0],ArrowUp:[0,.08],ArrowDown:[0,-.08]};
     if(!deltas[event.key]||!canAct())return;event.preventDefault();event.stopPropagation();
-    const[x,y]=deltas[event.key];input.setTip(input.setup.tipX+x,input.setup.tipY+y);refreshShotSetup();
+    const[x,y]=deltas[event.key];input.setTip(input.setup.tipX+x,input.setup.tipY+y);
   };
   window.addEventListener('blur',()=>{input.cancel();stopAI();});
   document.addEventListener('visibilitychange',()=>{
     if(document.hidden){input.cancel();stopAI();sound.updateRolling([]);}
-    match.update(0,{aiPaused:document.hidden,muted:document.hidden});updateUI(true);
+    match.update(0,{aiPaused:document.hidden,muted:document.hidden});syncMatch();updateUI();
   });
   const typing=(target:EventTarget|null)=>target instanceof HTMLElement&&(target.isContentEditable||/^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName));
   window.addEventListener('keydown',event=>{
     const target=typing(event.target)?'text':event.target instanceof HTMLButtonElement?'button':'other';
     if(input.keyDown({code:event.key==='Escape'?'Escape':event.code,repeat:event.repeat,shift:event.shiftKey,target}))event.preventDefault();
-    refreshShotSetup();
   });
-  window.addEventListener('keyup',event=>{input.keyUp(event.code);refreshShotSetup();});
+  window.addEventListener('keyup',event=>input.keyUp(event.code));
 }
 let previous=performance.now();
 function frame(now:number) {
   const elapsed=Math.max(0,(now-previous)/1000),dt=Math.min(elapsed,.06);previous=now;
   match.update(elapsed,{aiPaused:coinResetting||anyDialog()||document.hidden,muted:document.hidden||elapsed>.5,aiCameraReady:scene.isAIViewReady()});
-  syncMatch();
+  syncMatch();presentation=match.presentation();
+  scene.aiPreview=match.aiPreview;scene.setAIControlled(match.actor.controller==='ai');
   const events=match.drainEvents();if(!document.hidden&&elapsed<=.5)for(const event of events)playEvent(event);
   input.frame(dt);
   scene.update(presentation,dt,canAct(),false);
@@ -494,7 +426,7 @@ async function boot() {
     $('loading').classList.add('done'); showMainMenu(); previous = performance.now(); requestAnimationFrame(frame);
     const invitation = new URL(location.href).searchParams.get('room');
     if (invitation) { $<HTMLInputElement>('room-code').value = invitation.slice(0,6).toUpperCase(); openDialog('room-dialog'); }
-    Object.defineProperty(window, '__POOL__', { value: { snapshot: () => structuredClone(state), project: (x: number, z: number) => scene.tableToScreen(x,z), resolution: () => scene.getResolution(), mode: () => mode, seat: () => seat, audio: () => sound.diagnostics(), performance:()=>scene.getPerformance() }, writable: false });
+    Object.defineProperty(window, '__POOL__', { value: { snapshot: () => structuredClone(state), project: (x: number, z: number) => scene.tableToScreen(x,z), resolution: () => scene.getResolution(), mode: () => match.mode, seat: () => match.seat, audio: () => sound.diagnostics(), performance:()=>scene.getPerformance() }, writable: false });
   } catch (error) {
     console.error('Could not open the club:', error);
     const message = error instanceof Error ? error.message : String(error);
