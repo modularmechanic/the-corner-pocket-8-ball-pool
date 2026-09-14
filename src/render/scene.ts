@@ -4,6 +4,7 @@ import { EFFECTS } from '../presentation/effects';
 import { deriveTableEffects } from '../presentation/table-presentation';
 import { ballTexture, canvasTexture, clubLightingTexture } from './materials';
 import { createTableSurfaces, type TableSurfaces } from './table-surfaces';
+import { createPropInstaller } from './asset-installer';
 import { RoomReflections } from './room-reflections';
 import { ShotPaths } from './shot-paths';
 import { CueAppearance } from './cue-appearance';
@@ -96,6 +97,7 @@ export class PoolScene {
   private outFades = new Map<number,OutFade>();
   private effects: TableEffects;
   private surfaces: TableSurfaces;
+  private propInstaller = createPropInstaller();
   private pocketDetails?: TableModel['pocketDetails'];
   private roomReflections?: RoomReflections;
   private fallbackEnvironment: THREE.WebGLRenderTarget;
@@ -159,7 +161,7 @@ export class PoolScene {
     // pocket facings readable without lifting the pub's ambient exposure.
     const clothBounce=new THREE.RectAreaLight('#e1e7da',.38,10.4,4.8);
     clothBounce.position.set(0,3.15,0);clothBounce.lookAt(0,0,0);this.scene.add(clothBounce);
-    this.surfaces = createTableSurfaces(this.renderer);
+    this.surfaces = createTableSurfaces(this.propInstaller);
     this.buildEnvironment(); this.buildTable(); this.buildBalls(); this.buildCue();
     this.effects = new TableEffects(this.scene);
     this.buffHalo = new THREE.Mesh(new THREE.RingGeometry(TABLE.radius * 1.19, TABLE.radius * 1.32, 64), new THREE.MeshBasicMaterial({ color: '#ffbc63', transparent: true, opacity: .55, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
@@ -170,7 +172,7 @@ export class PoolScene {
     this.practicalLights=new PracticalLightBudget(this.scene);
     this.roomReflections = new RoomReflections(this.renderer,this.scene,
       ()=>[...(this.pub?[this.pub.group]:[]),...this.tableOccluders],
-      capture=>this.practicalLights.withFullLighting(()=>this.pub?this.pub.withEnclosedRoom(capture):capture()));
+      capture=>this.practicalLights.withFullLighting(()=>this.pub?this.pub.withEnclosedRoom(capture):capture()),this.propInstaller);
     for(const ball of this.balls)this.roomReflections.add(ball.material as THREE.MeshPhysicalMaterial);
     for(const material of [this.cueAppearance.shaft,this.cueAppearance.butt,this.surfaces.brass])this.roomReflections.add(material);
     if (this.renderer.extensions.has('EXT_color_buffer_float')) this.postprocessing = new PoolPostprocessing(this.renderer, this.scene, this.camera);
@@ -178,7 +180,7 @@ export class PoolScene {
     this.applyGraphicsBudget();
   }
   private buildEnvironment() {
-    this.pub = buildPub(this.scene, this.renderer);
+    this.pub = buildPub(this.scene, this.propInstaller);
   }
   private buildTable() {
     const table=new TableModel(this.scene,this.surfaces,drawTableTextures(this.ballMaps));
@@ -499,5 +501,5 @@ export class PoolScene {
       if(this.performanceBudget.observe(sample))this.applyGraphicsBudget();
     }
   }
-  dispose() { this.practicalLights.dispose();this.gpuTimer.dispose();this.cueAppearance.dispose();this.resizeObserver.disconnect(); this.roomReflections?.dispose();this.shotPaths.dispose(); this.effects.dispose();this.tableDetails?.dispose();this.pocketDetails?.dispose(); this.pub?.dispose();this.postprocessing?.dispose();this.surfaces.dispose();for(const lamp of this.tableLights)lamp.shadow.dispose();this.fallbackEnvironment.dispose();this.renderer.dispose();this.scene.traverse(o => { const mesh = o as THREE.Mesh; mesh.geometry?.dispose(); if (mesh.material) for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) m.dispose(); }); }
+  dispose() { this.propInstaller.dispose();this.practicalLights.dispose();this.gpuTimer.dispose();this.cueAppearance.dispose();this.resizeObserver.disconnect(); this.roomReflections?.dispose();this.shotPaths.dispose(); this.effects.dispose();this.tableDetails?.dispose();this.pocketDetails?.dispose(); this.pub?.dispose();this.postprocessing?.dispose();this.surfaces.dispose();for(const lamp of this.tableLights)lamp.shadow.dispose();this.fallbackEnvironment.dispose();this.renderer.dispose();this.scene.traverse(o => { const mesh = o as THREE.Mesh; mesh.geometry?.dispose(); if (mesh.material) for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) m.dispose(); }); }
 }

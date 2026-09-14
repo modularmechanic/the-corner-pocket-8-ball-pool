@@ -1,9 +1,14 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { disposePubObject, instancePubModel, type PubPlacement } from './pub-models';
+import type { PubPlacement } from './pub-models';
 import { PUB_LAYOUT, pubBackZ, pubFrontZ, pubSideX } from './pub-layout';
+import type { PropInstaller } from './asset-installer';
 
 const FLOOR = -3.6;
+/** Prop paths relative to public/. */
+export const PUB_DRESSING_PROPS = {
+  hearth:'models/pub/hearth-fireplace.glb',handpump:'models/pub/ale-handpump.glb',divider:'models/pub/snug-divider.glb',casks:'models/pub/cask-stack.glb',
+  memorabilia:{frame:'models/pub/memorabilia-frame.glb',darts:'models/pub/memorabilia-darts.glb',stout:'models/pub/memorabilia-stout.glb'},
+} as const;
 /** Human-scale snug furnishings stay outside the pool table's cueing aisle. */
 const original = {
   hearth: [{x:9,y:FLOOR,z:11.4,rotation:Math.PI,height:9.15}],
@@ -36,10 +41,9 @@ export const PUB_DRESSING = {
   handpumps:original.handpumps.map(p=>({...p,z:pubBackZ(p.z)})),
 };
 
-/** Loads Blender-authored fixtures with complete fallbacks and room-owned GPU disposal. */
-export function buildPubDressing(room:THREE.Group,renderer:THREE.WebGLRenderer,walls:{front:THREE.Group;right:THREE.Group}) {
-  let disposed=false;
-  const loader=new GLTFLoader(),assets=new THREE.Group();assets.name='pub-blender-dressing';room.add(assets);
+/** Requests Blender-authored fixtures, each with a complete placeholder, under room-owned GPU disposal. */
+export function buildPubDressing(room:THREE.Group,installer:PropInstaller,walls:{front:THREE.Group;right:THREE.Group}) {
+  const assets=new THREE.Group();assets.name='pub-blender-dressing';room.add(assets);
   const wallAssets=new THREE.Group();wallAssets.name='pub-snug-wall-dressing';walls.front.add(wallAssets);
   const rightWallAssets=new THREE.Group();rightWallAssets.name='pub-brick-gallery';walls.right.add(rightWallAssets);
   const stone=new THREE.MeshStandardMaterial({color:'#8a7460',roughness:.92});
@@ -67,9 +71,9 @@ export function buildPubDressing(room:THREE.Group,renderer:THREE.WebGLRenderer,w
     const glass=new THREE.MeshPhysicalMaterial({color:'#ac9e73',transparent:true,opacity:.22,roughness:.3,metalness:0,depthWrite:false});meshBox(group,4.06,1.14,.035,glass,0,2.48,0);
   }
   const galleryVariants=[
-    {name:'memorabilia-frame',front:[] as PubPlacement[],right:[PUB_DRESSING.rightGallery[1]]},
-    {name:'memorabilia-darts',front:[] as PubPlacement[],right:[PUB_DRESSING.rightGallery[2]]},
-    {name:'memorabilia-stout',front:[PUB_DRESSING.gallery[2]],right:[PUB_DRESSING.rightGallery[0]]},
+    {path:PUB_DRESSING_PROPS.memorabilia.frame,front:[] as PubPlacement[],right:[PUB_DRESSING.rightGallery[1]]},
+    {path:PUB_DRESSING_PROPS.memorabilia.darts,front:[] as PubPlacement[],right:[PUB_DRESSING.rightGallery[2]]},
+    {path:PUB_DRESSING_PROPS.memorabilia.stout,front:[PUB_DRESSING.gallery[2]],right:[PUB_DRESSING.rightGallery[0]]},
   ].map(variant=>{
     const frontFallback=new THREE.Group(),rightFallback=new THREE.Group();wallAssets.add(frontFallback);rightWallAssets.add(rightFallback);
     for(const [placements,parent]of [[variant.front,frontFallback],[variant.right,rightFallback]] as const)for(const placement of placements){
@@ -90,29 +94,17 @@ export function buildPubDressing(room:THREE.Group,renderer:THREE.WebGLRenderer,w
     const barrel=new THREE.Mesh(new THREE.CylinderGeometry(.60,.60,1.65,16),wood);barrel.rotation.z=Math.PI/2;barrel.position.set(x,y,0);barrel.castShadow=true;caskFallback.add(barrel);
     for(const dx of [-.66,.66]){const hoop=new THREE.Mesh(new THREE.TorusGeometry(.61,.027,6,24),iron);hoop.rotation.y=Math.PI/2;hoop.position.set(x+dx,y,0);caskFallback.add(hoop);}
   }
-  const load=(name:string,placements:PubPlacement[],parent:THREE.Group,fallback:THREE.Object3D,extra?:{placements:PubPlacement[];parent:THREE.Group;fallback:THREE.Object3D})=>{
-    loader.load(`/models/pub/${name}.glb`,gltf=>{
-      if(disposed){disposePubObject(gltf.scene);return;}
-      gltf.scene.traverse(object=>{
-        if(!(object instanceof THREE.Mesh))return;
-        for(const material of Array.isArray(object.material)?object.material:[object.material]){
-          if(material.transparent)material.depthWrite=false;
-          for(const value of Object.values(material))if(value instanceof THREE.Texture)value.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());
-        }
-      });
-      if(placements.length){const model=instancePubModel(gltf.scene,placements);model.name=`pub-${name}`;parent.add(model);}fallback.visible=false;
-      if(extra){const additional=instancePubModel(gltf.scene,extra.placements);additional.name=`pub-${name}-right`;extra.parent.add(additional);extra.fallback.visible=false;}
-    },undefined,()=>{/* Keep the complete, scaled fixture if an optional asset cannot load. */});
+  const install=(path:string,placements:PubPlacement[],parent:THREE.Group,placeholder:THREE.Object3D)=>{
+    if(placements.length)installer.model(path,{parent,placements,placeholder});
   };
-  load('hearth-fireplace',PUB_DRESSING.hearth,wallAssets,hearth);
-  for(const variant of galleryVariants)load(variant.name,variant.front,wallAssets,variant.frontFallback,{placements:variant.right,parent:rightWallAssets,fallback:variant.rightFallback});
-  load('ale-handpump',PUB_DRESSING.handpumps,assets,pumpFallback);
-  load('snug-divider',PUB_DRESSING.dividers,assets,dividerFallback);
-  load('cask-stack',PUB_DRESSING.casks,assets,caskFallback);
+  install(PUB_DRESSING_PROPS.hearth,PUB_DRESSING.hearth,wallAssets,hearth);
+  for(const variant of galleryVariants){install(variant.path,variant.front,wallAssets,variant.frontFallback);install(variant.path,variant.right,rightWallAssets,variant.rightFallback);}
+  install(PUB_DRESSING_PROPS.handpump,PUB_DRESSING.handpumps,assets,pumpFallback);
+  install(PUB_DRESSING_PROPS.divider,PUB_DRESSING.dividers,assets,dividerFallback);
+  install(PUB_DRESSING_PROPS.casks,PUB_DRESSING.casks,assets,caskFallback);
   // Local firelight lights the snug; it never floods the felt or requires another shadow pass.
   const hearthLight=new THREE.PointLight('#ffad68',9,5,2);hearthLight.position.set(PUB_DRESSING.hearth[0].x,-.32,PUB_DRESSING.hearth[0].z-1.5);room.add(hearthLight);
   return {
     update(time:number){hearthLight.intensity=9+Math.sin(time*3.1)*.55+Math.sin(time*7.3)*.24;},
-    dispose(){disposed=true;},
   };
 }

@@ -1,14 +1,16 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { PUB_LAYOUT } from './pub-layout';
 import { disposePubObject } from './pub-models';
 import { batchPubStatic } from './pub-batching';
+import type { PropInstaller } from './asset-installer';
 
 export type PubSport='soccer'|'rugby';
 export const PUB_ENTERTAINMENT={
   slots:[2.7,5.5,8.3].map(z=>({x:PUB_LAYOUT.bounds.left+1.176,y:PUB_LAYOUT.floor,z,height:4.45,rotation:Math.PI/2})),
   televisions:[-9,9.3].map(z=>({x:PUB_LAYOUT.bounds.right-.535*(3.1/1.06)-.03,y:1.9,z,height:3.1,rotation:-Math.PI/2})),
 };
+/** Prop paths relative to public/. */
+export const PUB_ENTERTAINMENT_PROPS={slot:'models/pub/slot-cabinet.glb',tv:'models/pub/sports-tv.glb'} as const;
 interface Screen {
   canvas:HTMLCanvasElement;context:CanvasRenderingContext2D;texture:THREE.CanvasTexture;material:THREE.MeshBasicMaterial;
   mesh:THREE.Mesh;anchor:THREE.Group;tick:number;kind:'slot'|PubSport;index:number;
@@ -106,10 +108,9 @@ function drawSlot(ctx:CanvasRenderingContext2D,time:number,machine:number) {
 }
 
 /** Three decorative attract-mode cabinets and two fictional, animated sports channels. */
-export function buildPubEntertainment(room:THREE.Group,renderer:THREE.WebGLRenderer,walls:{left:THREE.Group;right:THREE.Group}) {
-  let disposed=false;
+export function buildPubEntertainment(room:THREE.Group,installer:PropInstaller,walls:{left:THREE.Group;right:THREE.Group}) {
   const left=new THREE.Group(),right=new THREE.Group();left.name='pub-slot-machines';right.name='pub-sports-televisions';walls.left.add(left);walls.right.add(right);
-  const screens:Screen[]=[],loader=new GLTFLoader(),ownedRoots=[left,right];
+  const screens:Screen[]=[],ownedRoots=[left,right];
   const cabinetMaterial=new THREE.MeshStandardMaterial({color:'#263139',metalness:.36,roughness:.38});
   const trimMaterial=new THREE.MeshStandardMaterial({color:'#bb9a65',metalness:.7,roughness:.34});
   const bodyGeometry=new THREE.BoxGeometry(.8,1.96,.62),tvGeometry=new THREE.BoxGeometry(1.79,1.06,.12);
@@ -126,50 +127,52 @@ export function buildPubEntertainment(room:THREE.Group,renderer:THREE.WebGLRende
     const placements=kind==='slot'?PUB_ENTERTAINMENT.slots:PUB_ENTERTAINMENT.televisions;
     const props=placements.map((placement,index)=>{
       const anchor=new THREE.Group();anchor.position.set(placement.x,placement.y,placement.z);anchor.rotation.y=placement.rotation;anchor.scale.setScalar(placement.height/(kind==='slot'?1.96:1.06));(kind==='slot'?left:right).add(anchor);
-      const fallback=new THREE.Group();anchor.add(fallback);
-      const body=new THREE.Mesh(kind==='slot'?bodyGeometry:tvGeometry,kind==='slot'?cabinetMaterial:trimMaterial);body.position.y=kind==='slot'?.98:.53;body.castShadow=true;body.receiveShadow=true;fallback.add(body);
+      const placeholder=new THREE.Group();anchor.add(placeholder);
+      const body=new THREE.Mesh(kind==='slot'?bodyGeometry:tvGeometry,kind==='slot'?cabinetMaterial:trimMaterial);body.position.y=kind==='slot'?.98:.53;body.castShadow=true;body.receiveShadow=true;placeholder.add(body);
       const screen=makeScreen(anchor,kind==='slot'?'slot':index===0?'soccer':'rugby',index,kind==='slot'?{w:.632,h:.498,y:1.36,z:.367}:{w:1.694,h:.953,y:.548,z:.064});
-      return {anchor,fallback,screen};
+      return {anchor,placeholder,screen};
     });
-    loader.load(`/models/pub/${kind==='slot'?'slot-cabinet':'sports-tv'}.glb`,gltf=>{
-      if(disposed){disposePubObject(gltf.scene);return;}
-      const originalScreens=new Set<THREE.Material>();
-      gltf.scene.traverse(object=>{
+    const isScreen=(material:THREE.Material)=>material.name.replace(/\.\d+$/,'')===`${kind==='slot'?'Slot':'TV'} screen`;
+    installer.model(PUB_ENTERTAINMENT_PROPS[kind],{placeholder:props.map(prop=>prop.placeholder),prepare:source=>{
+      let screenMaterials=0;
+      source.traverse(object=>{
         if(!(object instanceof THREE.Mesh))return;
         for(const material of Array.isArray(object.material)?object.material:[object.material]){
-          if(material.name.replace(/\.\d+$/,'')===`${kind==='slot'?'Slot':'TV'} screen`){
-            originalScreens.add(material);
-            // Older optimized exports can omit unreferenced UVs. These are
-            // explicit upright front planes, so their UVs can be recovered safely.
-            const uv=object.geometry.getAttribute('uv');
-            let minU=Infinity,maxU=-Infinity,minV=Infinity,maxV=-Infinity;
-            if(uv)for(let i=0;i<uv.count;i++){minU=Math.min(minU,uv.getX(i));maxU=Math.max(maxU,uv.getX(i));minV=Math.min(minV,uv.getY(i));maxV=Math.max(maxV,uv.getY(i));}
-            if(!uv||maxU-minU<.5||maxV-minV<.5){
-              object.geometry.computeBoundingBox();const bounds=object.geometry.boundingBox!,positions=object.geometry.getAttribute('position'),uvs=[];
-              for(let i=0;i<positions.count;i++)uvs.push((positions.getX(i)-bounds.min.x)/(bounds.max.x-bounds.min.x),1-(positions.getY(i)-bounds.min.y)/(bounds.max.y-bounds.min.y));
-              object.geometry.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2));
-            }
+          if(!isScreen(material))continue;
+          screenMaterials++;
+          // Older optimized exports can omit unreferenced UVs. These are
+          // explicit upright front planes, so their UVs can be recovered safely.
+          const uv=object.geometry.getAttribute('uv');
+          let minU=Infinity,maxU=-Infinity,minV=Infinity,maxV=-Infinity;
+          if(uv)for(let i=0;i<uv.count;i++){minU=Math.min(minU,uv.getX(i));maxU=Math.max(maxU,uv.getX(i));minV=Math.min(minV,uv.getY(i));maxV=Math.max(maxV,uv.getY(i));}
+          if(!uv||maxU-minU<.5||maxV-minV<.5){
+            object.geometry.computeBoundingBox();const bounds=object.geometry.boundingBox!,positions=object.geometry.getAttribute('position'),uvs=[];
+            for(let i=0;i<positions.count;i++)uvs.push((positions.getX(i)-bounds.min.x)/(bounds.max.x-bounds.min.x),1-(positions.getY(i)-bounds.min.y)/(bounds.max.y-bounds.min.y));
+            object.geometry.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2));
           }
-          for(const value of Object.values(material))if(value instanceof THREE.Texture)value.anisotropy=Math.min(4,renderer.capabilities.getMaxAnisotropy());
         }
       });
-      if(!originalScreens.size){disposePubObject(gltf.scene);return;}
-      for(const {anchor,fallback,screen}of props){
-        const model=gltf.scene.clone(true);
+      // Without a screen to drive, the placeholder cabinets and their animated displays stay.
+      if(!screenMaterials)throw new Error(`${PUB_ENTERTAINMENT_PROPS[kind]} has no screen material`);
+    },use:source=>{
+      // Found by name, not from prepare, so every request for the shared source can bind its own screens.
+      const originalScreens=new Set<THREE.Material>();
+      for(const {anchor,screen}of props){
+        const model=source.clone(true);
         model.traverse(object=>{
           if(!(object instanceof THREE.Mesh))return;object.castShadow=true;object.receiveShadow=true;
-          const replace=(material:THREE.Material)=>{if(!originalScreens.has(material))return material;screen.mesh=object;object.userData.pubDynamic=true;object.castShadow=false;object.receiveShadow=false;return screen.material;};
+          const replace=(material:THREE.Material)=>{if(!isScreen(material))return material;originalScreens.add(material);screen.mesh=object;object.userData.pubDynamic=true;object.castShadow=false;object.receiveShadow=false;return screen.material;};
           object.material=Array.isArray(object.material)?object.material.map(replace):replace(object.material);
         });
         const old=anchor.children.find(child=>child instanceof THREE.Mesh&&child.material===screen.material)as THREE.Mesh|undefined;
         if(old){old.removeFromParent();old.geometry.dispose();}
-        anchor.add(model);fallback.visible=false;
+        anchor.add(model);
       }
       // Only shells are static. Each display remains attached to its original
       // anchor for canvas updates and screen-specific frustum checks.
       batchPubStatic(kind==='slot'?left:right,'subtree');
       for(const material of originalScreens){for(const value of Object.values(material))if(value instanceof THREE.Texture)value.dispose();material.dispose();}
-    },undefined,()=>{/* The animated fallback display stays usable if an asset is missing. */});
+    }});
   };
   makeProps('slot');makeProps('tv');
   const glow=new THREE.PointLight('#8dc9dd',2.4,5,2);glow.position.set(PUB_LAYOUT.bounds.left+2.2,-1.3,5.5);left.add(glow);
@@ -182,11 +185,10 @@ export function buildPubEntertainment(room:THREE.Group,renderer:THREE.WebGLRende
   };
   return {
     update(time:number,camera?:THREE.Camera){
-      if(disposed)return;
       if(camera)frustum.setFromProjectionMatrix(projection.multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse));
       const tick=Math.floor(time*12);
       for(const screen of screens){if(screen.tick===tick||!visible(screen,camera))continue;screen.tick=tick;if(screen.kind==='slot')drawSlot(screen.context,time,screen.index);else drawBroadcast(screen.context,screen.kind,time);screen.texture.needsUpdate=true;}
     },
-    dispose(){if(disposed)return;disposed=true;const resources=new THREE.Group();for(const root of ownedRoots){root.removeFromParent();resources.add(root);}disposePubObject(resources);},
+    dispose(){const resources=new THREE.Group();for(const root of ownedRoots){root.removeFromParent();resources.add(root);}disposePubObject(resources);},
   };
 }
