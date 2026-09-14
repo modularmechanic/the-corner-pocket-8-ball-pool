@@ -1,6 +1,8 @@
 import './style.css';
 import { initPhysics } from './simulation/game';
-import { LocalMatch, RemoteMatch, type Match, type MatchCommand } from './match';
+import { LocalMatch, type Match, type MatchCommand } from './match';
+import type { RemoteMatch } from './match/remote';
+import { resolveRoomServer } from './match/room-server';
 import { LAYOUTS } from './simulation/arcade';
 import { normalizeLevel } from './simulation/level-policy';
 import { CUE_CATALOG, canEquipCue, equippedCue } from './simulation/cues';
@@ -16,7 +18,8 @@ import { PlayerProfile } from './ui/player-profile';
 import { HudWriter, type HudElement } from './ui/hud-writer';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
-$('app').innerHTML = shell();
+const roomServer = resolveRoomServer(import.meta.env.VITE_ROOM_SERVER_URL);
+$('app').innerHTML = shell({ online: !!roomServer });
 const profile = new PlayerProfile((() => { try { return localStorage; } catch { return null; } })());
 const sound = new TableAudio();
 sound.enabled = profile.preferences.sound;
@@ -222,15 +225,18 @@ async function place(point:{x:number;z:number}) {
   void sound.unlock();await command({type:'place',...point},'Place the cue ball on clear felt.');
 }
 async function enterRoom(create:boolean) {
-  if(isConnecting)return;
+  if(isConnecting||!roomServer)return;
   const name=$<HTMLInputElement>('player-name').value.trim()||'Player';
   const code=$<HTMLInputElement>('room-code').value.trim().toUpperCase();
   if(!create&&!/^[A-Z0-9]{6}$/.test(code)){$('room-error').textContent='Enter a six-character room code.';return;}
   isConnecting=true;$('room-error').textContent='';
   const intent=++sessionIntent;
   $<HTMLButtonElement>('create-room').disabled=true;$<HTMLButtonElement>('join-room').disabled=true;
-  const candidate=new RemoteMatch({identity:{token:identity,name}});
+  let candidate:RemoteMatch|undefined;
   try{
+    const { RemoteMatch } = await import('./match/remote');
+    if(intent!==sessionIntent)return;
+    candidate=new RemoteMatch({identity:{token:identity,name},url:roomServer.url});
     const result=create?await candidate.create({layout:profile.preferences.layout,level:profile.preferences.level,format:$<HTMLSelectElement>('room-format').value==='doubles'?'doubles':'singles'}):await candidate.join(code);
     if(intent!==sessionIntent){candidate.dispose();return;}
     if(!result.ok)throw new Error(result.error||'Could not open the table.');
@@ -239,7 +245,7 @@ async function enterRoom(create:boolean) {
     if(create||!match.ready)openDialog('invite-dialog');else toast('You’re in.');
     if(state.cues[match.seat]==='ash-house')equipPreferredCue();
     updateUI();
-  }catch(error){candidate.dispose();if(intent===sessionIntent)$('room-error').textContent=error instanceof Error?error.message:'Could not open the table.';}
+  }catch(error){candidate?.dispose();if(intent===sessionIntent)$('room-error').textContent=error instanceof Error?error.message:'Could not open the table.';}
   finally{isConnecting=false;$<HTMLButtonElement>('create-room').disabled=false;$<HTMLButtonElement>('join-room').disabled=false;}
 }
 async function copy(text: string, message: string) {
@@ -425,7 +431,8 @@ async function boot() {
     input = createShotInput(); newGame('ai'); setupUI(); setupInput();
     $('loading').classList.add('done'); showMainMenu(); previous = performance.now(); requestAnimationFrame(frame);
     const invitation = new URL(location.href).searchParams.get('room');
-    if (invitation) { $<HTMLInputElement>('room-code').value = invitation.slice(0,6).toUpperCase(); openDialog('room-dialog'); }
+    if (invitation && !roomServer) $('menu-session-note').textContent = 'Online play is unavailable in this version, so room invitations cannot open here.';
+    else if (invitation) { $<HTMLInputElement>('room-code').value = invitation.slice(0,6).toUpperCase(); openDialog('room-dialog'); }
     Object.defineProperty(window, '__POOL__', { value: { snapshot: () => structuredClone(state), project: (x: number, z: number) => scene.tableToScreen(x,z), resolution: () => scene.getResolution(), mode: () => match.mode, seat: () => match.seat, audio: () => sound.diagnostics(), performance:()=>scene.getPerformance() }, writable: false });
   } catch (error) {
     console.error('Could not open the club:', error);

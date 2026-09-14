@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { LocalMatch } from '../src/match/local';
 import type { MatchCommand } from '../src/match/types';
 import type { Ack, ClientToServerEvents, CommandResult, Identity, RoomReply, RoomSnapshot, ServerToClientEvents, SocketData } from '../src/match/protocol';
-import { activeSeat, teamOfSeat, seatCount, type GameOptions } from '../src/simulation/types';
+import { teamOfSeat, seatCount, type GameOptions } from '../src/simulation/types';
 interface Seat { token: string; name: string; socketId: string | null }
 interface Room { code: string; match: LocalMatch; seats: Seat[]; updated: number; broadcastTime: number }
 type RoomSocket = Socket<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>;
@@ -12,11 +12,16 @@ const reply = (ack: unknown, response: CommandResult) => { if (typeof ack === 'f
 function validIdentity(data: unknown): data is Identity {
   return !!data && typeof data === 'object' && 'token' in data && typeof data.token === 'string' && /^[\w-]{16,80}$/.test(data.token) && 'name' in data && typeof data.name === 'string';
 }
-export function attachRooms(http: HttpServer) {
-  const io = new Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>(http, { maxHttpBufferSize: 16_384 });
+/** Browser origins allowed to reach rooms from another site, from a comma-separated `CORS_ORIGIN`. */
+export function allowedOrigins(setting = process.env.CORS_ORIGIN): string[] {
+  return (setting ?? '').split(',').map(origin => origin.trim()).filter(Boolean);
+}
+/** Without allowed origins, browsers can only reach rooms from pages served by this server. */
+export function attachRooms(http: HttpServer, origins = allowedOrigins()) {
+  const io = new Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>(http, { maxHttpBufferSize: 16_384, ...(origins.length ? { cors: { origin: origins } } : {}) });
   const rooms = new Map<string, Room>();
   const syncSeats = (room: Room) => room.match.setReady(room.seats.length === seatCount(room.match.state.format) && room.seats.every(seat => !!seat.socketId));
-  const info = (room: Room): RoomSnapshot => ({ code: room.code, format: room.match.state.format, capacity: seatCount(room.match.state.format), activeSeat: activeSeat(room.match.state), players: room.seats.map((s, seat) => ({ name: s.name, connected: !!s.socketId, seat, team: teamOfSeat(seat) })), state: room.match.state, events: [] });
+  const info = (room: Room): RoomSnapshot => ({ code: room.code, format: room.match.state.format, capacity: seatCount(room.match.state.format), players: room.seats.map((s, seat) => ({ name: s.name, connected: !!s.socketId, seat, team: teamOfSeat(seat) })), state: room.match.state, events: [] });
   const publish = (room: Room) => { io.to(room.code).emit('room:state', { ...info(room), events: room.match.drainEvents() }); };
   const socketRoom = (socket: RoomSocket) => socket.data.room ? rooms.get(socket.data.room) : undefined;
   function leave(socket: RoomSocket) {

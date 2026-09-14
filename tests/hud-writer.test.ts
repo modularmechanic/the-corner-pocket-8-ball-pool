@@ -63,7 +63,7 @@ test('next-level visibility follows every update, not only the first result fram
 
 test('room names are escaped in the roster and invitation', () => {
   const { element } = fakeDocument(), hud = new HudWriter(element), state = table(); state.format = 'doubles';
-  const room: RoomSnapshot = { code: 'ABC123', format: 'doubles', capacity: 4, activeSeat: 0, state, events: [], players: [{ name: '<img src=x>', connected: true, seat: 0, team: 0 }, { name: 'Guest', connected: false, seat: 1, team: 1 }] };
+  const room: RoomSnapshot = { code: 'ABC123', format: 'doubles', capacity: 4, state, events: [], players: [{ name: '<img src=x>', connected: true, seat: 0, team: 0 }, { name: 'Guest', connected: false, seat: 1, team: 1 }] };
   hud.write(view(state, { room, ready: false }));
   for (const id of ['roster-0', 'invite-roster']) { assert.doesNotMatch(element(id).innerHTML, /<img/); assert.match(element(id).innerHTML, /&#60;img src=x&#62;/); }
   assert.match(element('invite-roster').innerHTML, /2 · Guest · Reconnecting/);

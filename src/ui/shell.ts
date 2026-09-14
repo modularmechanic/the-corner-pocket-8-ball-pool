@@ -32,7 +32,9 @@ export function icon(name: string, size = 20) {
   };
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.target}</svg>`;
 }
-export function shell() {
+/** Online entries are hidden when this build has no room server. */
+export function shell({ online }: { online: boolean }) {
+  const onlineHidden = online ? '' : ' hidden';
   return `
   <main class="club">
     <section class="game-stage" aria-label="Pool game">
@@ -51,7 +53,7 @@ export function shell() {
       <div class="loading-screen" id="loading"><div class="loading-ball">8</div><h2>Chalking up.</h2><p>Preparing the table…</p></div>
     </section>
     <div class="bottom-hud">
-      <div class="mode-tabs" role="group" aria-label="Opponent"><button id="mode-ai" class="selected" aria-label="Play AI" title="Play AI" aria-pressed="true">${icon('robot',19)}</button><button id="mode-online" aria-label="Play a friend online" title="Private room" aria-pressed="false">${icon('users',19)}</button><button id="mode-local" aria-label="Pass and play" title="Pass & play" aria-pressed="false">${icon('local',19)}</button></div>
+      <div class="mode-tabs" role="group" aria-label="Opponent"><button id="mode-ai" class="selected" aria-label="Play AI" title="Play AI" aria-pressed="true">${icon('robot',19)}</button><button id="mode-online"${onlineHidden} aria-label="Play a friend online" title="Private room" aria-pressed="false">${icon('users',19)}</button><button id="mode-local" aria-label="Pass and play" title="Pass & play" aria-pressed="false">${icon('local',19)}</button></div>
       <button class="shoot-button gold-button" id="shoot-button" aria-label="Take shot" title="Take shot · Space">${icon('cue',21)} ${icon('arrow',16)}</button>
     </div>
   </main>
@@ -70,9 +72,9 @@ export function shell() {
         <div class="menu-mode-grid" role="group" aria-label="Game mode">
           <button id="menu-start" class="menu-mode-card" data-mode="ai" aria-pressed="true"><span class="menu-card-number">01</span><span class="menu-card-icon">${icon('cue',30)}</span><strong>Play the House</strong><span class="menu-card-detail" id="menu-ai-description">Solo · AI opponent</span><span class="menu-card-selected">${icon('check',16)}</span></button>
           <button id="menu-local" class="menu-mode-card" data-mode="local" aria-pressed="false"><span class="menu-card-number">02</span><span class="menu-card-icon">${icon('local',30)}</span><strong>Pass & Play</strong><span class="menu-card-detail" id="menu-local-description">Two players · One screen</span><span class="menu-card-selected">${icon('check',16)}</span></button>
-          <button id="menu-online" class="menu-mode-card" data-mode="online" aria-pressed="false"><span class="menu-card-number">03</span><span class="menu-card-icon">${icon('users',30)}</span><strong>Online</strong><span class="menu-card-detail" id="menu-online-description">Private room · Invite a friend</span><span class="menu-card-selected">${icon('check',16)}</span></button>
+          <button id="menu-online"${onlineHidden} class="menu-mode-card" data-mode="online" aria-pressed="false"><span class="menu-card-number">03</span><span class="menu-card-icon">${icon('users',30)}</span><strong>Online</strong><span class="menu-card-detail" id="menu-online-description">Private room · Invite a friend</span><span class="menu-card-selected">${icon('check',16)}</span></button>
         </div>
-        <div class="menu-configuration"><label class="menu-select" for="menu-format"><span>Match format</span><select id="menu-format" aria-describedby="menu-format-note"><option value="singles">Singles · 1 vs 1</option><option value="doubles">Doubles · 2 vs 2</option></select></label><label class="menu-select" for="menu-level"><span>Level</span><select id="menu-level"></select></label><label class="menu-select" id="menu-ai-options" for="menu-difficulty"><span>Difficulty</span><select id="menu-difficulty">${options(DIFFICULTY_OPTIONS.map(option => ({ ...option, label: `${option.label} · ${option.opponent}` })))}</select></label><button id="menu-lobby" class="menu-utility">${icon('users',19)} Online Lobby ${icon('arrow',16)}</button></div>
+        <div class="menu-configuration"><label class="menu-select" for="menu-format"><span>Match format</span><select id="menu-format" aria-describedby="menu-format-note"><option value="singles">Singles · 1 vs 1</option><option value="doubles">Doubles · 2 vs 2</option></select></label><label class="menu-select" for="menu-level"><span>Level</span><select id="menu-level"></select></label><label class="menu-select" id="menu-ai-options" for="menu-difficulty"><span>Difficulty</span><select id="menu-difficulty">${options(DIFFICULTY_OPTIONS.map(option => ({ ...option, label: `${option.label} · ${option.opponent}` })))}</select></label><button id="menu-lobby"${onlineHidden} class="menu-utility">${icon('users',19)} Online Lobby ${icon('arrow',16)}</button></div>
         <p id="menu-format-note" class="menu-format-note" aria-live="polite">One player against the house.</p>
         <div class="menu-session-bar"><div><span>READY TO PLAY</span><strong id="menu-mode-label">Play the House</strong></div><button id="menu-session-start" class="menu-primary"><span>Start Session</span>${icon('arrow',24)}</button></div>
         <details class="menu-records"><summary><span>${icon('trophy',17)} House Records</span>${icon('chevron',17)}</summary><section class="menu-scores" aria-labelledby="scores-title"><div class="menu-scores-title"><h3 id="scores-title">House records</h3><span>This device</span></div><ol id="high-scores"></ol><p class="menu-empty" id="scores-empty">Your first rack starts the story.</p></section></details>
