@@ -27,7 +27,6 @@ export class PracticalLightBudget {
   private shaderCounts={points:6,areas:2};
   private elapsed=Infinity;
   private discovery=Infinity;
-  private discoveryInterval=2;
   private flash=false;
   private frustum=new THREE.Frustum();
   private projection=new THREE.Matrix4();
@@ -46,29 +45,33 @@ export class PracticalLightBudget {
     this.discover();
   }
   /** Visible slots follow the quality ceiling, never the adaptive tier: three keys
-   * programs on light counts, so a tier change only fades slots in or out. */
+   * programs on light counts, so a tier change only fades slots in or out.
+   * ponytail: lower tiers still pay the zero-intensity slots' (and zero-intensity table
+   * shadows') per-pixel shader cost; toggle counts per tier and prewarm each variant at load if that matters. */
   configure(quality:RenderQuality,tier:RenderBudget['tier'],ceiling:RenderBudget['tier']=tier):void {
     const active=practicalLightLimits(quality,tier),slots=practicalLightLimits(quality,ceiling);
     this.shaderCounts=slots;this.elapsed=Infinity;
     this.limits={points:Math.min(active.points,slots.points),areas:Math.min(active.areas,slots.areas)};
-    for(const [index,slot]of this.points.entries())slot.light.visible=index<slots.points;
-    for(const [index,slot]of this.areas.entries())slot.light.visible=index<slots.areas;
+    for(const [index,slot]of this.points.entries())this.show(slot,index<slots.points);
+    for(const [index,slot]of this.areas.entries())this.show(slot,index<slots.areas);
     this.ambient.intensity=this.limits.points===3?.035:this.limits.points===4?.025:this.limits.points===6?.015:0;
   }
+  /** A hidden slot forgets its source, so raising the ceiling fades in instead of popping a stale light. */
+  private show(slot:Slot,visible:boolean):void {
+    slot.light.visible=visible;
+    if(!visible){slot.source=null;slot.target=null;slot.fade=0;slot.light.intensity=0;}
+  }
   private discover():void {
-    const known=this.list.length;
     this.scene.traverse(object=>{
       if(!(object instanceof THREE.PointLight||object instanceof THREE.RectAreaLight)||object.parent===this.group||this.sources.has(object))return;
       object.updateWorldMatrix(true,false);
       const source={light:object,visible:object.visible,position:new THREE.Vector3(),rotation:new THREE.Quaternion(),score:0};
       this.sources.set(object,source);this.list.push(source);object.visible=false;
     });
-    // ponytail: late asset lights wait for a backed-off rescan (<=32 s); hook loader completion if they must appear sooner.
-    this.discoveryInterval=this.list.length>known?2:Math.min(32,this.discoveryInterval*2);
     this.discovery=0;
   }
   update(camera:THREE.Camera,dt:number):void {
-    this.discovery+=dt;if(this.discovery>=this.discoveryInterval)this.discover();
+    this.discovery+=dt;if(this.discovery>=2)this.discover();
     this.elapsed+=dt;
     this.projection.multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse);this.frustum.setFromProjectionMatrix(this.projection);
     let flash=false;

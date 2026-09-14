@@ -56,6 +56,9 @@ test('high and ultra pool generously, and disposal restores original source visi
   assert.deepEqual(count(scene),{point:8,area:3,spot:3});assert.deepEqual(lit(scene),{point:8,area:3});
   budget.configure('ultra','ultra');for(let i=0;i<60;i++)budget.update(camera,1/120);
   assert.deepEqual(count(scene),{point:12,area:4,spot:3});assert.deepEqual(lit(scene),{point:12,area:4});
+  const proxies=scene.getObjectByName('adaptive-practical-lights')!.children.filter(child=>child instanceof THREE.PointLight) as THREE.PointLight[];
+  budget.configure('auto','minimum','fast');budget.configure('ultra','ultra');budget.update(camera,1/120);
+  assert.ok(proxies.slice(4).every(light=>light.intensity<2),'slots re-shown after a lower ceiling fade in rather than pop a stale source');
   budget.configure('auto','fast');assert.ok(points.every(light=>!light.visible));budget.dispose();
   assert.equal(scene.getObjectByName('adaptive-practical-lights'),undefined);assert.deepEqual(count(scene),{point:14,area:4,spot:3});
 });
