@@ -14,7 +14,7 @@ import { PoolScene, type Quality } from './render/scene';
 import { shell, icon } from './ui/shell';
 import { TableAudio } from './ui/audio';
 import { createIdentity } from './ui/identity';
-import { ShotInputController, type PointerInput, type ShotInputView } from './ui/shot-input-controller';
+import { inputSchemeFor, ShotInputController, type PointerInput, type ShotInputView } from './ui/shot-input-controller';
 import { PlayerProfile, rackOptions } from './ui/player-profile';
 import { HudWriter, type HudElement } from './ui/hud-writer';
 
@@ -53,6 +53,10 @@ let input: ShotInputController;
 let cueFocusRestore='';
 let coinResetting = false;
 let inspectingTable = false;
+let overheadView = false;
+/** Finger or pen input shows the dial, Engage, power slider and Shoot; a mouse brings back the desktop controls. */
+let touchInput = false;
+let touchFitted = false;
 let menuMode: Mode = 'ai';
 let menuFormat: GameFormat = profile.preferences.format;
 let identity: string;
@@ -150,14 +154,15 @@ async function command(command:MatchCommand,fallback:string) {
   if(match!==current)return false;
   syncMatch();if(!result.ok)toast(result.error||fallback);updateUI();return result.ok;
 }
-function chooseCamera(overhead:boolean) {
-  input.cameraChanged();inspectingTable=false;
+/** Only an explicit camera choice is remembered; the touch overhead default is not. */
+function chooseCamera(overhead:boolean,remember=true) {
+  input.cameraChanged();inspectingTable=false;overheadView=overhead;
   scene.setInspection(false);scene.setOverhead(overhead);scene.resetAimPointer();
   $<HTMLSelectElement>('camera').value=overhead?'overhead':'angled';
   $('camera-toggle').setAttribute('aria-label',overhead?'Switch to cue view':'Switch to overhead view');
   $('camera-toggle').setAttribute('aria-pressed',String(overhead));
   $('fps-view').setAttribute('aria-pressed',String(!overhead));
-  profile.set('camera',overhead?'overhead':'angled');
+  if(remember)profile.set('camera',overhead?'overhead':'angled');
 }
 async function chalkCue() {
   if (!input.canAct || state.phase !== 'ready' || state.chalked[state.turn]) return;
@@ -203,7 +208,7 @@ function updateUI() {
   if (!state) return;
   const room = match.room, ready = match.ready, interactive = input.canAct;
   const table = deriveTablePresentation(state, { mode: match.mode, difficulty: profile.preferences.difficulty, room, connected: match.connected, ready, controlsTurn: match.actor.canAct, canInteract: interactive, aiThinking: match.thinking, shotStage: input.setup.stage, adjustment: input.setup.adjustment, resetting: coinResetting });
-  hud.write({ state, table, mode: match.mode, seat: match.seat, room, ready, canAct: interactive, canAdvance: match.capabilities.canAdvance, inspecting: inspectingTable, setup: input.setup, layout: profile.preferences.layout });
+  hud.write({ state, table, mode: match.mode, seat: match.seat, room, ready, canAct: interactive, canAdvance: match.capabilities.canAdvance, inspecting: inspectingTable, setup: input.setup, layout: profile.preferences.layout, touch: touchInput, lockHint: input.lockHint });
   if ($<HTMLDialogElement>('cue-dialog').open) renderCueLocker();
   if (state.phase === 'over' && presentation?.phase === 'over') {
     const key = `${state.seed}:${state.shotCount}:${state.winner}`;
@@ -269,7 +274,32 @@ function chooseDifficulty(difficulty: Difficulty) {
   $<HTMLSelectElement>('menu-difficulty').value = difficulty; $<HTMLSelectElement>('difficulty').value = difficulty;
   profile.set('difficulty', difficulty); match.setDifficulty(difficulty); stopAI(); updateUI();
 }
+/** Touch screens fit the overhead table between their controls, measured from the live layout; a mouse restores desktop framing. */
+function fitTouchOverhead() {
+  // Mouse mode leaves the cameras alone on every resize and scoreboard change; it only restores the desktop framing once.
+  if (!touchInput) { if (touchFitted) { touchFitted = false; scene.setOverheadInsets(null); } return; }
+  touchFitted = true;
+  const box = $('scene').getBoundingClientRect(), portrait = matchMedia('(orientation: portrait)').matches;
+  const rects = (...elements: (Element | null)[]) => elements.map(element => element?.getBoundingClientRect()).filter((rect): rect is DOMRect => !!rect?.width && !!rect.height);
+  const tools = document.querySelector('.stage-tools'), dial = $('aim-dial'), shoot = $('touch-shoot'), engage = $('touch-engage'), tabs = document.querySelector('.bottom-hud');
+  // Portrait stacks tools, dial, Engage, Shoot and the mode tabs along the bottom; landscape puts tools and dial in a left column
+  // and the tabs, slider, Engage and Shoot in a right column. The status line is not a control and may cross the table.
+  const top = Math.max(box.top, ...rects($('player-0'), $('player-1'), document.querySelector('.header-actions')).map(rect => rect.bottom)) - box.top;
+  const left = Math.max(box.left, ...rects(...(portrait ? [] : [tools, dial])).map(rect => rect.right)) - box.left;
+  const right = box.right - Math.min(box.right, ...rects($('touch-power'), shoot, ...(portrait ? [] : [engage, tabs])).map(rect => rect.left));
+  const bottom = box.bottom - Math.min(box.bottom, ...rects(...(portrait ? [tools, dial, engage, shoot, tabs] : [])).map(rect => rect.top));
+  const gap = 8;
+  scene.setOverheadInsets({ top: top + gap, right: right + gap, bottom: bottom + gap, left: left + gap });
+}
+function setTouchInput(touch: boolean) {
+  if (touch === touchInput && document.documentElement.dataset.input) return;
+  touchInput = touch; document.documentElement.dataset.input = touch ? 'touch' : 'mouse';
+  if (touch) input.releasePointerLock();
+  fitTouchOverhead();
+}
 function setupUI() {
+  // Phones and tablets start overhead; the camera button switches to the cue view and back.
+  setTouchInput(matchMedia('(pointer: coarse)').matches);
   document.querySelectorAll<HTMLButtonElement>('[data-close]').forEach(button => button.onclick = () => button.closest('dialog')!.close());
   document.querySelectorAll<HTMLDialogElement>('dialog').forEach(dialog => {
     dialog.addEventListener('click', event => { if (dialog.id !== 'main-menu' && event.target === dialog) { const r = dialog.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) dialog.close(); } });
@@ -307,7 +337,7 @@ function setupUI() {
   $('preview-audio').onclick = () => sound.preview();
   $<HTMLSelectElement>('quality').value = profile.preferences.quality; scene.setQuality(profile.preferences.quality);
   $('quality').onchange = () => { const q = $<HTMLSelectElement>('quality').value as Quality; scene.setQuality(q); profile.set('quality', q); resolutionNote(); };
-  chooseCamera(profile.preferences.camera==='overhead');
+  chooseCamera(touchInput||profile.preferences.camera==='overhead',false);
   $('camera').onchange=()=>chooseCamera($<HTMLSelectElement>('camera').value==='overhead');
   $('camera-toggle').onclick=()=>chooseCamera($<HTMLSelectElement>('camera').value!=='overhead');
   $('fps-view').onclick=()=>chooseCamera(false);
@@ -322,6 +352,8 @@ function setupUI() {
   };
   $('power').oninput = () => input.setPower(Number($<HTMLInputElement>('power').value) / 100);
   $('shoot-button').onclick = () => input.advance();
+  $('touch-engage').onclick = () => input.toggleEngage();
+  $('touch-shoot').onclick = () => input.touchShoot();
   $('chalk-button').onclick = () => void chalkCue();
   $('coin-button').onclick = () => void insertCoin();
   $('table-view').onclick = () => { input.cancel(); inspectingTable = !inspectingTable; scene.setInspection(inspectingTable); };
@@ -364,10 +396,20 @@ function createShotInput() {
     resetAimPointer: () => scene.resetAimPointer(),
     capturePointer: (id, grab) => { canvas.setPointerCapture(id); if (grab) canvas.style.cursor = 'grabbing'; },
     releasePointer: id => { canvas.style.cursor = ''; if (id !== null && canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id); },
+    requestPointerLock: () => {
+      if (!('requestPointerLock' in canvas)) return false;
+      // Refusals also arrive as pointerlockerror; older engines return no promise.
+      try { Promise.resolve(canvas.requestPointerLock()).catch(() => undefined); } catch { return false; }
+      return true;
+    },
+    // A lock that already ended reports its release at once, so the controller never keeps integrating movement.
+    exitPointerLock: () => { if (document.pointerLockElement === canvas) document.exitPointerLock(); else input.pointerLockChanged(false); },
   };
   const context = () => ({
     canAct: initialized && match.actor.canAct && !anyDialog() && !match.pending && !coinResetting && !document.hidden,
     blocked: !initialized || anyDialog() || coinResetting, phase: state.phase, width: canvas.clientWidth,
+    cueView: !overheadView && !inspectingTable,
+    ownTurn: match.actor.controller === 'human' && (match.mode !== 'online' || match.actor.seat === match.seat),
   });
   return new ShotInputController(view, context, command => {
     if (command.type === 'shoot') void shoot(command.shot);
@@ -380,7 +422,16 @@ function createShotInput() {
 }
 function setupInput() {
   const canvas = scene.renderer.domElement;
-  const pointer = (event: PointerEvent): PointerInput => ({ id: event.pointerId, x: event.clientX, y: event.clientY, button: event.button, buttons: event.buttons, primary: event.isPrimary, shift: event.shiftKey });
+  let seenMouse = false;
+  const noteMouse = (event: PointerEvent) => { if (event.pointerType === 'mouse') seenMouse = true; };
+  window.addEventListener('pointermove', noteMouse, true);
+  const fingerLike = (event: PointerEvent) => { noteMouse(event); return inputSchemeFor(event.pointerType, seenMouse, matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches) === 'touch'; };
+  const pointer = (event: PointerEvent): PointerInput => ({ id: event.pointerId, x: event.clientX, y: event.clientY, button: event.button, buttons: event.buttons, primary: event.isPrimary, shift: event.shiftKey, dx: event.movementX, dy: event.movementY, touch: fingerLike(event) });
+  window.addEventListener('pointerdown', event => setTouchInput(fingerLike(event)), true);
+  new ResizeObserver(fitTouchOverhead).observe($('scene'));
+  for (const element of [$('player-0'), $('player-1'), document.querySelector('.stage-tools')!]) new ResizeObserver(fitTouchOverhead).observe(element);
+  document.addEventListener('pointerlockchange', () => input.pointerLockChanged(document.pointerLockElement === canvas));
+  document.addEventListener('pointerlockerror', () => input.pointerLockError());
   canvas.addEventListener('pointerenter', event => input.pointerEnter(pointer(event)));
   canvas.addEventListener('pointerleave', () => input.pointerLeave());
   canvas.addEventListener('pointermove', event => input.pointerMove(pointer(event)));
@@ -400,12 +451,24 @@ function setupInput() {
   tip.onpointermove=event=>{if(tipPointer===event.pointerId)chooseTip(event);};
   tip.onpointerup=event=>{if(tipPointer===event.pointerId){chooseTip(event);tipPointer=null;tip.releasePointerCapture(event.pointerId);}};
   tip.onpointercancel=()=>{tipPointer=null;};
+  // Aim dial: the finger's turn around the dial centre; near the centre the angle is meaningless, so that stretch is skipped.
+  const dial=$('aim-dial');let dialTouch:{id:number;angle:number}|null=null;
+  const dialAngle=(event:PointerEvent)=>{const rect=dial.getBoundingClientRect(),x=event.clientX-rect.left-rect.width/2,y=event.clientY-rect.top-rect.height/2;return Math.hypot(x,y)<rect.width*.12?NaN:Math.atan2(y,x);};
+  dial.onpointerdown=event=>{if(dialTouch)return;dial.setPointerCapture(event.pointerId);dialTouch={id:event.pointerId,angle:dialAngle(event)};};
+  dial.onpointermove=event=>{if(dialTouch?.id!==event.pointerId)return;const angle=dialAngle(event);input.rotateDial(angle-dialTouch.angle);dialTouch.angle=angle;};
+  dial.onpointerup=dial.onpointercancel=event=>{if(dialTouch?.id===event.pointerId)dialTouch=null;};
+  // Power slider: the finger's height on the track sets power; letting go leaves it for the Shoot button.
+  const power=$('touch-power'),track=$('touch-power-track');let powerTouch:number|null=null;
+  const slide=(event:PointerEvent)=>{const rect=track.getBoundingClientRect();input.setSliderPower((rect.bottom-event.clientY)/rect.height);};
+  power.onpointerdown=event=>{if(powerTouch!==null)return;powerTouch=event.pointerId;power.setPointerCapture(event.pointerId);slide(event);};
+  power.onpointermove=event=>{if(powerTouch===event.pointerId)slide(event);};
+  power.onpointerup=power.onpointercancel=event=>{if(powerTouch===event.pointerId)powerTouch=null;};
   tip.onkeydown=event=>{
     const deltas:Record<string,[number,number]>={ArrowLeft:[-.08,0],ArrowRight:[.08,0],ArrowUp:[0,.08],ArrowDown:[0,-.08]};
     if(!deltas[event.key]||!input.canAct)return;event.preventDefault();event.stopPropagation();
     const[x,y]=deltas[event.key];input.setTip(input.setup.tipX+x,input.setup.tipY+y);
   };
-  window.addEventListener('blur',()=>{input.cancel();stopAI();});
+  window.addEventListener('blur',()=>{input.releasePointerLock();input.cancel();stopAI();});
   document.addEventListener('visibilitychange',()=>{
     if(document.hidden){input.cancel();stopAI();sound.updateRolling([]);}
     match.update(0,{aiPaused:document.hidden,muted:document.hidden});syncMatch();updateUI();

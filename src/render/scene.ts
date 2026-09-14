@@ -15,7 +15,7 @@ import { PoolPostprocessing, prewarmPrograms } from './postprocessing';
 import { AdaptiveRenderBudget, RenderFrameHistory, GpuFrameTimer, ShadowRevision, budgetDpr, type RenderQuality } from './performance';
 import { PracticalLightBudget } from './light-budget';
 import { TableModel, drawTableTextures, enableTableShadows, TABLE_SHADOW_LAYER } from './table-model';
-import { advanceOrbit,clampOrbit,fitTableCamera,fitOverheadCamera,orbitDirection,orbitFromDirection,CameraTransition,TemporaryCameraView,rayFromViewport,type OrbitAngles } from './camera';
+import { advanceOrbit,applyOverheadFit,clampOrbit,fitTableCamera,fitOverheadCamera,fitOverheadView,orbitDirection,orbitFromDirection,CameraTransition,TemporaryCameraView,rayFromViewport,type OrbitAngles,type ViewportInsets } from './camera';
 import { ShotCameraAim, ShotCameraRig } from './shot-camera';
 import { ArenaVisuals } from './arena-visuals';
 import { BuffTrail } from './buff-trail';
@@ -66,6 +66,7 @@ export class PoolScene {
   private decorativeShadowAge = 0;
   private practicalLights: PracticalLightBudget;
   private overhead = false;
+  private overheadInsets: ViewportInsets | null = null;
   private inspection = false;
   private inspectionPose?: {position:THREE.Vector3;target:THREE.Vector3};
   private orbit:OrbitAngles|null=null;
@@ -242,7 +243,8 @@ export class PoolScene {
     if(!this.width||!this.height)return;
     const ratio = this.width / this.height;
     const portrait = this.height > this.width * 1.05;
-    fitOverheadCamera(this.overheadCamera,ratio);
+    if(this.overheadInsets)applyOverheadFit(this.overheadCamera,fitOverheadView(this.width,this.height,this.overheadInsets));
+    else fitOverheadCamera(this.overheadCamera,ratio);
     const perspectiveCamera = this.perspectiveCamera;
     perspectiveCamera.aspect=ratio;perspectiveCamera.up.set(0,1,0);
     if(this.orbit){
@@ -317,6 +319,8 @@ export class PoolScene {
   }
   setOverhead(value: boolean) { this.cameraTransition.begin(this.camera);this.overhead = value;if(this.aiControlled&&!value)this.aiFPS=true;this.orbit=null;this.orbitReturn.clear();this.inspection=false;this.inspectionPose=undefined;this.shotCamera.reset();this.resetAimPointer();this.updateCameras(); }
   setCamera(overhead: boolean) { this.setOverhead(overhead); }
+  /** Touch controls: fit the overhead table inside the canvas area they leave free. Null keeps the desktop framing. */
+  setOverheadInsets(insets: ViewportInsets | null) { this.overheadInsets = insets ? { ...insets } : null; this.updateCameras(); }
   setInspection(value:boolean,pose?:{position:THREE.Vector3;target:THREE.Vector3}) {this.cameraTransition.begin(this.camera);this.orbitReturn.clear();this.inspection=value;this.inspectionPose=pose?{position:pose.position.clone(),target:pose.target.clone()}:undefined;if(value)this.orbit=null;else this.shotCamera.reset(true);this.resetAimPointer();this.updateCameras();}
   beginOrbit():void {
     if(this.orbitReturn.active)return;
