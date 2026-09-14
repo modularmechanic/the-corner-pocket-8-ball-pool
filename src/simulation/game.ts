@@ -3,6 +3,7 @@ import type * as R from '@dimforge/rapier3d-compat';
 import {
   initialState,
   legalTargets,
+  optionalPlacement,
   POCKETS,
   TABLE,
   other,
@@ -269,7 +270,8 @@ export class PoolGame {
     this.onEvent?.({ ...event, time: this.rollTime });
   }
   chalkCue(): boolean {
-    if (this.current.phase !== 'ready' || this.current.chalked[this.current.turn]) return false;
+    if ((this.current.phase !== 'ready' && !optionalPlacement(this.current)) || this.current.chalked[this.current.turn])
+      return false;
     this.current.chalked[this.current.turn] = true;
     const cue = this.current.balls[0];
     this.emit({ kind: 'chalk', x: cue.x, z: cue.z, strength: 0.65, ball: 0 });
@@ -287,9 +289,10 @@ export class PoolGame {
     this.current.cues[seat] = cue;
     return true;
   }
+  /** Also shoots an optional placement from where the cue ball lies, which consumes the option. */
   shoot(shot: Shot): boolean {
     if (
-      this.current.phase !== 'ready' ||
+      (this.current.phase !== 'ready' && !optionalPlacement(this.current)) ||
       !Number.isFinite(shot?.angle) ||
       !Number.isFinite(shot?.power) ||
       shot.power < 0.03 ||

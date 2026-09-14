@@ -372,9 +372,11 @@ export function choosePlacement(state: GameState): Point {
       if (inPlacementZone(state, { x, z }, kitchen) && isClearBallSpot(state, { x, z }, 0, 'ai-fallback'))
         return { x, z };
     }
-  // Hazards may cover every calm spot: accept any spot a human could use. kitchenPlacement already
-  // opened the table if the kitchen has none, and fifteen balls cannot cover the whole table.
-  return firstPlacementSpot(state, true) ?? firstPlacementSpot(state, false) ?? { x: HEAD_STRING_X, z: 0 };
+  // Hazards may cover every calm spot: accept any spot a human could use. An optional placement always has its lie;
+  // a lost cue ball may use the whole table when the kitchen has no spot, and fifteen balls cannot cover it all.
+  const spot = firstPlacementSpot(state, true);
+  if (spot || !cue.pocketed) return spot ?? { x: cue.x, z: cue.z };
+  return firstPlacementSpot(state, false) ?? { x: HEAD_STRING_X, z: 0 };
 }
 /** Picks the group with fewer balls left on the table, then the one lying closer to the pockets. */
 export function chooseGroup(state: GameState): Group {

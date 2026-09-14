@@ -15,8 +15,8 @@ export type GameFormat = 'singles' | 'doubles';
 /** Both follow the English Pool Association: a foul gives two visits. Old Rules (1991 pub rules) add a free shot;
  * New Rules (World Eightball poster) grant a free ball only when the incoming player is foul snookered. */
 export type RuleSet = 'old' | 'new';
-/** `ball-in-hand` places the cue ball: mandatory while it is off the table, optional (it may be played from where it
- * lies) while it is still on the table. `choose-group` waits for the shooter to pick solids or stripes. */
+/** `ball-in-hand` places the cue ball: mandatory while it is off the table, optional (it may be shot from where it
+ * lies instead) while it is still on the table. `choose-group` waits for the shooter to pick solids or stripes. */
 export type Phase = 'ready' | 'rolling' | 'ball-in-hand' | 'choose-group' | 'over';
 export type ArenaLayout = 'crossfire' | 'fortress' | 'gauntlet';
 export type HazardKind = 'ramp' | 'portal' | 'electric' | 'water' | 'slime' | 'smoke';
@@ -294,6 +294,9 @@ export function initialState(seed: string, format: GameFormat = 'singles', rules
   };
 }
 export const isBreakShot = (state: GameState): boolean => state.shotCount === 0 || state.rebreak;
+/** Optional placement: ball in hand while the cue ball is still on the table, so it may also be shot from where it lies. */
+export const optionalPlacement = (state: Pick<GameState, 'phase' | 'balls'>): boolean =>
+  state.phase === 'ball-in-hand' && !state.balls[0].pocketed;
 /** Balls the shooter may hit first. A free shot or free ball allows any ball. */
 export function legalTargets(state: GameState, player = state.turn): Ball[] {
   const active = state.balls.filter((b) => !b.pocketed && b.id !== 0);

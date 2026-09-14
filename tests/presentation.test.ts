@@ -39,7 +39,7 @@ test('status priority handles reconnection, rolls, results, AI, placement and se
       { aiThinking: true, controlsTurn: false, canInteract: false },
       'The Regular · Aiming',
     ],
-    [{ phase: 'ball-in-hand' }, {}, 'Optional: place behind the head string or play from here'],
+    [{ phase: 'ball-in-hand' }, {}, 'Place behind the head string'],
     [{ phase: 'ball-in-hand', turn: 1 }, { controlsTurn: false }, 'The Regular · Ball in hand'],
     [{ phase: 'ready' }, { adjustment: 'elevation' }, 'Cue elevation'],
     [{ phase: 'ready' }, { shotStage: 'power' }, '2 · Pull back & shoot'],

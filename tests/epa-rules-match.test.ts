@@ -77,6 +77,74 @@ test('optional placement: place behind the head string or play from where the cu
   }
 });
 
+test('optional placement: a shot from where the cue ball lies is accepted at once and uses up the option', () => {
+  for (const rules of BOTH) {
+    const match = new LocalMatch({ seed: `shoot-from-lie-${rules}`, mode: 'local', options: { rules } });
+    try {
+      const state = afterFoul(match.snapshot(), false);
+      Object.assign(state.balls[0], { x: 0.5, z: -1 });
+      match.arrange(state);
+      assert.equal(match.dispatch({ type: 'chalk' }).ok, true, `${rules}: chalk before the shot`);
+      assert.equal(match.dispatch({ type: 'shoot', shot: { angle: 0, power: 0.3 } }).ok, true, rules);
+      assert.equal(match.state.phase, 'rolling');
+      assert.equal(match.dispatch({ type: 'place', x: -4, z: 0 }).ok, false, `${rules}: the option is gone`);
+      settled(match);
+      match.arrange(afterFoul(match.snapshot(), true));
+      assert.equal(
+        match.dispatch({ type: 'shoot', shot: { angle: 0, power: 0.3 } }).ok,
+        false,
+        `${rules}: a lost cue ball must still be placed first`,
+      );
+      assert.equal(match.state.phase, 'ball-in-hand');
+    } finally {
+      match.dispose();
+    }
+  }
+});
+
+test('optional placement with no clear spot behind the head string leaves only the lie, for people and the AI', () => {
+  const wall = { id: 0, x: -4.3, z: 0, width: 3.2, depth: 6, hp: 4, maxHp: 4, material: 'steel' as const };
+  /** Team 1 (solids) boxed in by stripes and the black, so no pot keeps the AI at the lie, with the kitchen walled off. */
+  const blocked = (match: LocalMatch) => {
+    const state = afterFoul(match.snapshot(), false);
+    for (const ball of state.balls) if (ball.id > 0) ball.pocketed = true;
+    Object.assign(state.balls[0], { x: 2, z: 0 });
+    [9, 10, 11, 12, 13, 14, 15, 8].forEach((id, i) => {
+      const angle = (i / 8) * Math.PI * 2;
+      Object.assign(state.balls[id], {
+        pocketed: false,
+        x: 2 + Math.cos(angle) * TABLE.radius * 2.05,
+        z: Math.sin(angle) * TABLE.radius * 2.05,
+      });
+    });
+    Object.assign(state.balls[3], { pocketed: false, x: 4.5, z: 1.5 });
+    state.arcade!.obstacles = [wall];
+    return state;
+  };
+  const human = new LocalMatch({ seed: 'full-kitchen-lie', mode: 'local', options: { rules: 'old' } });
+  try {
+    const state = blocked(human);
+    human.arrange(state);
+    assert.equal(human.dispatch({ type: 'place', x: 0, z: 1.5 }).ok, false, 'the table does not open');
+    assert.equal(human.dispatch({ type: 'place', x: -4, z: 0 }).ok, false, 'the kitchen is full');
+    assert.equal(human.dispatch({ type: 'place', x: 2, z: 0 }).ok, true, 'the lie stays');
+    human.arrange(state);
+    assert.equal(human.dispatch({ type: 'shoot', shot: { angle: 0, power: 0.3 } }).ok, true);
+  } finally {
+    human.dispose();
+  }
+  const ai = new LocalMatch({ seed: 'full-kitchen-ai', mode: 'ai', difficulty: 'expert', options: { rules: 'old' } });
+  try {
+    const state = blocked(ai);
+    assert.deepEqual(choosePlacement(state), { x: 2, z: 0 }, 'the AI falls back to the lie');
+    ai.arrange(state);
+    aiPlacement(ai);
+    assert.deepEqual([ai.state.balls[0].x, ai.state.balls[0].z], [2, 0]);
+  } finally {
+    ai.dispose();
+  }
+});
+
 test('the rule set is locked for the session through resets, rematches and new levels', () => {
   const match = new LocalMatch({ seed: 'rules-lock', mode: 'ai', options: { rules: 'old' } }),
     fallback = new LocalMatch({ seed: 'rules-default' });
@@ -306,7 +374,7 @@ async function client() {
 }
 const request = (socket: Socket, event: string, data: unknown) => socket.timeout(3000).emitWithAck(event, data);
 
-test('a room uses the host’s rule set for every seat, rematch, kitchen check and group choice', async () => {
+test('a room uses the host’s rule set for every seat, rematch, kitchen check, shot from the lie and group choice', async () => {
   const host = await client(),
     guest = await client(),
     invalid = await client();
@@ -330,6 +398,14 @@ test('a room uses the host’s rule set for every seat, rematch, kitchen check a
     error: 'Place the cue ball behind the head string.',
   });
   assert.equal((await request(guest, 'game:place', { x: -4, z: 0 })).ok, true);
+  room.match.arrange(afterFoul(room.match.snapshot(), false));
+  assert.equal((await request(host, 'game:shot', { angle: 0, power: 0.3 })).ok, false, 'not the host’s turn');
+  assert.equal(
+    (await request(guest, 'game:shot', { angle: 0, power: 0.3 })).ok,
+    true,
+    'the server accepts a shot from the lie',
+  );
+  settled(room.match);
   room.match.arrange(choosing(room.match.snapshot()));
   assert.deepEqual(await request(host, 'game:group', { group: 'solids' }), { ok: false, error: 'Wait for your turn.' });
   assert.equal((await request(guest, 'game:group', { group: 42 })).ok, false);

@@ -1,4 +1,13 @@
-import { legalTargets, POCKETS, TABLE, type ArcadeState, type Ball, type GameState, type HazardKind } from './types';
+import {
+  legalTargets,
+  optionalPlacement,
+  POCKETS,
+  TABLE,
+  type ArcadeState,
+  type Ball,
+  type GameState,
+  type HazardKind,
+} from './types';
 
 export interface Point {
   x: number;
@@ -209,7 +218,7 @@ const BALL_CLEARANCE = {
 /** The head string crosses the break spot; the kitchen lies behind it, towards the head rail. */
 export const HEAD_STRING_X = -TABLE.halfWidth / 2;
 /** Ball in hand is always placed in the kitchen (the baulk area) under both rule sets.
- * A kitchen with no clear spot opens the whole table rather than leaving the turn unplayable.
+ * A kitchen with no clear spot opens the whole table for a lost cue ball rather than leaving the turn unplayable.
  * ponytail: "no clear spot" is judged on a 0.1 grid, so a narrower free sliver still counts as full. */
 export function kitchenPlacement(state: GameState): boolean {
   return firstPlacementSpot(state, true) !== null;
@@ -240,8 +249,15 @@ export function snookered(state: GameState, player: 0 | 1): boolean {
     })
   );
 }
+/** Behind the head string. A kitchen with no clear spot opens the whole table only for a lost cue ball; an optional
+ * placement then has just its lie left. */
 export function inPlacementZone(state: GameState, point: Point, kitchen = kitchenPlacement(state)): boolean {
-  return !kitchen || point.x <= HEAD_STRING_X + 1e-9;
+  return point.x <= HEAD_STRING_X + 1e-9 || (!kitchen && state.balls[0].pocketed);
+}
+/** What an optional placement offers: 'kitchen' when the cue ball may move behind the head string, 'lie' when the
+ * kitchen has no clear spot so only playing from where it lies remains, null when placement is not optional. */
+export function optionalPlacementChoice(state: GameState): 'kitchen' | 'lie' | null {
+  return optionalPlacement(state) ? (kitchenPlacement(state) ? 'kitchen' : 'lie') : null;
 }
 /** First spot a human could place the cue ball, scanning away from the head string: into the kitchen, or across the rest of the table. */
 export function firstPlacementSpot(state: GameState, kitchen: boolean): Point | null {

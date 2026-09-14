@@ -1,6 +1,6 @@
 import { activeSeat, seatCount, type ArenaLayout, type GameState, type Mode } from '../simulation/types';
 import type { RoomSnapshot } from '../match/protocol';
-import type { deriveTablePresentation } from '../presentation/table-presentation';
+import { RULE_TERMS, type deriveTablePresentation } from '../presentation/table-presentation';
 import { BALL_COLORS } from '../render/materials';
 import { canTouchShoot, DIAL_GAIN, type ShotSetupState } from './shot-input-controller';
 import { levelName } from './player-profile';
@@ -34,6 +34,10 @@ export interface HudView {
   touch?: boolean;
   /** The cue view waits for a click to lock the pointer. */
   lockHint?: boolean;
+  /** An optional placement this seat may act on: 'kitchen' offers Place behind head string, 'lie' shows it unavailable. */
+  placement?: 'kitchen' | 'lie' | null;
+  /** Place behind head string is chosen: the button turns into playing from the lie. */
+  placing?: boolean;
 }
 
 const GROUPS = { solids: [1, 2, 3, 4, 5, 6, 7], stripes: [9, 10, 11, 12, 13, 14, 15] };
@@ -73,6 +77,17 @@ export class HudWriter {
     this.toggle('shot-status', 'foul', table.status.foul);
     this.toggle('shot-status', 'waiting', table.status.waiting);
     this.hidden('group-choice', !canAct || state.phase !== 'choose-group');
+    this.hidden('placement-choice', !view.placement);
+    this.text(
+      'place-button',
+      view.placing
+        ? RULE_TERMS.playFromLie
+        : view.placement === 'lie'
+          ? RULE_TERMS.kitchenFull
+          : RULE_TERMS.placeBehindHeadString,
+    );
+    this.attr('place-button', 'aria-pressed', String(!!view.placing));
+    this.disabled('place-button', view.placement === 'lie');
     const chalked = !!state.chalked[state.turn];
     this.disabled('chalk-button', !canAct || !ready || chalked);
     this.attr('chalk-button', 'aria-pressed', String(chalked));

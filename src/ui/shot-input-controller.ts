@@ -1,4 +1,4 @@
-import type { GameState, Shot } from '../simulation/types';
+import { optionalPlacement, type GameState, type Shot } from '../simulation/types';
 
 type Adjustment = 'spin' | 'elevation';
 type Point = { x: number; y: number };
@@ -28,6 +28,8 @@ export interface ShotInputContext {
   /** Menus, a reset animation or an unstarted table ignore table shortcuts and orbit. */
   blocked: boolean;
   phase: GameState['phase'];
+  /** An optional placement's choices (see optionalPlacementChoice): 'kitchen', only the 'lie', or null. */
+  optionalPlacement: 'kitchen' | 'lie' | null;
   /** Canvas width in CSS pixels; a full pullback is 30% of it, at most 180 px. */
   width: number;
   /** The behind-the-cue view is selected (not overhead or table inspection): the only view that locks the pointer. */
@@ -132,6 +134,8 @@ export class ShotInputController {
   private movementReported = false;
   private skipLockedMove = false;
   private touchPointer = false;
+  /** Place behind head string was chosen for an optional placement; otherwise it is played from the lie. */
+  private placementChosen = false;
   constructor(
     private readonly view: ShotInputView,
     private readonly context: () => ShotInputContext,
@@ -151,15 +155,34 @@ export class ShotInputController {
   get pointerLocked() {
     return this.locked;
   }
+  /** The phase this device plays: an optional placement is shot from where the cue ball lies ('ready') until Place
+   * behind head string is chosen, and then placed like ball in hand. */
+  get phase(): GameState['phase'] {
+    const context = this.context();
+    return context.optionalPlacement && !this.placing ? 'ready' : context.phase;
+  }
+  /** Placing an optional placement behind the head string, until it is placed or cancelled. */
+  get placing() {
+    return this.placementChosen && this.context().optionalPlacement === 'kitchen';
+  }
+  /** The Place behind head string control: shown for an optional placement this seat may act on, usable at 'kitchen'. */
+  get placementOption() {
+    const context = this.context();
+    return context.canAct ? context.optionalPlacement : null;
+  }
+  /** A table view as this device plays it (see phase); the match state itself never changes. */
+  played<T extends Pick<GameState, 'phase' | 'balls'>>(view: T): T {
+    return optionalPlacement(view) && !this.placing ? { ...view, phase: 'ready' } : view;
+  }
   /** "Click to take the cue": the cue view is waiting for a click to lock the pointer. */
   get lockHint() {
-    const { cueView, phase } = this.context();
+    const { cueView } = this.context();
     return (
       this.lockAvailable &&
       !this.locked &&
       cueView &&
       this.canAct &&
-      phase === 'ready' &&
+      this.phase === 'ready' &&
       this.setupState.stage === 'aim'
     );
   }
@@ -170,6 +193,7 @@ export class ShotInputController {
 
   /** Escape, blur, dialogs and turn changes: drop the setup and any look, keeping aim direction and power. */
   cancel() {
+    this.placementChosen = false;
     this.keyboardOrbit = false;
     this.held.clear();
     this.endOrbit();
@@ -192,13 +216,20 @@ export class ShotInputController {
     this.publish();
   }
 
+  /** Place behind head string button or P: switch an optional placement between placing it and playing from the lie. */
+  togglePlacement() {
+    const placing = !this.placementChosen;
+    if (placing && this.placementOption !== 'kitchen') return;
+    this.cancel();
+    this.placementChosen = placing;
+  }
   /** Shot button or Space: lock aim, then shoot. */
   advance(x = this.lastPointer.x, y = this.lastPointer.y) {
     const setup = this.setupState;
-    if (!this.canAct || this.context().phase !== 'ready' || setup.adjustment) return;
+    if (!this.canAct || this.phase !== 'ready' || setup.adjustment) return;
     this.view.resetAimPointer();
     if (setup.stage === 'power') {
-      if (canTouchShoot(setup, this.canAct, this.context().phase)) this.emit({ type: 'shoot', shot: this.shot() });
+      if (canTouchShoot(setup, this.canAct, this.phase)) this.emit({ type: 'shoot', shot: this.shot() });
       return;
     }
     const direction = this.view.screenDirection(setup.angle);
@@ -230,7 +261,7 @@ export class ShotInputController {
   /** Touch aim dial: a finger turn in radians (any wrap) turns the cue by DIAL_GAIN of it, until the cue is engaged. */
   rotateDial(radians: number) {
     const setup = this.setupState;
-    if (!Number.isFinite(radians) || !this.canAct || this.context().phase !== 'ready' || setup.stage !== 'aim') return;
+    if (!Number.isFinite(radians) || !this.canAct || this.phase !== 'ready' || setup.stage !== 'aim') return;
     setup.angle = wrap(setup.angle + wrap(radians) * DIAL_GAIN);
     this.publish();
   }
@@ -242,7 +273,7 @@ export class ShotInputController {
       this.publish();
       return;
     }
-    if (!this.canAct || this.context().phase !== 'ready') return;
+    if (!this.canAct || this.phase !== 'ready') return;
     Object.assign(setup, { stage: 'power', adjustment: null, power: 0 });
     // A mouse taking over mid-shot pulls back along the cue, as after a click.
     const direction = this.view.screenDirection(setup.angle),
@@ -255,13 +286,7 @@ export class ShotInputController {
   }
   /** Touch power slider position, 0 (bottom) to 1; the bottom 5% is no power. Only an engaged cue listens, and letting go never shoots. */
   setSliderPower(value: number) {
-    if (
-      !Number.isFinite(value) ||
-      this.setupState.stage !== 'power' ||
-      !this.canAct ||
-      this.context().phase !== 'ready'
-    )
-      return;
+    if (!Number.isFinite(value) || this.setupState.stage !== 'power' || !this.canAct || this.phase !== 'ready') return;
     this.setupState.power = value < 0.05 ? 0 : Math.min(1, value);
     // A mouse on a touch laptop continues from the slider's power rather than its own last pull-back.
     this.reanchorPower();
@@ -269,8 +294,7 @@ export class ShotInputController {
   }
   /** Touch Shoot button. */
   touchShoot() {
-    if (canTouchShoot(this.setupState, this.canAct, this.context().phase))
-      this.emit({ type: 'shoot', shot: this.shot() });
+    if (canTouchShoot(this.setupState, this.canAct, this.phase)) this.emit({ type: 'shoot', shot: this.shot() });
   }
 
   /** Browser pointer lock state. Losing a lock this controller did not release is an Escape: cancel the setup. */
@@ -344,7 +368,8 @@ export class ShotInputController {
       this.view.orbitBy(dx, dy);
       return;
     }
-    const { phase, width } = this.context();
+    const { width } = this.context(),
+      phase = this.phase;
     if (!this.canAct || (this.shotPointer !== null && this.shotPointer !== pointer.id)) return;
     if (phase === 'ball-in-hand') {
       this.view.showPlacement(this.view.tableAt(pointer.x, pointer.y));
@@ -376,7 +401,7 @@ export class ShotInputController {
     }
     if (!this.canAct) return;
     this.lastPointer = { x: pointer.x, y: pointer.y };
-    const phase = this.context().phase;
+    const phase = this.phase;
     if (phase === 'ball-in-hand') {
       const point = this.view.tableAt(pointer.x, pointer.y);
       if (point) this.emit({ type: 'place', ...point });
@@ -442,7 +467,11 @@ export class ShotInputController {
       this.held.add(code);
       return true;
     }
-    if (!this.canAct || this.context().phase !== 'ready') return false;
+    if (code === 'KeyP' && this.placementOption) {
+      if (!key.repeat) this.togglePlacement();
+      return true;
+    }
+    if (!this.canAct || this.phase !== 'ready') return false;
     if (code === 'KeyS' || code === 'KeyE') {
       if (!key.repeat) {
         this.held.add(code);
@@ -500,7 +529,8 @@ export class ShotInputController {
   }
   /** R + arrows rotate the view while held. A pointer lock lasts only while this device plays its turn in the cue view. */
   frame(dt: number) {
-    const { blocked, cueView, ownTurn, phase } = this.context();
+    const { blocked, cueView, ownTurn } = this.context(),
+      phase = this.phase;
     if (blocked || !cueView || !ownTurn || (phase !== 'ready' && phase !== 'rolling')) this.releasePointerLock();
     if (!this.keyboardOrbit) return;
     const axis = (positive: string, negative: string) =>
@@ -541,7 +571,7 @@ export class ShotInputController {
     if (finite(x, y)) Object.assign(this.powerAnchor, { x, y, power: this.setupState.power });
   }
   private setAdjustment(mode: Adjustment | null) {
-    if (mode && (!this.canAct || this.context().phase !== 'ready')) return;
+    if (mode && (!this.canAct || this.phase !== 'ready')) return;
     this.setupState.adjustment = mode;
     if (mode) this.adjustmentAnchor = { ...this.lastPointer };
     else this.reanchorPower();

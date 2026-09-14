@@ -33,13 +33,15 @@ test('the HUD names the rule set and explains visits, free shots, free balls, pl
     foul: true,
   });
   assert.equal(status(lost('new', { shotsLeft: 0 })).text, 'Place behind the head string');
+  // An optional placement is shown as played: from the lie ('ready') until Place behind head string is chosen.
   assert.equal(
-    status(table('old', { phase: 'ball-in-hand', shotsLeft: 2, freeShot: true })).text,
-    'Optional: place behind the head string or play from here · 2 visits · Free shot — any ball may be hit first',
+    status(table('old', { phase: 'ready', shotsLeft: 2, freeShot: true }), { canInteract: true, shotStage: 'aim' })
+      .text,
+    '1 · Aim · 2 visits · Free shot — any ball may be hit first',
   );
   assert.equal(
     status(table('new', { phase: 'ball-in-hand', shotsLeft: 2, freeShot: true })).text,
-    'Optional: place behind the head string or play from here · 2 visits · Free ball (snookered)',
+    'Place behind the head string · 2 visits · Free ball (snookered)',
   );
   assert.deepEqual(status(table('new', { shotsLeft: 2 })), {
     text: 'Your shot · 2 visits',
@@ -165,6 +167,59 @@ test('the group choice buttons show only to the seat that must choose', () => {
   assert.equal(hidden.get('group-choice'), true, 'a watching seat waits');
   write(hud, table('new', { phase: 'ready' }), true);
   assert.equal(hidden.get('group-choice'), true);
+});
+
+test('the Place behind head string button shows for an optional placement and turns into playing from the lie', () => {
+  const written = new Map<string, string | boolean>();
+  const element = (id: string) =>
+    ({
+      set textContent(value: string) {
+        written.set(`${id}.text`, value);
+      },
+      innerHTML: '',
+      set hidden(value: boolean) {
+        written.set(`${id}.hidden`, value);
+      },
+      setAttribute(name: string, value: string) {
+        written.set(`${id}.${name}`, value);
+      },
+      toggleAttribute(name: string, on: boolean) {
+        written.set(`${id}.${name}`, on);
+        return on;
+      },
+      classList: { toggle: () => true },
+      style: { setProperty() {} },
+    }) as unknown as HudElement;
+  const hud = new HudWriter(element),
+    state = table('old', { shotsLeft: 2, freeShot: true });
+  const write = (placement: 'kitchen' | 'lie' | null, placing = false) =>
+    hud.write({
+      state,
+      table: deriveTablePresentation(state, viewer),
+      mode: 'local',
+      seat: 0,
+      room: null,
+      ready: true,
+      canAct: true,
+      canAdvance: false,
+      inspecting: false,
+      layout: 'crossfire',
+      setup: { stage: 'aim', adjustment: null, angle: 0, power: 0.65, elevation: 0, tipX: 0, tipY: 0 },
+      placement,
+      placing,
+    });
+  const button = () =>
+    ['placement-choice.hidden', 'place-button.text', 'place-button.disabled', 'place-button.aria-pressed'].map((key) =>
+      written.get(key),
+    );
+  write(null);
+  assert.equal(written.get('placement-choice.hidden'), true);
+  write('kitchen');
+  assert.deepEqual(button(), [false, RULE_TERMS.placeBehindHeadString, false, 'false']);
+  write('kitchen', true);
+  assert.deepEqual(button(), [false, RULE_TERMS.playFromLie, false, 'true']);
+  write('lie');
+  assert.deepEqual(button(), [false, RULE_TERMS.kitchenFull, true, 'false'], 'a full kitchen explains why');
 });
 
 test('the profile defaults to Old Rules and remembers the last chosen rule set', () => {

@@ -801,6 +801,17 @@ body {
   display: flex;
   gap: 10px;
 }
+/* Sits above the desktop lock hint; on touch it shares the group choice's place above the dial. */
+.group-choice.placement-choice {
+  bottom: 164px;
+}
+.placement-choice .gold-button {
+  min-height: 44px;
+}
+.placement-choice .gold-button[aria-pressed='true'] {
+  background: #142018cc;
+  color: #e0d1a5;
+}
 .shot-status.waiting .status-dot {
   animation: breathe 1.6s infinite;
 }
@@ -2922,6 +2933,9 @@ body {
 @media (max-width: 700px) {
   .lock-hint {
     bottom: 140px;
+  }
+  .group-choice.placement-choice {
+    bottom: 180px;
   }
 }
 

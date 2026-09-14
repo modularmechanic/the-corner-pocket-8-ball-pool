@@ -47,7 +47,9 @@ export const RULE_TERMS = {
   freeShot: 'Free shot — any ball may be hit first',
   freeBall: 'Free ball (snookered)',
   placeInKitchen: 'Place behind the head string',
-  optionalPlacement: 'Optional: place behind the head string or play from here',
+  placeBehindHeadString: 'Place behind head string',
+  playFromLie: 'Play from where it lies',
+  kitchenFull: 'No room behind head string',
   chooseGroup: 'Choose your group',
 } as const;
 export function seatLabel(
@@ -145,11 +147,9 @@ export function deriveTablePresentation(state: GameState, viewer: TableViewer) {
   else if (state.phase === 'ball-in-hand')
     text = !viewer.controlsTurn
       ? `${actor} · Ball in hand`
-      : !state.balls[0].pocketed
-        ? RULE_TERMS.optionalPlacement
-        : kitchenPlacement(state)
-          ? RULE_TERMS.placeInKitchen
-          : 'Ball in hand';
+      : kitchenPlacement(state)
+        ? RULE_TERMS.placeInKitchen
+        : 'Ball in hand';
   else if (viewer.canInteract)
     text =
       viewer.adjustment === 'spin'

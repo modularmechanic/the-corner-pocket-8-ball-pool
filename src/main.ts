@@ -9,7 +9,7 @@ import { CUE_CATALOG, canEquipCue, equippedCue } from './simulation/cues';
 import { POWER_UPS, STATUS_EFFECTS } from './presentation/effects';
 import { deriveTablePresentation, RULE_NAMES, seatLabel, teamLabel } from './presentation/table-presentation';
 import { defaultRuleSet, ruleBook, RULES_SOURCE } from './presentation/rule-book';
-import { inPlacementZone } from './simulation/table-geometry';
+import { inPlacementZone, optionalPlacementChoice } from './simulation/table-geometry';
 import {
   activeSeat,
   type GameFormat,
@@ -26,7 +26,13 @@ import { PoolScene, type Quality } from './render/scene';
 import { shell, icon } from './ui/shell';
 import { TableAudio } from './ui/audio';
 import { createIdentity } from './ui/identity';
-import { inputSchemeFor, ShotInputController, type PointerInput, type ShotInputView } from './ui/shot-input-controller';
+import {
+  inputSchemeFor,
+  ShotInputController,
+  type PointerInput,
+  type ShotInputContext,
+  type ShotInputView,
+} from './ui/shot-input-controller';
 import { PlayerProfile, rackOptions } from './ui/player-profile';
 import { HudWriter, type HudElement } from './ui/hud-writer';
 
@@ -281,9 +287,9 @@ function chooseCamera(overhead: boolean, remember = true) {
   if (remember) profile.set('camera', overhead ? 'overhead' : 'angled');
 }
 async function chalkCue() {
-  if (!input.canAct || state.phase !== 'ready' || state.chalked[state.turn]) return;
+  if (!input.canAct || input.phase !== 'ready' || state.chalked[state.turn]) return;
   await sound.unlock().catch(() => undefined);
-  if (input.canAct && state.phase === 'ready') await command({ type: 'chalk' }, 'Chalk is available before your shot.');
+  if (input.canAct && input.phase === 'ready') await command({ type: 'chalk' }, 'Chalk is available before your shot.');
 }
 async function insertCoin() {
   if (coinResetting || anyDialog()) return;
@@ -359,8 +365,9 @@ function updateUI() {
   if (!state) return;
   const room = match.room,
     ready = match.ready,
-    interactive = input.canAct;
-  const table = deriveTablePresentation(state, {
+    interactive = input.canAct,
+    shown = input.played(state);
+  const table = deriveTablePresentation(shown, {
     mode: match.mode,
     difficulty: profile.preferences.difficulty,
     room,
@@ -374,7 +381,7 @@ function updateUI() {
     resetting: coinResetting,
   });
   hud.write({
-    state,
+    state: shown,
     table,
     mode: match.mode,
     seat: match.seat,
@@ -387,6 +394,8 @@ function updateUI() {
     layout: profile.preferences.layout,
     touch: touchInput,
     lockHint: input.lockHint,
+    placement: input.placementOption,
+    placing: input.placing,
   });
   if ($<HTMLDialogElement>('cue-dialog').open) renderCueLocker();
   if (state.phase === 'over' && presentation?.phase === 'over') {
@@ -444,19 +453,16 @@ function newGame(
   equipPreferredCue();
 }
 async function shoot(shot: Shot) {
-  if (!input.canAct || state.phase !== 'ready') return;
+  if (!input.canAct || input.phase !== 'ready') return;
   await sound.unlock().catch(() => undefined);
-  if (!input.canAct || state.phase !== 'ready') return;
+  if (!input.canAct || input.phase !== 'ready') return;
   input.cancel();
   await command({ type: 'shoot', shot }, 'That shot could not be played.');
 }
-/** Optional placement: a click outside the kitchen plays the cue ball from where it lies. */
 async function place(point: { x: number; z: number }) {
-  if (!input.canAct || state.phase !== 'ball-in-hand') return;
+  if (!input.canAct || input.phase !== 'ball-in-hand') return;
   void sound.unlock();
-  const cue = state.balls[0],
-    target = !cue.pocketed && !inPlacementZone(state, point) ? { x: cue.x, z: cue.z } : point;
-  await command({ type: 'place', ...target }, 'Place the cue ball on clear felt.');
+  await command({ type: 'place', ...point }, 'Place the cue ball on clear felt.');
 }
 async function chooseGroup(group: Group) {
   if (!input.canAct || state.phase !== 'choose-group') return;
@@ -751,6 +757,7 @@ function setupUI() {
   $('touch-engage').onclick = () => input.toggleEngage();
   $('touch-shoot').onclick = () => input.touchShoot();
   $('chalk-button').onclick = () => void chalkCue();
+  $('place-button').onclick = () => input.togglePlacement();
   $('choose-solids').onclick = () => void chooseGroup('solids');
   $('choose-stripes').onclick = () => void chooseGroup('stripes');
   $('coin-button').onclick = () => void insertCoin();
@@ -857,10 +864,15 @@ function createShotInput() {
       else input.pointerLockChanged(false);
     },
   };
-  const context = () => ({
+  // The kitchen scan behind an optional placement runs once per match state, not on every input query.
+  let placementState: GameState | null = null,
+    placement: ShotInputContext['optionalPlacement'] = null;
+  const context = (): ShotInputContext => ({
     canAct: initialized && match.actor.canAct && !anyDialog() && !match.pending && !coinResetting && !document.hidden,
     blocked: !initialized || anyDialog() || coinResetting,
     phase: state.phase,
+    optionalPlacement:
+      placementState === state ? placement : ((placementState = state), (placement = optionalPlacementChoice(state))),
     width: canvas.clientWidth,
     cueView: !overheadView && !inspectingTable,
     ownTurn: match.actor.controller === 'human' && (match.mode !== 'online' || match.actor.seat === match.seat),
@@ -1055,7 +1067,7 @@ function frame(now: number) {
   const events = match.drainEvents();
   if (!document.hidden && elapsed <= 0.5) for (const event of events) playEvent(event);
   input.frame(dt);
-  scene.update(presentation, dt, input.canAct);
+  scene.update(input.played(presentation), dt, input.canAct);
   sound.updateRolling(document.hidden ? [] : presentation.balls);
   updateUI();
   requestAnimationFrame(frame);

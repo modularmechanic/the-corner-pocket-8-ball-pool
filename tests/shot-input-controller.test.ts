@@ -10,12 +10,14 @@ import {
   type ShotInputContext,
   type ShotInputView,
 } from '../src/ui/shot-input-controller';
+import { initialState } from '../src/simulation/types';
 
 function rig(overrides: Partial<ShotInputContext> = {}) {
   const context: ShotInputContext = {
     canAct: true,
     blocked: false,
     phase: 'ready',
+    optionalPlacement: null,
     width: 600,
     cueView: true,
     ownTurn: true,
@@ -685,4 +687,103 @@ test('a stylus drives the touch controls until a real mouse has been used; finge
   );
   assert.equal(inputSchemeFor('pen', true, true), 'touch', 'a touch-only device keeps the pen on touch controls');
   assert.equal(inputSchemeFor('', true, false), 'touch');
+});
+
+test('optional placement: shoot from the lie at once, or choose Place behind head string, then place or cancel', () => {
+  const { input, context, commands, calls, pointer, click, key } = rig({
+    phase: 'ball-in-hand',
+    optionalPlacement: 'kitchen',
+  });
+  const table = { ...initialState('optional-placement'), phase: 'ball-in-hand' as const };
+  assert.deepEqual([input.phase, input.placing, input.placementOption], ['ready', false, 'kitchen']);
+  assert.equal(input.played(table).phase, 'ready', 'the view plays from the lie');
+  click(100, 200);
+  click(100, 335);
+  assert.deepEqual(
+    commands.map((command) => command.type),
+    ['shoot'],
+    'aim and shoot with no placement click',
+  );
+  commands.length = 0;
+  input.togglePlacement();
+  assert.deepEqual([input.placing, input.phase, input.played(table).phase], [true, 'ball-in-hand', 'ball-in-hand']);
+  calls.length = 0;
+  input.pointerMove(pointer(-300, 50));
+  click(-300, 50);
+  assert.deepEqual([calls, commands], [['placement'], [{ type: 'place', x: -3, z: 0.5 }]]);
+  commands.length = 0;
+  input.togglePlacement();
+  assert.deepEqual([input.placing, input.phase], [false, 'ready'], 'the button cancels back to the lie');
+  click(100, 200);
+  assert.deepEqual([input.setup.stage, commands.length], ['power', 0], 'a click aims again instead of placing');
+  assert.equal(input.keyDown(key('KeyP')), true);
+  assert.deepEqual([input.placing, input.setup.stage], [true, 'aim'], 'P switches to placement and drops the setup');
+  input.keyDown(key('Escape'));
+  assert.equal(input.placing, false, 'Escape cancels placement');
+  input.togglePlacement();
+  Object.assign(context, { phase: 'ready', optionalPlacement: null });
+  assert.deepEqual([input.placing, input.phase, input.placementOption], [false, 'ready', null], 'placed');
+  Object.assign(context, { phase: 'ball-in-hand', optionalPlacement: 'lie' });
+  input.togglePlacement();
+  assert.deepEqual([input.placing, input.phase], [false, 'ready'], 'a full kitchen leaves only the lie');
+  Object.assign(context, { canAct: false, optionalPlacement: 'kitchen' });
+  input.togglePlacement();
+  assert.deepEqual([input.placing, input.placementOption], [false, null], 'only the seat to play may choose');
+});
+
+test('mandatory placement is unchanged: no shot and no toggle until the cue ball is placed', () => {
+  const { input, commands, click, key } = rig({ phase: 'ball-in-hand' });
+  input.togglePlacement();
+  assert.equal(input.keyDown(key('KeyP')), false);
+  input.keyDown(key('Space'));
+  assert.deepEqual([input.phase, input.placing, input.placementOption], ['ball-in-hand', false, null]);
+  click(-300, 50);
+  click(-300, 50);
+  assert.deepEqual(
+    commands.map((command) => command.type),
+    ['place', 'place'],
+  );
+});
+
+test('optional placement under pointer lock and touch: aim from the lie locked, placing releases the lock, taps never shoot', () => {
+  const locked = rig({ phase: 'ball-in-hand', optionalPlacement: 'kitchen' });
+  locked.scene.lockApi = true;
+  locked.hover();
+  assert.equal(locked.input.lockHint, true);
+  locked.click(0, 0);
+  assert.deepEqual(locked.calls, ['request-lock'], 'the cue is taken from the lie');
+  locked.input.pointerLockChanged(true);
+  locked.calls.length = 0;
+  locked.input.frame(0);
+  assert.deepEqual(locked.calls, [], 'the offer alone never releases the lock');
+  locked.click(0, 0);
+  assert.equal(locked.input.setup.stage, 'power', 'aiming works under the lock');
+  locked.input.keyDown(locked.key('KeyP'));
+  locked.calls.length = 0;
+  locked.input.frame(0);
+  assert.deepEqual(locked.calls, ['exit-lock'], 'choosing placement shows the pointer');
+  locked.input.pointerLockChanged(false);
+  assert.equal(locked.input.placing, true, 'a release the game asked for keeps placement');
+  locked.click(-300, 0);
+  assert.deepEqual(locked.commands, [{ type: 'place', x: -3, z: 0 }]);
+
+  const touch = rig({ phase: 'ball-in-hand', optionalPlacement: 'kitchen' });
+  const tap = (x: number, y: number) => {
+    touch.input.pointerDown(touch.pointer(x, y, { touch: true }));
+    touch.input.pointerUp(touch.pointer(x, y, { touch: true }));
+  };
+  tap(100, 100);
+  touch.input.toggleEngage();
+  touch.input.setSliderPower(0.6);
+  tap(100, 100);
+  assert.equal(touch.commands.length, 0, 'table taps never shoot or place from the lie');
+  touch.input.touchShoot();
+  assert.deepEqual(
+    touch.commands.map((command) => command.type),
+    ['shoot'],
+    'Shoot plays from the lie',
+  );
+  touch.input.togglePlacement();
+  tap(-300, 100);
+  assert.deepEqual(touch.commands.at(-1), { type: 'place', x: -3, z: 1 });
 });
