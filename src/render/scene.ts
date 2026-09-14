@@ -23,6 +23,10 @@ import { BuffTrail } from './buff-trail';
 export type Quality = RenderQuality;
 // Table-only shadow casters keep the three practical lights from redrawing the entire pub.
 const TABLE_SHADOW_LAYER = 1;
+const X_AXIS=new THREE.Vector3(1,0,0),Z_AXIS=new THREE.Vector3(0,0,1),DROP_AXIS=new THREE.Vector3(.7,0,.3).normalize();
+const INSPECT_TARGET=new THREE.Vector3(.35,-.75,2.6),INSPECT_DIRECTION=new THREE.Vector3(.015,.32,.947).normalize();
+// Per-frame scratch vectors; never retained between calls.
+const cueDirection=new THREE.Vector3(),cueRight=new THREE.Vector3(),cueUp=new THREE.Vector3(),cueTip=new THREE.Vector3(),cueNormal=new THREE.Vector3(),rollAxis=new THREE.Vector3();
 interface ObstacleVisual { group: THREE.Group; body: THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial>; pips: THREE.Mesh<THREE.BoxGeometry, THREE.MeshBasicMaterial>[]; cracks: THREE.LineSegments; flash: number; material: Obstacle['material']; hp: number }
 interface PocketDrop { age: number; from: THREE.Vector3; target: THREE.Vector3 }
 interface OutFade {age:number;position:THREE.Vector3;seenPocketed:boolean}
@@ -108,6 +112,7 @@ export class PoolScene {
   private postprocessing?: PoolPostprocessing;
   private buffHalo: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
   private buffTrail = new BuffTrail();
+  private buffColor = '';
   private cueStroke: { x: number; z: number; angle: number; age: number; elevation:number;tipX:number;tipY:number;height:number } | null = null;
   private chalkAge = Infinity;
   private clock = 0;
@@ -294,17 +299,17 @@ export class PoolScene {
   }
   private poseCue(x:number,z:number,preview:Pick<Shot,'angle'|'elevation'|'tipX'|'tipY'>,pullback:number,height=0) {
     const elevation=THREE.MathUtils.clamp(preview.elevation||0,0,Math.PI/3),dx=Math.cos(preview.angle),dz=Math.sin(preview.angle);
-    const direction=new THREE.Vector3(dx*Math.cos(elevation),-Math.sin(elevation),dz*Math.cos(elevation));
-    const right=new THREE.Vector3(-dz,0,dx),up=new THREE.Vector3(dx*Math.sin(elevation),Math.cos(elevation),dz*Math.sin(elevation));
+    cueDirection.set(dx*Math.cos(elevation),-Math.sin(elevation),dz*Math.cos(elevation));
+    cueRight.set(-dz,0,dx);cueUp.set(dx*Math.sin(elevation),Math.cos(elevation),dz*Math.sin(elevation));
     let tipX=THREE.MathUtils.clamp(preview.tipX||0,-.8,.8),tipY=THREE.MathUtils.clamp(preview.tipY||0,-.8,.8);
     const radius=Math.hypot(tipX,tipY);if(radius>.8){tipX*=.8/radius;tipY*=.8/radius;}
     const depth=TABLE.radius*Math.sqrt(1-tipX*tipX-tipY*tipY);
-    const contact=new THREE.Vector3(x,TABLE.radius+height,z).addScaledVector(direction,-depth).addScaledVector(right,tipX*TABLE.radius).addScaledVector(up,tipY*TABLE.radius);
-    this.cue.quaternion.setFromUnitVectors(new THREE.Vector3(1,0,0),direction);
+    cueTip.set(x,TABLE.radius+height,z).addScaledVector(cueDirection,-depth).addScaledVector(cueRight,tipX*TABLE.radius).addScaledVector(cueUp,tipY*TABLE.radius);
+    this.cue.quaternion.setFromUnitVectors(X_AXIS,cueDirection);
     // The cue's front face is local x=-.1615; preserve contact when the butt is raised.
-    this.cue.position.copy(contact).addScaledVector(direction,.1615-pullback);
-    const normal=contact.clone().sub(new THREE.Vector3(x,TABLE.radius+height,z)).normalize();
-    this.cueContact.position.copy(contact).addScaledVector(normal,.001);this.cueContact.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),normal);
+    this.cue.position.copy(cueTip).addScaledVector(cueDirection,.1615-pullback);
+    cueNormal.set(cueTip.x-x,cueTip.y-TABLE.radius-height,cueTip.z-z).normalize();
+    this.cueContact.position.copy(cueTip).addScaledVector(cueNormal,.001);this.cueContact.quaternion.setFromUnitVectors(Z_AXIS,cueNormal);
   }
   private clearObstacles() {
     for (const visual of this.obstacles.values()) {
@@ -550,9 +555,9 @@ export class PoolScene {
     }
     if(this.inspection){
       perspectiveCamera.fov=34;perspectiveCamera.updateProjectionMatrix();
-      const inspectTarget=this.inspectionPose?.target??new THREE.Vector3(.35,-.75,2.6),distance=Math.max(10.5,5.0/(Math.tan(17*Math.PI/180)*ratio*.9));
+      const inspectTarget=this.inspectionPose?.target??INSPECT_TARGET,distance=Math.max(10.5,5.0/(Math.tan(17*Math.PI/180)*ratio*.9));
       if(this.inspectionPose)perspectiveCamera.position.copy(this.inspectionPose.position);
-      else perspectiveCamera.position.copy(inspectTarget).addScaledVector(new THREE.Vector3(.015,.32,.947).normalize(),distance);
+      else perspectiveCamera.position.copy(inspectTarget).addScaledVector(INSPECT_DIRECTION,distance);
       perspectiveCamera.lookAt(inspectTarget);perspectiveCamera.updateMatrixWorld(true);
       this.perspectiveTarget.copy(inspectTarget);
     }
@@ -740,7 +745,7 @@ export class PoolScene {
         const progress = Math.min(1, drop.age / .36);
         mesh.position.lerpVectors(drop.from, drop.target, 1 - (1 - progress) ** 2);
         mesh.position.y = drop.from.y - (drop.from.y+.37) * progress * progress;
-        mesh.rotateOnWorldAxis(new THREE.Vector3(.7, 0, .3).normalize(), frameDt * 3);
+        mesh.rotateOnWorldAxis(DROP_AXIS, frameDt * 3);
         mesh.visible = progress < 1;
         if (progress >= 1) this.pocketDrops.delete(ball.id);
         continue;
@@ -754,7 +759,7 @@ export class PoolScene {
       const elevation = Math.max(0, ball.elevation || 0);
       mesh.position.set(ball.x, TABLE.radius + elevation, ball.z);
       const dx = mesh.position.x - previous.x, dz = mesh.position.z - previous.z, distance = Math.hypot(dx, dz);
-      if (mesh.visible && !teleported && !mesh.userData.wasPocketed && distance > 1e-7 && (state.phase==='rolling'||distance<.8)) mesh.rotateOnWorldAxis(new THREE.Vector3(dz,0,-dx).normalize(),distance/TABLE.radius);
+      if (mesh.visible && !teleported && !mesh.userData.wasPocketed && distance > 1e-7 && (state.phase==='rolling'||distance<.8)) mesh.rotateOnWorldAxis(rollAxis.set(dz,0,-dx).normalize(),distance/TABLE.radius);
       mesh.userData.wasPocketed = false; mesh.visible = true; shadow.visible = true;
       shadow.position.x = mesh.position.x; shadow.position.z = mesh.position.z; previous.copy(mesh.position);
       shadow.scale.setScalar(1+Math.min(elevation,3)*.65);(shadow.material as THREE.MeshBasicMaterial).opacity=.72*Math.exp(-2.7*elevation);
@@ -763,10 +768,10 @@ export class PoolScene {
     const effects=deriveTableEffects(state),{overdrive,frozen,focus}=effects.cue;
     const buffColor=effects.halo?.color||EFFECTS.ward.color;
     this.buffHalo.visible = !cueBall.pocketed && !!effects.halo;
-    this.buffHalo.position.set(cueBall.x,.026+(cueBall.elevation||0),cueBall.z); this.buffHalo.material.color.set(buffColor);
+    this.buffHalo.position.set(cueBall.x,.026+(cueBall.elevation||0),cueBall.z); if(buffColor!==this.buffColor){this.buffColor=buffColor;this.buffHalo.material.color.set(buffColor);this.buffTrail.line.material.color.set(buffColor);}
     this.buffHalo.material.opacity = .35 + Math.sin(this.clock * 3) * .08;
     if (!cueBall.pocketed && state.phase === 'rolling' && (overdrive || frozen) && Math.hypot(cueBall.vx, cueBall.vz) > .6) {
-      this.buffTrail.push(cueBall.x,.027+(cueBall.elevation||0),cueBall.z); this.buffTrail.line.material.color.set(buffColor);
+      this.buffTrail.push(cueBall.x,.027+(cueBall.elevation||0),cueBall.z);
     } else this.buffTrail.clear();
     const preview = this.aiPreview || this.aim;
     const aiming = (canAim || !!this.aiPreview) && state.phase === 'ready';
@@ -792,8 +797,7 @@ export class PoolScene {
     if (state.phase !== 'ball-in-hand') this.placement.visible = false;
     this.effects.updateTrail(cueBall,state.phase==='rolling'&&overdrive,state.phase==='rolling'&&frozen,frameDt);
     this.effects.update(frameDt); this.pub?.update(this.clock,this.camera);
-    const returnState=this.outFades.size?{...state,balls:state.balls.map(ball=>this.outFades.has(ball.id)?{...ball,pocketed:false}:ball)}:state;
-    this.tableDetails?.update(returnState,frameDt);
+    this.tableDetails?.update(state,frameDt,this.outFades);
     if (!this.lost) {
       this.renderer.info.reset();
       const gpuMs=this.gpuTimer.begin();this.gpuSampleAge+=frameDt;

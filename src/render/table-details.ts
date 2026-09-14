@@ -3,6 +3,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import type { GameState } from '../simulation/types';
 import { canvasTexture } from './materials';
 
+const TOKEN_FROM=new THREE.Vector3(3.31,.28,3.34),TOKEN_TO=new THREE.Vector3(3.84,-.87,3.445);
 /** The visible machinery beneath the playing surface; never part of ball collision simulation. */
 export class TableDetails {
   readonly group = new THREE.Group();
@@ -11,6 +12,7 @@ export class TableDetails {
   private token: THREE.Mesh;
   private returns = new Map<number, THREE.Mesh>();
   private order: number[] = [];
+  private potted = new Set<number>();
   private arrivalAge = new Map<number,number>();
   private releaseOrder: number[] = [];
   private resetAge = Infinity;
@@ -59,10 +61,12 @@ export class TableDetails {
     this.token=new THREE.Mesh(coinGeometry,coinMaterial);this.token.visible=false;this.token.castShadow=true;this.group.add(this.token);
   }
   animateReset() { this.resetAge=0;this.releaseOrder=[...this.order];return 1200; }
-  update(state:GameState,dt:number) {
-    if(state.seed!==this.seed){this.seed=state.seed;this.order=[];this.arrivalAge.clear();}
-    const potted=new Set(state.balls.filter(ball=>ball.id>0&&ball.pocketed).map(ball=>ball.id));
-    this.order=this.order.filter(id=>potted.has(id));
+  /** Balls in `onTable` (such as those still fading out) have not reached the return yet. */
+  update(state:GameState,dt:number,onTable:ReadonlyMap<number,unknown>) {
+    if(state.seed!==this.seed){this.seed=state.seed;this.order.length=0;this.arrivalAge.clear();}
+    const potted=this.potted;potted.clear();
+    for(const ball of state.balls)if(ball.id>0&&ball.pocketed&&!onTable.has(ball.id))potted.add(ball.id);
+    let kept=0;for(const id of this.order)if(potted.has(id))this.order[kept++]=id;this.order.length=kept;
     for(const id of potted)if(!this.order.includes(id)){this.order.push(id);this.arrivalAge.set(id,0);this.returns.get(id)!.position.x=2.08;}
     for(const id of this.order)this.arrivalAge.set(id,(this.arrivalAge.get(id)||0)+dt);
     this.resetAge+=dt;const resetting=this.resetAge<1.2;
@@ -70,7 +74,7 @@ export class TableDetails {
     this.indicator.emissiveIntensity=resetting?2.1:1.25;
     const press=Math.max(0,1-Math.abs(this.resetAge-.6)/.19);this.lever.position.z=.07-press*.16;
     this.token.visible=this.resetAge<.45;
-    if(this.token.visible){const t=Math.min(1,this.resetAge/.45);this.token.position.lerpVectors(new THREE.Vector3(3.31,.28,3.34),new THREE.Vector3(3.84,-.87,3.445),t*t);this.token.rotation.x=t*Math.PI/2;}
+    if(this.token.visible){const t=Math.min(1,this.resetAge/.45);this.token.position.lerpVectors(TOKEN_FROM,TOKEN_TO,t*t);this.token.rotation.x=t*Math.PI/2;}
     for(const [id,mesh]of this.returns){
       const index=shown.indexOf(id);mesh.visible=index>=0&&(resetting||(this.arrivalAge.get(id)||0)>=.4);if(!mesh.visible)continue;
       const oldX=mesh.position.x,target=-3.52+index*.351;
