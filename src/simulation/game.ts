@@ -15,10 +15,12 @@ import {
   type TableEvent,
   type PowerUp,
 } from './types';
-import { settleShot } from './settlement';
+import { groupChoice, settleShot } from './settlement';
 import {
   inPlacementZone,
   isClearBallSpot,
+  isCueLie,
+  snookered,
   TABLE_RAILS,
   TABLE_NOSES,
   surfaceDragAt,
@@ -118,7 +120,10 @@ export class PoolGame {
     delete state.simulation;
     state.cues = normalizeCues(state.cues, state.format, state.arcade?.level);
     state.rules = state.rules === 'old' ? 'old' : 'new';
-    state.shotsLeft = state.rules === 'old' && (state.shotsLeft === 1 || state.shotsLeft === 2) ? state.shotsLeft : 0;
+    state.shotsLeft = state.shotsLeft === 1 || state.shotsLeft === 2 ? state.shotsLeft : 0;
+    state.freeShot = state.freeShot === true;
+    state.nominated = state.nominated === 'solids' || state.nominated === 'stripes' ? state.nominated : null;
+    state.rebreak = state.rebreak === true;
     if (
       state.balls.length !== 16 ||
       new Set(state.balls.map((b) => b.id)).size !== 16 ||
@@ -387,14 +392,28 @@ export class PoolGame {
       this.emit({ kind: 'jump', strength: Math.min(1, lift / 5.4), x: cue.x, z: cue.z, ball: 0, elevation: 0 });
     return true;
   }
+  /** Places the cue ball in the kitchen, or keeps it where it lies when placement is optional. */
   placeCue(x: number, z: number): boolean {
     if (this.current.phase !== 'ball-in-hand' || !Number.isFinite(x) || !Number.isFinite(z)) return false;
+    if (isCueLie(this.current, { x, z })) {
+      this.current.phase = 'ready';
+      this.current.message = 'Playing from where the cue ball lies.';
+      return true;
+    }
     if (!inPlacementZone(this.current, { x, z }) || !isClearBallSpot(this.current, { x, z }, 0, 'placement'))
       return false;
     this.respot(0, x, z);
+    // A New Rules free ball needs the foul snooker to still exist from the new position.
+    if (this.current.rules === 'new' && this.current.freeShot)
+      this.current.freeShot = snookered(this.current, this.current.turn);
     this.current.phase = 'ready';
     this.current.message = 'Cue ball placed. Find your angle.';
     return true;
+  }
+  chooseGroup(group: unknown): boolean {
+    const changes = groupChoice(this.current, group);
+    if (changes) Object.assign(this.current, changes);
+    return !!changes;
   }
   private respot(id: number, x: number, z: number) {
     const ball = this.current.balls[id];

@@ -15,7 +15,18 @@ import {
   surfaceDrag,
   type Point,
 } from './table-geometry';
-import { TABLE, POCKETS, legalTargets, type Ball, type Difficulty, type GameState, type Shot } from './types';
+import {
+  TABLE,
+  POCKETS,
+  groupOf,
+  isBreakShot,
+  legalTargets,
+  type Ball,
+  type Difficulty,
+  type GameState,
+  type Group,
+  type Shot,
+} from './types';
 
 interface Path {
   distance: number;
@@ -29,6 +40,12 @@ interface Candidate {
   score: number;
 }
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+/** Legal first-contact balls the AI aims at: a free shot or free ball never goes for the black too early. */
+function aiTargets(state: GameState): Ball[] {
+  const targets = legalTargets(state),
+    onEight = legalTargets({ ...state, freeShot: false }).every((ball) => ball.id === 8);
+  return onEight ? targets : targets.filter((ball) => ball.id !== 8);
+}
 
 export function segmentClear(
   a: Point,
@@ -135,7 +152,7 @@ function potCandidates(state: GameState): Candidate[] {
     sticky = !!state.arcade?.buffs[state.turn].sticky;
   const candidates: Candidate[] = [],
     maximum = 16.4 * cueScale(state);
-  for (const target of legalTargets(state))
+  for (const target of aiTargets(state))
     for (const pocket of POCKETS) {
       const distance = Math.hypot(pocket.x - target.x, pocket.z - target.z);
       if (distance < 1e-5) continue;
@@ -182,7 +199,7 @@ function potCandidates(state: GameState): Candidate[] {
 }
 function safetyCandidates(state: GameState): Candidate[] {
   const cue = state.balls[0],
-    legal = new Set(legalTargets(state).map((b) => b.id)),
+    legal = new Set(aiTargets(state).map((b) => b.id)),
     sticky = !!state.arcade?.buffs[state.turn].sticky;
   const maximum = 16.4 * cueScale(state),
     candidates: Candidate[] = [];
@@ -217,7 +234,7 @@ function safetyCandidates(state: GameState): Candidate[] {
         score: score - path.distance * 0.6 - speed * 0.16 - path.risk + pickupBonus(state, cue, endpoint),
       });
   };
-  for (const target of legalTargets(state)) addRay(Math.atan2(target.z - cue.z, target.x - cue.x), 12);
+  for (const target of aiTargets(state)) addRay(Math.atan2(target.z - cue.z, target.x - cue.x), 12);
   for (const block of state.arcade?.obstacles || [])
     if (block.hp > 0) addRay(Math.atan2(block.z - cue.z, block.x - cue.x), 10 + (block.hp === 1 ? 1 : 0));
   for (const pickup of state.arcade?.pickups || [])
@@ -231,7 +248,7 @@ function bankCandidates(state: GameState): Candidate[] {
   const cue = state.balls[0],
     candidates: Candidate[] = [],
     sticky = !!state.arcade?.buffs[state.turn].sticky;
-  for (const target of legalTargets(state))
+  for (const target of aiTargets(state))
     for (const [axis, side] of [
       ['x', -1],
       ['x', 1],
@@ -268,7 +285,7 @@ function bankCandidates(state: GameState): Candidate[] {
 }
 export function chooseShot(state: GameState, difficulty: Difficulty, random = Math.random): Shot {
   const cue = state.balls[0];
-  if (state.shotCount === 0) {
+  if (isBreakShot(state)) {
     const apex = state.balls.find((b) => b.id === 1 && !b.pocketed) || { x: 2.55, z: 0 };
     const angle =
       Math.atan2(apex.z - cue.z, apex.x - cue.x) + (random() - 0.5) * (difficulty === 'expert' ? 0.006 : 0.025);
@@ -289,7 +306,7 @@ export function chooseShot(state: GameState, difficulty: Difficulty, random = Ma
   const selected = options[choices > 1 ? Math.floor(clamp(random(), 0, 0.999999) * choices) : 0];
   // Completely snookered states can have no modeled legal route; still make a
   // finite shot toward a legal target rather than getting stuck in the turn.
-  const fallback = legalTargets(state)[0];
+  const fallback = aiTargets(state)[0];
   const shot = selected || {
     angle: fallback ? Math.atan2(fallback.z - cue.z, fallback.x - cue.x) : 0,
     speed: 7,
@@ -307,8 +324,12 @@ export function chooseShot(state: GameState, difficulty: Difficulty, random = Ma
     ),
   };
 }
+/** Optional placement keeps the lie while it offers a pot; otherwise (no makeable pot, or snookered) it moves to the
+ * kitchen. ponytail: "no pot from here" stands in for a safety evaluation of the lie. */
 export function choosePlacement(state: GameState): Point {
-  const targets = legalTargets(state),
+  const cue = state.balls[0];
+  if (!cue.pocketed && potCandidates(state).length) return { x: cue.x, z: cue.z };
+  const targets = aiTargets(state),
     candidates: { point: Point; score: number }[] = [],
     kitchen = kitchenPlacement(state);
   for (let x = -4.9; x < 5; x += 0.65)
@@ -354,4 +375,12 @@ export function choosePlacement(state: GameState): Point {
   // Hazards may cover every calm spot: accept any spot a human could use. kitchenPlacement already
   // opened the table if the kitchen has none, and fifteen balls cannot cover the whole table.
   return firstPlacementSpot(state, true) ?? firstPlacementSpot(state, false) ?? { x: HEAD_STRING_X, z: 0 };
+}
+/** Picks the group with fewer balls left on the table, then the one lying closer to the pockets. */
+export function chooseGroup(state: GameState): Group {
+  const cost = (group: Group) =>
+    state.balls
+      .filter((ball) => !ball.pocketed && groupOf(ball.id) === group)
+      .reduce((sum, ball) => sum + 10 + Math.min(...POCKETS.map((p) => Math.hypot(p.x - ball.x, p.z - ball.z))), 0);
+  return cost('stripes') < cost('solids') ? 'stripes' : 'solids';
 }

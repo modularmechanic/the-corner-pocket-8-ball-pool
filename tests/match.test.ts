@@ -19,11 +19,14 @@ function finish(match: LocalMatch, winner: 0 | 1) {
 }
 
 test('local and hosted matches execute the same commands, clock and Scotch doubles rotation', () => {
-  const local = new LocalMatch({ seed: 'match-parity', mode: 'local', options: { format: 'doubles' } });
-  const hosted = new LocalMatch({ seed: 'match-parity', mode: 'online', options: { format: 'doubles' } });
+  // Old Rules past the break: the feeble shot is an ordinary foul that offers placement.
+  const options = { format: 'doubles', rules: 'old' } as const;
+  const local = new LocalMatch({ seed: 'match-parity', mode: 'local', options });
+  const hosted = new LocalMatch({ seed: 'match-parity', mode: 'online', options });
   try {
     hosted.setReady(true);
     for (const match of [local, hosted]) {
+      match.arrange({ ...match.snapshot(), shotCount: 1 });
       assert.equal(match.dispatch({ type: 'shoot', shot: { angle: 0, power: 0.03 } }, 2).ok, false);
       assert.equal(match.dispatch({ type: 'chalk' }, 0).ok, true);
       assert.equal(match.dispatch({ type: 'shoot', shot: { angle: 0, power: 0.03 } }, 0).ok, true);

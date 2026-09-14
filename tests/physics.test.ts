@@ -282,6 +282,10 @@ test('scratch shield restores a pocketed cue, while an unshielded scratch leaves
     const game = new PoolGame(`shield-${shielded}`);
     try {
       fixture(game, { 0: { x: 0, z: -2.4 }, 1: { x: 3, z: 0 } });
+      // Past the break: a scratching break with no cushions would re-rack instead.
+      edit(game, (state) => {
+        state.shotCount = 1;
+      });
       if (shielded)
         edit(game, (state) => {
           state.arcade!.buffs[0].ward = 1;

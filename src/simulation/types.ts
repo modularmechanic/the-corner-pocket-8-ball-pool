@@ -12,9 +12,12 @@ export type Group = 'solids' | 'stripes';
 export type Difficulty = 'casual' | 'regular' | 'expert';
 export type Mode = 'ai' | 'online' | 'local';
 export type GameFormat = 'singles' | 'doubles';
-/** Old Rules: a foul gives two shots. New Rules: a foul gives ball in hand anywhere. */
+/** Both follow the English Pool Association: a foul gives two visits. Old Rules (1991 pub rules) add a free shot;
+ * New Rules (World Eightball poster) grant a free ball only when the incoming player is foul snookered. */
 export type RuleSet = 'old' | 'new';
-export type Phase = 'ready' | 'rolling' | 'ball-in-hand' | 'over';
+/** `ball-in-hand` places the cue ball: mandatory while it is off the table, optional (it may be played from where it
+ * lies) while it is still on the table. `choose-group` waits for the shooter to pick solids or stripes. */
+export type Phase = 'ready' | 'rolling' | 'ball-in-hand' | 'choose-group' | 'over';
 export type ArenaLayout = 'crossfire' | 'fortress' | 'gauntlet';
 export type HazardKind = 'ramp' | 'portal' | 'electric' | 'water' | 'slime' | 'smoke';
 export interface Hazard {
@@ -140,9 +143,16 @@ export interface GameState {
   format: GameFormat;
   teamOrder: [0 | 1, 0 | 1];
   cues: CueId[];
-  /** Fixed for the session. `shotsLeft` is the current team's Old Rules two-shot allowance, counting this shot; 0 is a normal visit. */
+  /** Fixed for the session. */
   rules: RuleSet;
+  /** Visits the current team holds after the other side's foul, counting the one in progress; 0 is an ordinary visit. */
   shotsLeft: 0 | 1 | 2;
+  /** The next shot may hit any ball first: the Old Rules free shot or the New Rules free ball (foul snooker). */
+  freeShot: boolean;
+  /** New Rules: a group chosen after the break that was not potted; it is decided only if the next shot pots one. */
+  nominated: Group | null;
+  /** The balls were re-racked, so the next shot is a break again. */
+  rebreak: boolean;
   seed: string;
   balls: Ball[];
   turn: 0 | 1;
@@ -218,6 +228,9 @@ export function seededRandom(seed: string) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+const RACK_ROW = TABLE.radius * Math.sqrt(3) * 1.015;
+/** The black's place in the rack (the centre of the third row): its spot after it leaves the table. */
+export const BLACK_SPOT = { x: 2.55 + 2 * RACK_ROW, z: 0 };
 export function newRack(seed: string): Ball[] {
   const random = seededRandom(seed);
   const remaining = [2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15];
@@ -248,7 +261,7 @@ export function newRack(seed: string): Ball[] {
                 : remaining.pop()!;
       balls.push({
         id,
-        x: 2.55 + row * TABLE.radius * Math.sqrt(3) * 1.015,
+        x: 2.55 + row * RACK_ROW,
         z: (col - row / 2) * TABLE.radius * 2.03,
         vx: 0,
         vz: 0,
@@ -262,6 +275,9 @@ export function initialState(seed: string, format: GameFormat = 'singles', rules
     format: format === 'doubles' ? 'doubles' : 'singles',
     rules: rules === 'old' ? 'old' : 'new',
     shotsLeft: 0,
+    freeShot: false,
+    nominated: null,
+    rebreak: false,
     teamOrder: [0, 0],
     cues: Array.from({ length: format === 'doubles' ? 4 : 2 }, () => 'ash-house' as CueId),
     seed,
@@ -277,8 +293,11 @@ export function initialState(seed: string, format: GameFormat = 'singles', rules
     chalked: [false, false],
   };
 }
+export const isBreakShot = (state: GameState): boolean => state.shotCount === 0 || state.rebreak;
+/** Balls the shooter may hit first. A free shot or free ball allows any ball. */
 export function legalTargets(state: GameState, player = state.turn): Ball[] {
   const active = state.balls.filter((b) => !b.pocketed && b.id !== 0);
+  if (state.freeShot) return active;
   const group = state.groups[player];
   if (!group) return active.filter((b) => b.id !== 8);
   const targets = active.filter((b) => groupOf(b.id) === group);

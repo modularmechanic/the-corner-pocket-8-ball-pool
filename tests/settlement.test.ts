@@ -29,12 +29,12 @@ test('settlement is pure and a legal own-group count drives score, combo, streak
   const state = arranged();
   state.format = 'doubles';
   state.arcade!.potStreak[0] = 3;
-  const shot = result({ potted: [1, 2, 9] }),
+  const shot = result({ potted: [1, 2] }),
     before = structuredClone({ state, shot });
   const outcome = settleShot(state, shot, { legalBefore: [1, 2, 3], shooter: 0 });
   assert.deepEqual({ state, shot }, before);
   assert.equal(outcome.outcome.ownPotted, 2);
-  assert.equal(outcome.outcome.opponentPotted, 1);
+  assert.equal(outcome.outcome.opponentPotted, 0);
   assert.equal(outcome.state.turn, 0);
   assert.deepEqual(outcome.state.teamOrder, [1, 0]);
   assert.equal(outcome.state.arcade!.scores[0], 225);
@@ -42,7 +42,7 @@ test('settlement is pure and a legal own-group count drives score, combo, streak
   assert.equal(outcome.state.arcade!.potStreak[0], 5);
   assert.deepEqual(
     outcome.events.map((e) => e.reason),
-    ['mixed-pot', 'pot-streak'],
+    ['pot-streak'],
   );
   assert.deepEqual(
     settleShot(state, shot, { legalBefore: [1, 2, 3], shooter: 0 }),
@@ -51,11 +51,13 @@ test('settlement is pure and a legal own-group count drives score, combo, streak
   );
 });
 
-test('groups stay open on the break and the first subsequent legal pot assigns complementary groups', () => {
+test('a New Rules break pot asks for a group; otherwise the first legal pot assigns complementary groups', () => {
   let state = initialState('open-groups');
   state = settle(state, { potted: [2] }).state;
   assert.deepEqual(state.groups, [null, null]);
+  assert.equal(state.phase, 'choose-group');
   assert.equal(state.turn, 0);
+  state.phase = 'ready';
   state = settle(state, { firstContact: 9, potted: [9] }).state;
   assert.deepEqual(state.groups, ['stripes', 'solids']);
   assert.equal(state.turn, 0);
@@ -76,7 +78,8 @@ test('foul table covers contact, rail, scratch, illegal break and off-table outc
     const outcome = settle(state, shot);
     assert.equal(outcome.state.foul, true);
     assert.equal(outcome.state.turn, 1);
-    assert.equal(outcome.state.phase, 'ball-in-hand');
+    assert.equal(outcome.state.phase, shot.potted?.includes(0) ? 'ball-in-hand' : 'ready');
+    assert.equal(outcome.state.shotsLeft, 2, 'a foul gives the other side two visits');
     assert.deepEqual(outcome.state.teamOrder, [1, 0]);
     assert.equal(outcome.state.arcade!.scores[0], 0);
     assert.equal(outcome.state.arcade!.potStreak[0], 0);
@@ -147,12 +150,11 @@ test('five-ball streak penalty triggers only on crossing, and a miss resets elig
   assert.equal(settle(fresh, { potted: [1, 2, 3, 4, 5] }).events.filter((e) => e.reason === 'pot-streak').length, 1);
 });
 
-test('eight outcomes include legal wins, early eight, scratch, off-table, and break respots', () => {
+test('eight outcomes include legal wins, early eight, scratch, and break re-racks and respots', () => {
   for (const [potted, offTable, legal, winner] of [
     [[8], [], [8], 0],
     [[8], [], [1, 2], 1],
     [[8, 0], [], [8], 1],
-    [[], [8], [8], 1],
   ] as [number[], number[], number[], number][]) {
     const state = arranged();
     state.arcade!.scratchStreak[0] = 1;
@@ -165,7 +167,8 @@ test('eight outcomes include legal wins, early eight, scratch, off-table, and br
   for (const shot of [{ potted: [8] }, { offTable: [8] }]) {
     const state = initialState('break-eight');
     const outcome = settle(state, shot);
-    assert.equal(outcome.outcome.respotEight, true);
+    assert.equal(outcome.outcome.respotEight, !!shot.offTable);
+    assert.equal(outcome.outcome.rerack, !!shot.potted);
     assert.ok(outcome.respots.some((p) => p.id === 8));
     assert.equal(outcome.state.balls[8].pocketed, false);
     assert.equal(outcome.state.winner, null);

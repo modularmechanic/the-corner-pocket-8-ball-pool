@@ -2,7 +2,7 @@ import { before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { arrangeBalls, edit } from './arrangements';
 import { initPhysics, PoolGame } from '../src/simulation/game';
-import { choosePlacement, chooseShot } from '../src/simulation/ai';
+import { chooseGroup, choosePlacement, chooseShot } from '../src/simulation/ai';
 import { humanControls } from '../src/match/policy';
 import {
   activeSeat,
@@ -12,14 +12,15 @@ import {
   teamOfSeat,
   TABLE,
   type GameFormat,
+  type RuleSet,
 } from '../src/simulation/types';
 
 before(async () => {
   await initPhysics();
 });
 type Position = { x: number; z: number };
-function fixture(format: GameFormat = 'doubles') {
-  const game = new PoolGame('scotch-doubles', { format });
+function fixture(format: GameFormat = 'doubles', rules?: RuleSet) {
+  const game = new PoolGame('scotch-doubles', { format, rules });
   edit(game, (s) => {
     s.shotCount = 1;
   });
@@ -93,7 +94,8 @@ test('a legal pot retains the team turn but passes the next shot and queued pick
 });
 
 test('misses and fouls alternate each team’s shooter independently, while placement and chalk do not', () => {
-  const { game, position } = fixture();
+  // Old Rules offer (optional) placement after every foul.
+  const { game, position } = fixture('doubles', 'old');
   try {
     position({ 0: { x: -1, z: 0 }, 1: { x: 1.3, z: 0 } });
     assert.equal(game.shoot({ angle: 0, power: 0.45 }), true);
@@ -179,7 +181,11 @@ test('explicit singles preserve ordinary retained-turn ownership and never alter
 });
 
 test('a full doubles AI sequence plays both opponents and the partner repeatedly, then returns control to human seat zero', () => {
-  const game = new PoolGame('doubles-ai-teamplay', { format: 'doubles', level: 2 });
+  const game = new PoolGame('doubles-ai-teamplay', { format: 'doubles', level: 2, rules: 'old' });
+  // Past the break, so the human's opening miss is an ordinary foul that hands the AI ball in hand.
+  edit(game, (state) => {
+    state.shotCount = 1;
+  });
   const random = seededRandom('scotch-team-bots');
   const shotsBySeat = [0, 0, 0, 0],
     placementsBySeat = [0, 0, 0, 0];
@@ -194,6 +200,7 @@ test('a full doubles AI sequence plays both opponents and the partner repeatedly
         shooter === 0,
         'the same ownership helper used by the UI leaves partner 2 to AI',
       );
+      if (game.state.phase === 'choose-group') assert.equal(game.chooseGroup(chooseGroup(game.state)), true);
       if (game.state.phase === 'ball-in-hand') {
         const point = choosePlacement(game.state);
         assert.equal(game.placeCue(point.x, point.z), true, `seat ${shooter} must find a playable cue placement`);

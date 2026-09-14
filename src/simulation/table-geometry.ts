@@ -1,4 +1,4 @@
-import { POCKETS, TABLE, type ArcadeState, type Ball, type GameState, type HazardKind } from './types';
+import { legalTargets, POCKETS, TABLE, type ArcadeState, type Ball, type GameState, type HazardKind } from './types';
 
 export interface Point {
   x: number;
@@ -208,11 +208,37 @@ const BALL_CLEARANCE = {
 } as const;
 /** The head string crosses the break spot; the kitchen lies behind it, towards the head rail. */
 export const HEAD_STRING_X = -TABLE.halfWidth / 2;
-/** Old Rules restrict ball in hand (only given after a cue-ball scratch) to the kitchen; New Rules allow the whole table.
+/** Ball in hand is always placed in the kitchen (the baulk area) under both rule sets.
  * A kitchen with no clear spot opens the whole table rather than leaving the turn unplayable.
  * ponytail: "no clear spot" is judged on a 0.1 grid, so a narrower free sliver still counts as full. */
 export function kitchenPlacement(state: GameState): boolean {
-  return state.rules === 'old' && firstPlacementSpot(state, true) !== null;
+  return firstPlacementSpot(state, true) !== null;
+}
+/** Optional placement: the cue ball is still on the table and may be played from exactly where it lies. */
+export function isCueLie(state: GameState, point: Point): boolean {
+  const cue = state.balls[0];
+  return !cue.pocketed && point.x === cue.x && point.z === cue.z;
+}
+/** Foul snooker test: no straight cue-ball path reaches any part of any ball the player is on. Every other ball,
+ * block, portal, pocket mouth and cushion nose blocks; a ball already touching the cue ball is never snookered.
+ * ponytail: the target's hittable width is sampled at 13 rays, so a sliver thinner than one gap reads as blocked. */
+export function snookered(state: GameState, player: 0 | 1): boolean {
+  const cue = state.balls[0];
+  if (cue.pocketed) return false;
+  const targets = legalTargets({ ...state, freeShot: false }, player);
+  return (
+    targets.length > 0 &&
+    !targets.some((target) => {
+      const gap = distance(cue, target);
+      if (gap <= TABLE.radius * 2 + 1e-3) return true;
+      const centre = Math.atan2(target.z - cue.z, target.x - cue.x);
+      for (let i = -6; i <= 6; i++) {
+        const contact = firstTableContact(state, cue, centre + Math.asin(((TABLE.radius * 2) / gap) * (i / 6.3)));
+        if (contact.kind === 'ball' && targets.some((ball) => ball.id === contact.id)) return true;
+      }
+      return false;
+    })
+  );
 }
 export function inPlacementZone(state: GameState, point: Point, kitchen = kitchenPlacement(state)): boolean {
   return !kitchen || point.x <= HEAD_STRING_X + 1e-9;

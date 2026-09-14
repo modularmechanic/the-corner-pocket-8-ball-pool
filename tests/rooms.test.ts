@@ -102,14 +102,22 @@ type TeamPacket = RoomSnapshot;
 async function doublesRoom() {
   const clients = await Promise.all([client(), client(), client(), client()]),
     tokens = clients.map(() => randomUUID());
-  const created = await request(clients[0], 'room:create', { name: 'Seat 0', token: tokens[0], format: 'doubles' });
+  const created = await request(clients[0], 'room:create', {
+    name: 'Seat 0',
+    token: tokens[0],
+    format: 'doubles',
+    rules: 'old',
+  });
   assert.equal(created.ok, true);
   for (let i = 1; i < 4; i++) {
     const joined = await request(clients[i], 'room:join', { name: `Seat ${i}`, token: tokens[i], code: created.code });
     assert.equal(joined.ok, true);
     assert.equal(joined.seat, i);
   }
-  return { clients, tokens, created, room: server.rooms.get(created.code)! };
+  const room = server.rooms.get(created.code)!;
+  // Old Rules past the break: a feeble shot is an ordinary foul that offers the next seat placement.
+  room.match.arrange({ ...room.match.snapshot(), shotCount: 1 });
+  return { clients, tokens, created, room };
 }
 function finishRack(match: LocalMatch, winner: 0 | 1) {
   const state = match.snapshot();
@@ -259,13 +267,13 @@ test('all four clients receive partner rotation and a rematch preserves doubles 
       await until(
         () =>
           packets.every((list) =>
-            list.some((packet) => packet.state.shotCount === shooter + 1 && packet.state.phase === 'ready'),
+            list.some((packet) => packet.state.shotCount === shooter + 2 && packet.state.phase === 'ready'),
           ),
         'every seat receives the completed shot and next active teammate',
       );
       const expected = room.match.snapshot();
       for (const list of packets) {
-        const packet = list.filter((p) => p.state.shotCount === shooter + 1 && p.state.phase === 'ready').at(-1)!;
+        const packet = list.filter((p) => p.state.shotCount === shooter + 2 && p.state.phase === 'ready').at(-1)!;
         assert.equal(activeSeat(packet.state), next);
         assert.deepEqual(packet.state.teamOrder, expected.teamOrder);
       }
@@ -567,7 +575,7 @@ test('remote match owns room transport, delayed effects, authenticated commands 
   const changes: string[] = [];
   guest.subscribe((change) => changes.push(change.type));
   try {
-    assert.equal((await host.create({ level: 2 })).ok, true);
+    assert.equal((await host.create({ level: 2, rules: 'old' })).ok, true);
     assert.equal(host.ready, false);
     assert.equal(host.actor.canAct, false);
     assert.equal(host.capabilities.canEquip, true);
@@ -582,8 +590,9 @@ test('remote match owns room transport, delayed effects, authenticated commands 
     assert.equal(host.drainEvents().filter((event) => event.kind === 'chalk').length, 1);
     assert.equal(guest.drainEvents().filter((event) => event.kind === 'chalk').length, 1);
     assert.deepEqual(guest.drainEvents(), []);
-    assert.equal((await host.execute({ type: 'shoot', shot: { angle: 0, power: 0.03 } })).ok, true);
     const room = server.rooms.get(host.room!.code)!;
+    room.match.arrange({ ...room.match.snapshot(), shotCount: 1 });
+    assert.equal((await host.execute({ type: 'shoot', shot: { angle: 0, power: 0.03 } })).ok, true);
     settleRoom(room);
     const socketId = room.seats[1].socketId!;
     server.io.sockets.sockets.get(socketId)!.conn.close();
