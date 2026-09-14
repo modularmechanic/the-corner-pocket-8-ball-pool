@@ -8,6 +8,8 @@ import type { CommandResult } from './protocol';
 import type { Match, MatchActor, MatchChange, MatchCommand, MatchUpdate } from './types';
 
 export const MATCH_STEP = 1 / 120;
+/** Rolling steps one update may run (half a second); a longer backlog finishes over later updates. */
+export const CATCH_UP_STEPS = 60;
 export interface LocalMatchOptions {
   seed: string; mode?: Mode; options?: GameOptions; difficulty?: Difficulty;
   random?: () => number; nextSeed?: () => string;
@@ -125,15 +127,21 @@ export class LocalMatch implements Match {
     this.accumulator += dt;
     // Each authority consumes the same fixed steps; hidden tabs catch up on resume.
     // No menu flag is accepted here: only AI planning can pause independently.
-    while (this.accumulator + 1e-10 >= MATCH_STEP) {
+    // Rolling time older than one update's steps is past: it runs silently, a bounded
+    // number of steps per update, and the rest waits in the accumulator.
+    this.muted ||= this.accumulator > CATCH_UP_STEPS * MATCH_STEP + 1e-10;
+    for (let steps = 0; this.accumulator + 1e-10 >= MATCH_STEP; steps++) {
       const phase = this.game.state.phase;
       if (phase === 'over' || !this.available && phase !== 'rolling') { this.accumulator = 0; break; }
       if (phase !== 'rolling') {
+        this.muted = !!options.muted;
         const idle = Math.floor((this.accumulator + 1e-10) / MATCH_STEP) * MATCH_STEP;
         this.game.advanceIdle(idle); this.accumulator = Math.max(0, this.accumulator - idle); break;
       }
+      if (steps === CATCH_UP_STEPS) break;
       this.game.step(MATCH_STEP); this.cached = null; this.accumulator = Math.max(0, this.accumulator - MATCH_STEP);
     }
+    this.muted = !!options.muted;
     // Spawns and expiries emit events; a quiet table only moves its pickup clock,
     // so the frozen view is shared and just that number is refreshed.
     const clock = this.game.state.arcade?.clock, view = this.cached;
