@@ -25,7 +25,9 @@ const IN_THIS_GAME: string[] = [
   'The head string stands in for the baulk line and the area behind it for baulk. The break is taken from a set spot on the head string.',
   'Solids and stripes stand in for the reds and yellows of the EPA rules.',
   `Choosing a group is a ${choose} prompt, so there is no foul for failing to nominate.`,
-  'New Rules foul snookers are found automatically, and the free ball you nominate is simply the first ball you hit.',
+  'New Rules foul snookers are found automatically, and the free ball you nominate is simply the first ball you hit. So on the black, hitting the black first and potting it with an opponent ball loses, where the EPA rules would let you nominate that ball and win.',
+  "Game ruling where the EPA Old Rules are silent: under Old Rules, any other foul on the shot that pots the black, such as hitting an opponent's ball first, also loses the rack.",
+  'A ball off the table goes back on the long axis past the black: toward the foot cushion first under New Rules, toward the head string only under Old Rules.',
   'A black knocked off the table on the break is an ordinary foul; only a potted black re-racks.',
   'If nothing behind the head string is clear, a lost cue ball may go anywhere on the table and an optional placement plays from where it lies.',
   'Not modelled: touching balls, the stalemate re-rack, the total-snooker cushion exemption, time limits, push, double-hit and conduct fouls, and a free ball after a lost cue ball.',
@@ -76,7 +78,7 @@ const OLD_SECTIONS: RuleBookSection[] = [
     title: 'The black',
     bullets: [
       'Potting the black legally once your group is clear wins the rack; a free shot may play it directly.',
-      "You lose if you pot the black before your group is clear (even on a free shot), on a foul, or together with any other ball. The one exception is a free shot with only the black and your opponent's balls left.",
+      "You lose if you pot the black before your group is clear (even on a free shot), with the cue ball, or together with any other ball. The one exception is a free shot with only the black and your opponent's balls left.",
       OFF_TABLE,
     ],
   },
@@ -99,7 +101,7 @@ const NEW_SECTIONS: RuleBookSection[] = [
       'A fair break pots a ball or sends at least four balls to a cushion.',
       'A foul break re-racks the balls and your opponent breaks, with two visits.',
       'Potting the black on the break re-racks, and the same player breaks again.',
-      'Losing the cue ball on a fair break only passes the turn: no two visits, and the cue ball is placed behind the head string.',
+      'An in-off (potting the cue ball) on a fair break only passes the turn: no two visits, and the cue ball is placed behind the head string. A cue ball off the table is an ordinary foul.',
     ],
   },
   {

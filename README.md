@@ -49,7 +49,7 @@ Both rule sets follow the English Pool Association. **Old Rules** (the default) 
 - After a foul the opponent has **two visits**. A pot continues the current visit and the second visit still follows; a miss on the first visit starts the second. A foul during those visits hands two visits back. In doubles the visits belong to the team and partners still alternate.
 - A potted or off-table cue ball is placed behind the head string.
 - A black knocked off the table is a foul, not a loss: it returns to its rack position, or the nearest clear point along the table's long axis.
-- You lose the rack by potting the black before your group is cleared, with your last ball, or on a foul (with the cue ball or an opponent's ball, for example).
+- You lose the rack by potting the black before your group is cleared, with your last ball, or with the cue ball. New Rules also lose on any other foul on that shot (an opponent's ball, for example); Old Rules do the same as a game ruling, since the EPA Old Rules are silent.
 
 **Old Rules**
 
@@ -60,7 +60,7 @@ Both rule sets follow the English Pool Association. **Old Rules** (the default) 
 
 **New Rules**
 
-- A legal break pots a ball or drives at least four balls to cushions. Losing the cue ball on a legal break only passes the turn.
+- A legal break pots a ball or drives at least four balls to cushions. An in-off on a legal break only passes the turn; a cue ball knocked off the table is an ordinary foul.
 - A breaker who pots chooses a group. Choosing a group they did not pot only counts if they pot one of it on the next shot.
 - After contact a ball must be potted or reach a cushion.
 - After a foul the cue ball is played from where it lies. If the foul leaves the incoming player **foul snookered** (unable to hit both edges of any of their balls in a straight line) they get a **free ball**: any ball may be hit first, and they may play from where the cue ball lies or place it behind the head string.
@@ -69,7 +69,7 @@ Both rule sets follow the English Pool Association. **Old Rules** (the default) 
 
 - Foul snookers are detected automatically; other balls, blocks, portals and pocket mouths block an edge, balls the player is on never do. The free ball is the first ball hit: potting it counts as your own for that shot. It is checked again if you move the cue ball.
 - Optional placement is played from where the cue ball lies unless you press **Place behind head string**. Group choice is a **Choose your group** prompt, so there is no failure-to-nominate foul.
-- The break is taken from a fixed spot on the head string. A black knocked off the table on the break is an ordinary foul; only a potted black re-racks.
+- The break is taken from a fixed spot on the head string. A black knocked off the table on the break is an ordinary foul; only a potted black re-racks. The free ball is the first ball hit, so on the black, hitting the black first and potting it with an opponent's ball loses where the EPA rules would allow a win.
 - Not modelled: touching balls, stalemate re-racks, the total-snooker cushion exemption, time limits, push or double hits, conduct fouls, and a free ball after a lost cue ball (the EPA poster is silent on it).
 - Arcade: obstacle contact counts as contact and as a cushion; hard low-tip jump shots are allowed; pockets are never called; the Scratch shield turns a rescued scratch into no foul; potting your own and an opponent's ball also applies the mixed-pot debuff; a fully blocked kitchen opens the whole table for a lost cue ball, while an optional placement then plays from where it lies.
 

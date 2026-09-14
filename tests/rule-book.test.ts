@@ -43,6 +43,9 @@ test('the "In this game" section lists the house adaptations, omissions and arca
       new RegExp(RULE_TERMS.chooseGroup),
       /foul snookers are found automatically/i,
       /first ball you hit/i,
+      /where the EPA rules would let you nominate that ball and win/,
+      /Game ruling where the EPA Old Rules are silent.*foul on the shot that pots the black.*loses/,
+      /toward the foot cushion first under New Rules, toward the head string only under Old Rules/,
       /knocked off the table on the break is an ordinary foul/i,
       /touching balls/i,
       /stalemate/i,
@@ -87,6 +90,7 @@ test('Old Rules: two-cushion break, no cushion rule, a free shot after every fou
     /free shot: any ball may be hit first, the black included, and every ball it pots counts/,
   );
   assert.match(text('old', 'The black'), /even on a free shot/);
+  assert.doesNotMatch(text('old', 'The black'), /on a foul/, 'the EPA Old Rules only name the in-off as a losing foul');
   assert.match(text('old', 'The black'), /together with any other ball.*only the black and your opponent's balls/);
   const oldOnly = SECTION_TITLES.slice(0, -1)
     .map((title) => text('old', title))
@@ -97,7 +101,8 @@ test('Old Rules: two-cushion break, no cushion rule, a free shot after every fou
 test('New Rules: four-cushion break, cushion after contact, turn-only break scratch and the automatic free ball', () => {
   assert.match(text('new', 'Objective & groups'), /on your next shot/);
   assert.match(text('new', 'Break'), /at least four balls to a cushion/);
-  assert.match(text('new', 'Break'), /cue ball on a fair break only passes the turn/);
+  assert.match(text('new', 'Break'), /in-off \(potting the cue ball\) on a fair break only passes the turn/);
+  assert.match(text('new', 'Break'), /cue ball off the table is an ordinary foul/);
   assert.match(text('new', 'Legal shot'), /reach a cushion/);
   assert.match(text('new', 'Fouls'), /No pot and no cushion after contact/);
   assert.match(text('new', 'Fouls'), /except the free ball/);
