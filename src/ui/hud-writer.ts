@@ -26,7 +26,7 @@ export interface HudView {
 
 const GROUPS = { solids: [1, 2, 3, 4, 5, 6, 7], stripes: [9, 10, 11, 12, 13, 14, 15] };
 const MODES: Mode[] = ['ai', 'online', 'local'];
-const escape = (text: string) => text.replace(/[&<>"']/g, character => `&#${character.charCodeAt(0)};`);
+const escapeHtml = (text: string) => text.replace(/[&<>"']/g, character => `&#${character.charCodeAt(0)};`);
 
 /** Writes the HUD every frame but touches an element property only when its value (or a section's signature) changed. */
 export class HudWriter {
@@ -40,7 +40,7 @@ export class HudWriter {
     this.writeInvite(view);
     const initial = (team: number) => table.teams[team].name.charAt(0).toUpperCase();
     this.text('avatar-0', mode === 'ai' ? 'Y' : initial(0));
-    this.patch('avatar-1.html', `${mode}:${initial(1)}`, element => { element.innerHTML = mode === 'ai' ? icon('cue', 23) : escape(initial(1)); });
+    this.patch('avatar-1.html', `${mode}:${initial(1)}`, element => { element.innerHTML = mode === 'ai' ? icon('cue', 23) : escapeHtml(initial(1)); });
     for (const option of MODES) { this.toggle(`mode-${option}`, 'selected', mode === option); this.attr(`mode-${option}`, 'aria-pressed', String(mode === option)); }
     this.disabled('difficulty', mode !== 'ai'); this.disabled('layout', mode === 'online');
     this.value('layout', arcade?.layout || view.layout);
@@ -72,7 +72,7 @@ export class HudWriter {
     this.hidden(`roster-${team}`, !doubles);
     this.patch(`roster-${team}.html`, members.map(seat => `${table.seats[seat]}:${!over && shooter === seat}`).join('|'), element => {
       element.innerHTML = members.map(seat => {
-        const current = !over && shooter === seat, name = escape(table.seats[seat]);
+        const current = !over && shooter === seat, name = escapeHtml(table.seats[seat]);
         return `<span class="roster-player${current ? ' active' : ''}"${current ? ' aria-current="true"' : ''} title="${name}${current ? ' · Shooting' : ''}">${name}</span>`;
       }).join('');
     });
@@ -100,7 +100,7 @@ export class HudWriter {
     this.patch('invite-roster.html', `${state.format}:${seat}:${room.players.map(player => `${player.name}:${player.connected}`).join('|')}`, element => {
       element.innerHTML = [0, 1].map(team => `<section class="invite-team"><h3>${doubles ? 'Team' : 'Player'} ${team + 1}</h3>${(doubles ? [team, team + 2] : [team]).map(player => {
         const entry = room.players[player];
-        return `<div class="invite-seat${entry?.connected ? '' : ' waiting'}">${player + 1} · ${escape(entry?.name || 'Open seat')}${player === seat ? ' (you)' : ''}${entry && !entry.connected ? ' · Reconnecting' : ''}</div>`;
+        return `<div class="invite-seat${entry?.connected ? '' : ' waiting'}">${player + 1} · ${escapeHtml(entry?.name || 'Open seat')}${player === seat ? ' (you)' : ''}${entry && !entry.connected ? ' · Reconnecting' : ''}</div>`;
       }).join('')}</section>`).join('');
     });
   }
