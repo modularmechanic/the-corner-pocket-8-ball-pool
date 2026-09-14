@@ -110,6 +110,10 @@ docker run --rm -p 3000:3000 corner-pocket
 
 Use one server instance, or sticky routing with shared room/physics ownership if extending the server to multiple instances. Put HTTPS in front of public deployments.
 
+### GitHub Pages
+
+Play solo and pass-and-play at [modularmechanic.github.io/the-corner-pocket-8-ball-pool](https://modularmechanic.github.io/the-corner-pocket-8-ball-pool/). Every push to `main` runs `.github/workflows/deploy-pages.yml`: tests, then a static build with `--base=/<repository>/` and no room server, so online play is hidden. To offer Friends mode from Pages, host the Node server separately, set `CORS_ORIGIN` on it to the Pages origin, and add `VITE_ROOM_SERVER_URL` to the workflow's build step.
+
 ## Verification
 
 ```sh
@@ -132,7 +136,7 @@ Source boundaries:
 - `src/match/`: command interface, local/remote adapters, room protocol, timing and progression eligibility.
 - `src/simulation/`: serializable game state, pure settlement, shared table geometry and level policy, AI and private Rapier engine.
 - `src/presentation/`: pure HUD/scene view models and the effect catalog.
-- `src/render/`: Three.js scene, procedural materials and rolling ball presentation.
-- `src/ui/`: minimal DOM interface and sampled table audio.
+- `src/render/`: Three.js scene; `asset-installer.ts` loads every file-backed prop (cache, placeholders, settled signal); `table-model.ts` and `arena-visuals.ts` build the table and arcade obstacles/hazards/pickups; adaptive light, shadow and effect budgets.
+- `src/ui/`: DOM shell, `player-profile.ts` (preferences, records, unlocks), `shot-input-controller.ts` (DOM-free controls), `hud-writer.ts` (change-only HUD writes) and sampled table audio.
 - `server/`: HTTP/Vite hosting, room seats/tokens and transport around the authoritative Match.
 - `tests/`: rules, simulation and multiplayer integration tests.
