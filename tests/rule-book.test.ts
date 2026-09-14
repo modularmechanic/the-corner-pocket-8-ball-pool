@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { defaultRuleSet, ruleBook, RULES_SOURCE } from '../src/presentation/rule-book';
+import { RULE_TERMS } from '../src/presentation/table-presentation';
 import type { RuleSet } from '../src/simulation/types';
 
+const BOTH: RuleSet[] = ['old', 'new'];
 const SECTION_TITLES = [
   'Objective & groups',
   'Break',
@@ -12,9 +14,14 @@ const SECTION_TITLES = [
   'The black',
   'In this game',
 ];
+const text = (rules: RuleSet, title?: string) =>
+  ruleBook(rules)
+    .filter((section) => !title || section.title === title)
+    .map((section) => section.bullets.join(' '))
+    .join(' ');
 
 test('both rule sets carry every section with non-empty bullets', () => {
-  for (const rules of ['old', 'new'] satisfies RuleSet[]) {
+  for (const rules of BOTH) {
     const sections = ruleBook(rules);
     assert.deepEqual(
       sections.map((section) => section.title),
@@ -27,34 +34,79 @@ test('both rule sets carry every section with non-empty bullets', () => {
   }
 });
 
-test('the "In this game" section lists the documented adaptations for both rule sets', () => {
-  for (const rules of ['old', 'new'] satisfies RuleSet[]) {
-    const adaptations = ruleBook(rules)
-      .find((section) => section.title === 'In this game')!
-      .bullets.join(' ');
-    assert.match(adaptations, /head string/i);
-    assert.match(adaptations, /solids and stripes/i);
-    assert.match(adaptations, /choose which group/i);
-    assert.match(adaptations, /respots at its rack position/i);
-    assert.match(adaptations, /foul snooker/i);
-    assert.match(adaptations, /power-ups/i);
-    assert.match(adaptations, /jump shots are allowed/i);
-    assert.match(adaptations, /no called pockets/i);
+test('the "In this game" section lists the house adaptations, omissions and arcade extras for both rule sets', () => {
+  for (const rules of BOTH) {
+    const adaptations = text(rules, 'In this game');
+    for (const pattern of [
+      /head string stands in for the baulk line/i,
+      /solids and stripes stand in for the reds and yellows/i,
+      new RegExp(RULE_TERMS.chooseGroup),
+      /foul snookers are found automatically/i,
+      /first ball you hit/i,
+      /knocked off the table on the break is an ordinary foul/i,
+      /touching balls/i,
+      /stalemate/i,
+      /total-snooker cushion exemption/i,
+      /time limits/i,
+      /conduct fouls/i,
+      /free ball after a lost cue ball/i,
+      /power-ups/i,
+      /Scratch shield/,
+      /portals/i,
+      /block counts as contact/i,
+      /jump shots are allowed/i,
+      /pockets are never called/i,
+    ])
+      assert.match(adaptations, pattern, `${rules}: ${pattern}`);
   }
 });
 
-test('key EPA terms appear where expected', () => {
-  const old = ruleBook('old')
-    .map((section) => section.bullets.join(' '))
+test('both rule sets describe two visits, cue-ball placement, fouls, the break and the black as settled', () => {
+  for (const rules of BOTH) {
+    const afterFoul = text(rules, 'After a foul');
+    assert.match(afterFoul, /two visits in a row/);
+    assert.match(afterFoul, /A pot keeps a visit going and the second visit still follows/);
+    assert.match(afterFoul, /A foul during either visit gives two visits back/);
+    assert.match(afterFoul, /from where it lies/);
+    assert.ok(afterFoul.includes(`tap ${RULE_TERMS.placeBehindHeadString}`), `${rules}: the placement button`);
+    assert.match(afterFoul, /potted or off-table cue ball must be placed behind the head string/);
+    assert.match(text(rules, 'Break'), /foul break re-racks the balls and your opponent breaks, with two visits/i);
+    assert.match(text(rules, 'Break'), /black on the break re-racks.*same player breaks again/i);
+    assert.match(text(rules, 'Fouls'), /Potting an opponent's ball/);
+    assert.match(text(rules, 'The black'), /black included, is a foul and goes back on the black's rack position/);
+  }
+});
+
+test('Old Rules: two-cushion break, no cushion rule, a free shot after every foul and the black-with-another-ball loss', () => {
+  assert.match(text('old', 'Objective & groups'), /the break included/);
+  assert.match(text('old', 'Break'), /at least two balls to a cushion/);
+  assert.match(text('old', 'Legal shot'), /No cushion is needed/);
+  assert.match(text('old', 'Fouls'), /except on a free shot/);
+  assert.match(
+    text('old', 'After a foul'),
+    /free shot: any ball may be hit first, the black included, and every ball it pots counts/,
+  );
+  assert.match(text('old', 'The black'), /even on a free shot/);
+  assert.match(text('old', 'The black'), /together with any other ball.*only the black and your opponent's balls/);
+  const oldOnly = SECTION_TITLES.slice(0, -1)
+    .map((title) => text('old', title))
     .join(' ');
-  const fresh = ruleBook('new')
-    .map((section) => section.bullets.join(' '))
-    .join(' ');
-  assert.match(old, /two visits/i);
-  assert.match(fresh, /two visits/i);
-  assert.match(old, /free shot/i);
-  assert.match(old, /head string/i);
-  assert.match(fresh, /head string/i);
+  assert.doesNotMatch(oldOnly, /four balls|free ball/i, 'the shared "In this game" notes aside');
+});
+
+test('New Rules: four-cushion break, cushion after contact, turn-only break scratch and the automatic free ball', () => {
+  assert.match(text('new', 'Objective & groups'), /on your next shot/);
+  assert.match(text('new', 'Break'), /at least four balls to a cushion/);
+  assert.match(text('new', 'Break'), /cue ball on a fair break only passes the turn/);
+  assert.match(text('new', 'Legal shot'), /reach a cushion/);
+  assert.match(text('new', 'Fouls'), /No pot and no cushion after contact/);
+  assert.match(text('new', 'Fouls'), /except the free ball/);
+  assert.match(text('new', 'After a foul'), /both edges of any of their balls/);
+  assert.match(text('new', 'After a foul'), /first ball hit counts as theirs/);
+  assert.match(text('new', 'After a foul'), /still snookered from there/);
+  assert.match(text('new', 'The black'), /together with your last ball/);
+  assert.match(text('new', 'The black'), /unless you are on the black/);
+  assert.doesNotMatch(text('new'), /free shot|two balls to a cushion/i);
 });
 
 test('RULES_SOURCE names the EPA sources', () => {

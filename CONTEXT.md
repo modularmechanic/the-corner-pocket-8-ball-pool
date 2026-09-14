@@ -58,15 +58,19 @@ Old Rules: the first shot after a foul, which may hit any ball first and scores 
 _Avoid_: free ball (that is New Rules)
 
 **Foul snooker**:
-A foul that leaves the incoming player no straight line to any part of any ball they are on.
+A foul that leaves the incoming player unable to hit both edges of any ball they are on in a straight line.
 
 **Free ball**:
 New Rules: after a foul snooker, the first shot may hit any ball first, and that ball counts as the player's own for the shot.
 _Avoid_: free shot (that is Old Rules)
 
 **Kitchen**:
-The area behind the head string, standing in for the EPA baulk area. A lost cue ball must be placed there; after some fouls placing it there is optional.
+The area behind the head string, standing in for the EPA baulk area. A lost cue ball must be placed there.
 _Avoid_: baulk, D
+
+**Optional placement**:
+After some fouls the cue ball is still on the table: it is shot from where it lies unless the player chooses Place behind head string and puts it in the kitchen.
+_Avoid_: ball in hand (that is placing the cue ball, mandatory or chosen)
 
 **Group choice**:
 The shooter picking solids or stripes when balls of both groups drop on an open table, or after a New Rules break pot.
