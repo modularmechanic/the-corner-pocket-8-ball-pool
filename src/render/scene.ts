@@ -14,7 +14,6 @@ import { buildPub } from './pub';
 import { PoolPostprocessing } from './postprocessing';
 import { AdaptiveRenderBudget, RenderFrameHistory, GpuFrameTimer, ShadowRevision, budgetDpr, type RenderQuality } from './performance';
 import { PracticalLightBudget } from './light-budget';
-import { TableDetails } from './table-details';
 import { TableModel, drawTableTextures, enableTableShadows, TABLE_SHADOW_LAYER } from './table-model';
 import { advanceOrbit,clampOrbit,fitTableCamera,fitOverheadCamera,orbitDirection,orbitFromDirection,CameraTransition,TemporaryCameraView,rayFromViewport,type OrbitAngles } from './camera';
 import { ShotCameraAim, ShotCameraRig } from './shot-camera';
@@ -24,7 +23,7 @@ export type Quality = RenderQuality;
 const X_AXIS=new THREE.Vector3(1,0,0),Z_AXIS=new THREE.Vector3(0,0,1),DROP_AXIS=new THREE.Vector3(.7,0,.3).normalize();
 const INSPECT_TARGET=new THREE.Vector3(.35,-.75,2.6),INSPECT_DIRECTION=new THREE.Vector3(.015,.32,.947).normalize();
 // Per-frame scratch vectors; never retained between calls.
-const cueDirection=new THREE.Vector3(),cueRight=new THREE.Vector3(),cueUp=new THREE.Vector3(),cueTip=new THREE.Vector3(),cueNormal=new THREE.Vector3(),rollAxis=new THREE.Vector3();
+const cueDirection=new THREE.Vector3(),cueRight=new THREE.Vector3(),cueUp=new THREE.Vector3(),cueContactPoint=new THREE.Vector3(),cueNormal=new THREE.Vector3(),rollAxis=new THREE.Vector3();
 interface PocketDrop { age: number; from: THREE.Vector3; target: THREE.Vector3 }
 interface OutFade {age:number;position:THREE.Vector3;seenPocketed:boolean}
 export class PoolScene {
@@ -80,9 +79,7 @@ export class PoolScene {
   private aiFPS=false;
   private cameraState:GameState=initialState('camera-preview');
   private cameraInputKey='';
-  private tableDetails?: TableDetails;
-  private chalkControls: THREE.Object3D[] = [];
-  private tableOccluders: THREE.Object3D[] = [];
+  private table!: TableModel;
   private lost = false;
   private width = 0;
   private height = 0;
@@ -90,6 +87,7 @@ export class PoolScene {
   private renderedShotCount = 0;
   private arena = new ArenaVisuals(this.scene);
   // The shadow budget watches these groups.
+  private tableOccluders: THREE.Object3D[] = [];
   private obstacles = this.arena.obstacles;
   private hazards = this.arena.hazards;
   private pickups = this.arena.pickups;
@@ -98,7 +96,6 @@ export class PoolScene {
   private effects: TableEffects;
   private surfaces: TableSurfaces;
   private propInstaller = createPropInstaller();
-  private pocketDetails?: TableModel['pocketDetails'];
   private roomReflections?: RoomReflections;
   private fallbackEnvironment: THREE.WebGLRenderTarget;
   private pub?: ReturnType<typeof buildPub>;
@@ -171,7 +168,7 @@ export class PoolScene {
     this.placement = new THREE.Mesh(new THREE.SphereGeometry(TABLE.radius, 32, 24), new THREE.MeshStandardMaterial({ color: '#f4ebd3', transparent: true, opacity: .6 })); this.placement.visible = false; this.scene.add(this.placement);
     this.practicalLights=new PracticalLightBudget(this.scene);
     this.roomReflections = new RoomReflections(this.renderer,this.scene,
-      ()=>[...(this.pub?[this.pub.group]:[]),...this.tableOccluders],
+      ()=>[...(this.pub?[this.pub.group]:[]),...this.table.occluders],
       capture=>this.practicalLights.withFullLighting(()=>this.pub?this.pub.withEnclosedRoom(capture):capture()),this.propInstaller);
     for(const ball of this.balls)this.roomReflections.add(ball.material as THREE.MeshPhysicalMaterial);
     for(const material of [this.cueAppearance.shaft,this.cueAppearance.butt,this.surfaces.brass])this.roomReflections.add(material);
@@ -183,8 +180,7 @@ export class PoolScene {
     this.pub = buildPub(this.scene, this.propInstaller);
   }
   private buildTable() {
-    const table=new TableModel(this.scene,this.surfaces,drawTableTextures(this.ballMaps));
-    this.tableOccluders=table.occluders;this.chalkControls=table.chalkControls;this.tableDetails=table.details;this.pocketDetails=table.pocketDetails;
+    this.table=new TableModel(this.scene,this.surfaces,drawTableTextures(this.ballMaps));this.tableOccluders=this.table.occluders;
   }
   private buildBalls() {
     const geo = new THREE.SphereGeometry(TABLE.radius, 64, 48);
@@ -225,12 +221,12 @@ export class PoolScene {
     let tipX=THREE.MathUtils.clamp(preview.tipX||0,-.8,.8),tipY=THREE.MathUtils.clamp(preview.tipY||0,-.8,.8);
     const radius=Math.hypot(tipX,tipY);if(radius>.8){tipX*=.8/radius;tipY*=.8/radius;}
     const depth=TABLE.radius*Math.sqrt(1-tipX*tipX-tipY*tipY);
-    cueTip.set(x,TABLE.radius+height,z).addScaledVector(cueDirection,-depth).addScaledVector(cueRight,tipX*TABLE.radius).addScaledVector(cueUp,tipY*TABLE.radius);
+    cueContactPoint.set(x,TABLE.radius+height,z).addScaledVector(cueDirection,-depth).addScaledVector(cueRight,tipX*TABLE.radius).addScaledVector(cueUp,tipY*TABLE.radius);
     this.cue.quaternion.setFromUnitVectors(X_AXIS,cueDirection);
     // The cue's front face is local x=-.1615; preserve contact when the butt is raised.
-    this.cue.position.copy(cueTip).addScaledVector(cueDirection,.1615-pullback);
-    cueNormal.set(cueTip.x-x,cueTip.y-TABLE.radius-height,cueTip.z-z).normalize();
-    this.cueContact.position.copy(cueTip).addScaledVector(cueNormal,.001);this.cueContact.quaternion.setFromUnitVectors(Z_AXIS,cueNormal);
+    this.cue.position.copy(cueContactPoint).addScaledVector(cueDirection,.1615-pullback);
+    cueNormal.set(cueContactPoint.x-x,cueContactPoint.y-TABLE.radius-height,cueContactPoint.z-z).normalize();
+    this.cueContact.position.copy(cueContactPoint).addScaledVector(cueNormal,.001);this.cueContact.quaternion.setFromUnitVectors(Z_AXIS,cueNormal);
   }
   handleEvent(event: TableEvent) {
     const obstacle = event.obstacle !== undefined ? this.arena.strikeObstacle(event.obstacle) : undefined;
@@ -364,14 +360,14 @@ export class PoolScene {
     const point=this.screenToTable(clientX,clientY);
     return point&&Math.hypot(point.x-cue.x,point.z-cue.z)>.04?Math.atan2(point.z-cue.z,point.x-cue.x):null;
   }
-  animateCoinReset(){return this.tableDetails?.animateReset()||1200;}
+  animateCoinReset(){return this.table.details.animateReset();}
   hitTableControl(clientX:number,clientY:number):'coin'|'chalk'|null{
     this.scene.updateMatrixWorld(true);
     const rect=this.container.getBoundingClientRect();
     this.raycaster.ray.copy(rayFromViewport(this.camera,(clientX-rect.left)/rect.width*2-1,-(clientY-rect.top)/rect.height*2+1));
-    const controls=[...this.chalkControls,...(this.tableDetails?[this.tableDetails.coinControl]:[])];
+    const controls=[...this.table.chalkControls,this.table.details.coinControl];
     const visible=(item:THREE.Object3D)=>{let object:THREE.Object3D|null=item;while(object){if(!object.visible)return false;object=object.parent;}return true;};
-    const blockers=this.raycaster.intersectObjects(this.tableOccluders,true).filter(hit=>visible(hit.object)&&hit.object instanceof THREE.Mesh&&(Array.isArray(hit.object.material)?hit.object.material:[hit.object.material]).some(material=>!material.transparent||material.opacity>.8));
+    const blockers=this.raycaster.intersectObjects(this.table.occluders,true).filter(hit=>visible(hit.object)&&hit.object instanceof THREE.Mesh&&(Array.isArray(hit.object.material)?hit.object.material:[hit.object.material]).some(material=>!material.transparent||material.opacity>.8));
     for(const hit of this.raycaster.intersectObjects(controls,true)){
       if(!visible(hit.object))continue;
       if(blockers[0]&&blockers[0].distance<hit.distance-.005)return null;
@@ -405,7 +401,7 @@ export class PoolScene {
     this.updateCameras(frameDt);
     const renderKey = `${state.seed}:${state.arcade?.layout || 'table'}`;
     if (this.renderedSeed !== renderKey || state.shotCount < this.renderedShotCount) {
-      this.renderedSeed = renderKey; this.pocketDrops.clear();this.outFades.clear(); this.effects.clear(); this.buffTrail.clear(); this.cueStroke = null;
+      this.renderedSeed = renderKey; this.pocketDrops.clear();this.outFades.clear(); this.effects.clear(); this.arena.clearFlashes(); this.buffTrail.clear(); this.cueStroke = null;
       for (const ball of state.balls) {
         this.balls[ball.id].rotation.set(-Math.PI / 2, 0, 0);
         this.balls[ball.id].userData.wasPocketed = ball.pocketed;
@@ -484,7 +480,7 @@ export class PoolScene {
     if (state.phase !== 'ball-in-hand') this.placement.visible = false;
     this.effects.updateTrail(cueBall,state.phase==='rolling'&&overdrive,state.phase==='rolling'&&frozen,frameDt);
     this.effects.update(frameDt); this.pub?.update(this.clock,this.camera);
-    this.tableDetails?.update(state,frameDt,this.outFades);
+    this.table.details.update(state,frameDt,this.outFades);
     if (!this.lost) {
       this.renderer.info.reset();
       const gpuMs=this.gpuTimer.begin();this.gpuSampleAge+=frameDt;
@@ -501,5 +497,5 @@ export class PoolScene {
       if(this.performanceBudget.observe(sample))this.applyGraphicsBudget();
     }
   }
-  dispose() { this.propInstaller.dispose();this.practicalLights.dispose();this.gpuTimer.dispose();this.cueAppearance.dispose();this.resizeObserver.disconnect(); this.roomReflections?.dispose();this.shotPaths.dispose(); this.effects.dispose();this.tableDetails?.dispose();this.pocketDetails?.dispose(); this.pub?.dispose();this.postprocessing?.dispose();this.surfaces.dispose();for(const lamp of this.tableLights)lamp.shadow.dispose();this.fallbackEnvironment.dispose();this.renderer.dispose();this.scene.traverse(o => { const mesh = o as THREE.Mesh; mesh.geometry?.dispose(); if (mesh.material) for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) m.dispose(); }); }
+  dispose() { this.propInstaller.dispose();this.practicalLights.dispose();this.gpuTimer.dispose();this.cueAppearance.dispose();this.resizeObserver.disconnect(); this.roomReflections?.dispose();this.shotPaths.dispose(); this.effects.dispose();this.arena.dispose();this.table.details.dispose();this.table.pocketDetails.dispose();for(const texture of this.ballMaps)texture.dispose(); this.pub?.dispose();this.postprocessing?.dispose();this.surfaces.dispose();for(const lamp of this.tableLights)lamp.shadow.dispose();this.fallbackEnvironment.dispose();this.renderer.dispose();this.scene.traverse(o => { const mesh = o as THREE.Mesh; mesh.geometry?.dispose(); if (mesh.material) for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) m.dispose(); }); }
 }

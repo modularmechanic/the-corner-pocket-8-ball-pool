@@ -5,7 +5,7 @@ import { effectDefinition } from '../presentation/effects';
 import { canvasTexture, woodTexture } from './materials';
 import { enableTableShadows } from './table-model';
 
-interface ObstacleVisual { source: Obstacle; group: THREE.Group; body: THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial>; pips: THREE.Mesh<THREE.BoxGeometry, THREE.MeshBasicMaterial>[]; cracks: THREE.LineSegments; flash: number; material: Obstacle['material']; hp: number }
+interface ObstacleVisual { source: Obstacle; group: THREE.Group; body: THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial>; pips: THREE.Mesh<THREE.BoxGeometry, THREE.MeshBasicMaterial>[]; cracks: THREE.LineSegments; flash: number; hp: number }
 interface HazardVisual { source: Hazard; group: THREE.Group; spinner?: THREE.Group; arcs?: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>; arcStep: number; ripples: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>[]; clouds: THREE.Sprite[] }
 interface PickupVisual { source: Pickup; group: THREE.Group; capsule: THREE.Group; halo: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial> }
 interface Visual<T> { source: T; group: THREE.Group }
@@ -18,6 +18,7 @@ const sameObstacle = (a: Obstacle, b: Obstacle) => a.x === b.x && a.z === b.z &&
 const sameHazard = (a: Hazard, b: Hazard) => a.kind === b.kind && a.x === b.x && a.z === b.z && a.radius === b.radius && a.angle === b.angle && a.link === b.link;
 const samePickup = (a: Pickup, b: Pickup) => a.x === b.x && a.z === b.z && a.radius === b.radius && a.power === b.power;
 
+function disposeObstacle(visual: ObstacleVisual) { visual.body.material.map?.dispose(); disposeGroup(visual.group); }
 function disposeGroup(group: THREE.Object3D) {
   group.removeFromParent();
   group.traverse(object => {
@@ -47,15 +48,17 @@ export class ArenaVisuals {
   private seen = new Set<number>();
   constructor(private scene: THREE.Scene, private textures: ArenaTextures = ARENA_TEXTURES) {}
 
-  /** Flashes a struck obstacle; returns its visual for the impact effect. */
+  /** Flashes a struck obstacle; returns its material for the impact effect. */
   strikeObstacle(id: number): { readonly material: Obstacle['material'] } | undefined {
-    const visual = this.obstacleVisuals.get(id); if (visual) visual.flash = 1;
-    return visual;
+    const visual = this.obstacleVisuals.get(id); if (!visual) return undefined;
+    visual.flash = 1; return visual.source;
   }
+  /** A fresh rack starts without lingering hit flashes. */
+  clearFlashes() { for (const visual of this.obstacleVisuals.values()) visual.flash = 0; }
 
   update(arcade: Pick<ArcadeState, 'obstacles' | 'hazards' | 'pickups'> | undefined, clock: number, dt: number) {
     const obstacles = arcade?.obstacles ?? [], hazards = arcade?.hazards ?? [], pickups = arcade?.pickups ?? [];
-    this.sync(this.obstacleVisuals, obstacles, sameObstacle, obstacle => this.buildObstacle(obstacle), visual => { visual.body.material.map?.dispose(); disposeGroup(visual.group); });
+    this.sync(this.obstacleVisuals, obstacles, sameObstacle, obstacle => this.buildObstacle(obstacle), disposeObstacle);
     this.sync(this.hazardVisuals, hazards, sameHazard, hazard => this.buildHazard(hazard), visual => disposeGroup(visual.group));
     this.sync(this.pickupVisuals, pickups, samePickup, pickup => this.buildPickup(pickup), visual => disposeGroup(visual.group));
     for (const obstacle of obstacles) {
@@ -64,7 +67,7 @@ export class ArenaVisuals {
       visual.flash = Math.max(0, visual.flash - dt * 5);
       visual.body.material.emissiveIntensity = visual.flash * .55;
       visual.cracks.visible = obstacle.hp < obstacle.maxHp;
-      if (visual.hp !== obstacle.hp) { visual.hp = obstacle.hp; for (let i = 0; i < visual.pips.length; i++) visual.pips[i].material.color.copy(i < obstacle.hp ? PIP_COLORS[visual.material] : SPENT_PIP); }
+      if (visual.hp !== obstacle.hp) { visual.hp = obstacle.hp; for (let i = 0; i < visual.pips.length; i++) visual.pips[i].material.color.copy(i < obstacle.hp ? PIP_COLORS[obstacle.material] : SPENT_PIP); }
     }
     for (const pickup of pickups) {
       const visual = this.pickupVisuals.get(pickup.id)!;
@@ -75,7 +78,7 @@ export class ArenaVisuals {
   }
 
   dispose() {
-    for (const visual of this.obstacleVisuals.values()) { visual.body.material.map?.dispose(); disposeGroup(visual.group); }
+    for (const visual of this.obstacleVisuals.values()) disposeObstacle(visual);
     for (const visual of [...this.hazardVisuals.values(), ...this.pickupVisuals.values()]) disposeGroup(visual.group);
     this.obstacleVisuals.clear(); this.hazardVisuals.clear(); this.pickupVisuals.clear();
     this.smokeTexture?.dispose(); this.smokeTexture = undefined;
@@ -251,7 +254,7 @@ export class ArenaVisuals {
     }
     const cracks = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(crackPoints), new THREE.LineBasicMaterial({ color: '#0c1416', transparent: true, opacity: .65 }));
     cracks.visible = false; group.add(cracks);
-    return { source: { ...obstacle }, group, body, pips, cracks, flash: 0, material: obstacle.material, hp: -1 };
+    return { source: { ...obstacle }, group, body, pips, cracks, flash: 0, hp: -1 };
   }
 
   private animateHazard(visual: HazardVisual, clock: number) {

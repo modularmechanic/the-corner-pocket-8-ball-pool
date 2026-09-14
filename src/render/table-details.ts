@@ -30,8 +30,9 @@ export class TableDetails {
   private resetAge = Infinity;
   private seed = '';
   private indicator: THREE.MeshStandardMaterial;
+  private sharedBallMaps: readonly THREE.Texture[];
   constructor(scene: THREE.Scene, textures: TableDetailTextures) {
-    scene.add(this.group);
+    scene.add(this.group);this.sharedBallMaps=textures.balls;
     const steel=new THREE.MeshPhysicalMaterial({map:textures.brushedSteel,color:'#d0d6ce',metalness:.87,roughness:.28,clearcoat:.18});
     const darkSteel=new THREE.MeshStandardMaterial({color:'#232b29',metalness:.7,roughness:.4});
     const brass=new THREE.MeshStandardMaterial({color:'#c2a25e',metalness:.82,roughness:.28});
@@ -88,5 +89,5 @@ export class TableDetails {
       mesh.rotateZ(-(mesh.position.x-oldX)/.157);
     }
   }
-  dispose(){this.group.removeFromParent();const geometries=new Set<THREE.BufferGeometry>(),materials=new Set<THREE.Material>(),textures=new Set<THREE.Texture>();this.group.traverse(object=>{if(!(object instanceof THREE.Mesh))return;geometries.add(object.geometry);for(const material of Array.isArray(object.material)?object.material:[object.material]){materials.add(material);for(const value of Object.values(material))if(value instanceof THREE.Texture)textures.add(value);}});for(const geometry of geometries)geometry.dispose();for(const material of materials)material.dispose();for(const texture of textures)texture.dispose();}
+  dispose(){this.group.removeFromParent();const geometries=new Set<THREE.BufferGeometry>(),materials=new Set<THREE.Material>(),textures=new Set<THREE.Texture>();this.group.traverse(object=>{if(!(object instanceof THREE.Mesh))return;geometries.add(object.geometry);for(const material of Array.isArray(object.material)?object.material:[object.material]){materials.add(material);for(const value of Object.values(material))if(value instanceof THREE.Texture)textures.add(value);}});for(const geometry of geometries)geometry.dispose();for(const material of materials)material.dispose();for(const texture of textures)if(!this.sharedBallMaps.includes(texture))texture.dispose();}
 }
