@@ -1,5 +1,5 @@
 import { equippedCue } from './cues';
-import { circleInterval, firstTableBoundary, firstTableContact, isClearBallSpot, RAIL_RESTITUTION, ROLLING_RESISTANCE, segmentClearOfTable, STICKY_DRAG, surfaceDrag, type Point } from './table-geometry';
+import { circleInterval, firstTableBoundary, firstTableContact, inPlacementZone, isClearBallSpot, RAIL_RESTITUTION, ROLLING_RESISTANCE, segmentClearOfTable, STICKY_DRAG, surfaceDrag, type Point } from './table-geometry';
 import { TABLE, POCKETS, legalTargets, type Ball, type Difficulty, type GameState, type Shot } from './types';
 
 interface Path { distance: number; portal: boolean; risk: number; runs: { distance: number; drag: number; boost: number }[] }
@@ -172,7 +172,7 @@ export function choosePlacement(state: GameState): Point {
   const targets = legalTargets(state), candidates: { point: Point; score: number }[] = [];
   for (let x = -4.9; x < 5; x += .65) for (let z = -2.2; z < 2.3; z += .65) {
     const point = { x, z };
-    if (!isClearBallSpot(state, point, 0, 'ai-placement')) continue;
+    if (!inPlacementZone(state, point) || !isClearBallSpot(state, point, 0, 'ai-placement')) continue;
     let score = -Math.abs(x) * .02;
     for (const target of targets) {
       if (!segmentClear(point, target, state.balls, [0, target.id]) || !segmentClearOfTable(state, point, target)) continue;
@@ -195,7 +195,7 @@ export function choosePlacement(state: GameState): Point {
   // Crowded custom states may cover every coarse-grid square. A finite finer
   // scan still prioritizes legal felt and avoids portals and acceleration pads.
   for (let x = -5.3; x <= 5.3; x += .25) for (let z = -2.5; z <= 2.5; z += .25) {
-    if (isClearBallSpot(state, { x, z }, 0, 'ai-fallback')) return { x, z };
+    if (inPlacementZone(state, { x, z }) && isClearBallSpot(state, { x, z }, 0, 'ai-fallback')) return { x, z };
   }
   return { x: -2.85, z: 0 };
 }

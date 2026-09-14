@@ -126,6 +126,13 @@ const BALL_CLEARANCE = {
   'ward-respot': { edge: .05, pocket: .45, block: .03, ball: TABLE.radius * .1, hazard: 'all', hazardGap: .04 },
   'portal-exit': { edge: .04, pocket: .48, block: .04, ball: .05, hazard: 'none', hazardGap: 0 },
 } as const;
+/** The head string crosses the break spot; the kitchen lies behind it, towards the head rail. */
+export const HEAD_STRING_X = -TABLE.halfWidth / 2;
+/** Old Rules restrict ball in hand (only given after a cue-ball scratch) to the kitchen; New Rules allow the whole table. */
+export function kitchenPlacement(state: Pick<GameState, 'rules'>): boolean { return state.rules === 'old'; }
+export function inPlacementZone(state: Pick<GameState, 'rules'>, point: Point): boolean {
+  return !kitchenPlacement(state) || point.x <= HEAD_STRING_X + 1e-9;
+}
 export function isClearBallSpot(state: GameState, point: Point, ignoreBall: number, policy: BallClearancePolicy): boolean {
   const rule = BALL_CLEARANCE[policy];
   return Number.isFinite(point.x) && Number.isFinite(point.z) &&

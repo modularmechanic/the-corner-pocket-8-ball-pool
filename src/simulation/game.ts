@@ -2,7 +2,7 @@ import { canEquipCue, equippedCue, normalizeCues } from './cues';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { initialState, legalTargets, POCKETS, TABLE, other, seededRandom, type Ball, type GameState, type Shot, type ShotResult, type GameOptions, type TableEvent, type PowerUp } from './types';
 import { settleShot } from './settlement';
-import { isClearBallSpot, TABLE_RAILS, TABLE_NOSES, surfaceDragAt, rollingDeceleration, STICKY_DRAG, AIR_DRAG } from './table-geometry';
+import { inPlacementZone, isClearBallSpot, TABLE_RAILS, TABLE_NOSES, surfaceDragAt, rollingDeceleration, STICKY_DRAG, AIR_DRAG } from './table-geometry';
 import { createArcade, LAYOUTS, makePickup, pickupPosition } from './arcade';
 
 function readOnlyView<T extends object>(source:T):T {
@@ -53,7 +53,7 @@ export class PoolGame {
   private pendingSpin={x:0,z:0};
   onEvent?: (event: TableEvent) => void;
   constructor(seed: string, options: GameOptions = {}) {
-    const state = initialState(seed,options.format);
+    const state = initialState(seed,options.format,options.rules);
     state.arcade = createArcade(typeof options.layout === 'string' && Object.hasOwn(LAYOUTS, options.layout) ? options.layout : 'crossfire', seed, options.level);
     this.arrange(state);
   }
@@ -62,6 +62,7 @@ export class PoolGame {
     const state=structuredClone(input),continuation=state.simulation;
     delete state.simulation;
     state.cues = normalizeCues(state.cues, state.format, state.arcade?.level);
+    state.rules = state.rules === 'old' ? 'old' : 'new'; state.shotsLeft = state.rules === 'old' && (state.shotsLeft === 1 || state.shotsLeft === 2) ? state.shotsLeft : 0;
     if(state.balls.length!==16 || new Set(state.balls.map(b=>b.id)).size!==16 || state.balls.some(b=>!Number.isInteger(b.id)||b.id<0||b.id>15||![b.x,b.z,b.vx,b.vz,b.elevation??0,b.vy??0].every(Number.isFinite)||(b.elevation??0)<0))throw new Error('An arrangement requires sixteen uniquely numbered balls with finite positions and velocities.');
     if(state.arcade?.obstacles.some(o=>![o.x,o.z,o.width,o.depth,o.hp,o.maxHp].every(Number.isFinite)||o.width<=0||o.depth<=0))throw new Error('Arrangement obstacles require finite positive dimensions.');
     state.balls.sort((a,b)=>a.id-b.id);
@@ -172,7 +173,7 @@ export class PoolGame {
   }
   placeCue(x: number, z: number): boolean {
     if (this.current.phase !== 'ball-in-hand' || !Number.isFinite(x) || !Number.isFinite(z)) return false;
-    if(!isClearBallSpot(this.current,{x,z},0,'placement'))return false;
+    if(!inPlacementZone(this.current,{x,z})||!isClearBallSpot(this.current,{x,z},0,'placement'))return false;
     this.respot(0, x, z); this.current.phase = 'ready'; this.current.message = 'Cue ball placed. Find your angle.'; return true;
   }
   private respot(id: number, x: number, z: number) {
