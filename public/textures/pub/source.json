@@ -13,13 +13,17 @@
       "originalBytes": 3021140,
       "sha256": "aa12137fff1728bbbfe98b30480e33a34cba3b5c096575702c1d66939214e14a",
       "optimizedFile": "stone-color.webp",
-      "optimizedBytes": 772798
+      "optimizedBytes": 221514,
+      "optimizedSha256": "b298111c965b840bebb6fcd1db0407da6be662dbd7990ffb8cb117d5bb246f8b",
+      "note": "Downsampled to 1024x1024 (from 2048x2048); savings exceed 300KB with no visible loss at in-game tiling."
     },
     "stone-normal.jpg": {
       "originalBytes": 4248820,
       "sha256": "8f3e131a9d6d9c3a95c872173393830f7c1de389cd60d4878b2211058d706d2c",
       "optimizedFile": "stone-normal.webp",
-      "optimizedBytes": 2033768
+      "optimizedBytes": 528880,
+      "optimizedSha256": "75d37c39440fd4c8d54b2e46d282702bd9dba538c64b339de6b75e54450b894c",
+      "note": "Downsampled to 1024x1024 (from 2048x2048)."
     }
   }
 }
