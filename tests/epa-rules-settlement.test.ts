@@ -212,7 +212,7 @@ test('Old Rules free shot: any ball first, every pot counts and the visit contin
 });
 
 test('New Rules have no free shot after an ordinary foul: the cue ball is played from where it lies', () => {
-  const state = fouled('new');
+  const state = settle(sparse('new'), { firstContact: 9 }).state;
   assert.deepEqual(view(state), { turn: 1, phase: 'ready', shotsLeft: 2, foul: true, freeShot: false });
   assert.deepEqual(state.balls[0], arranged('new').balls[0]);
   assert.equal(settle(state, { firstContact: 1 }).state.foul, true);
@@ -324,7 +324,7 @@ test('cue-ball placement: mandatory in the kitchen after a lost cue ball, option
     }
   const optional = fouled('old');
   assert.deepEqual([optional.phase, optional.balls[0].pocketed], ['ball-in-hand', false]);
-  assert.equal(fouled('new').phase, 'ready');
+  assert.equal(settle(sparse('new'), { firstContact: 9 }).state.phase, 'ready');
   const shielded = arranged('old');
   shielded.arcade!.activeShot.ward = true;
   const rescued = settle(shielded, { potted: [0] });
@@ -365,6 +365,47 @@ test('New Rules foul snooker: a foul that leaves no straight line to any own bal
   for (const id of [1, 2, 8]) open.balls[id].pocketed = true;
   assert.equal(snookered(open, 1), false, 'a gap in the ring is a straight line to the stripe');
   assert.equal(settle(open, { firstContact: 12 }).state.phase, 'ready');
+});
+
+test('foul snooker needs both edges: a ball with one edge covered is snookered, a clear ball is not', () => {
+  for (const rules of BOTH) {
+    const state = sparse(rules);
+    Object.assign(state.balls[0], { x: -2, z: 0 });
+    Object.assign(state.balls[9], { x: 2, z: 0 });
+    Object.assign(state.balls[1], { x: 0, z: TABLE.radius * 1.7 });
+    assert.equal(snookered(state, 1), true, `${rules}: one edge of the stripe is hidden behind the solid`);
+    Object.assign(state.balls[1], { x: 0, z: TABLE.radius * 3.5 });
+    assert.equal(snookered(state, 1), false, `${rules}: both edges are clear`);
+    Object.assign(state.balls[1], { x: 0, z: 2 });
+    Object.assign(state.balls[12], { pocketed: false, x: 0, z: -TABLE.radius * 1.7 });
+    assert.equal(snookered(state, 1), false, 'a ball the player is on never blocks');
+  }
+});
+
+test('New Rules free ball with the black: potting the black early loses, with the nominated ball on the black it wins', () => {
+  const free = (state: GameState) => Object.assign(state, { freeShot: true, shotsLeft: 2 });
+  const early = settle(free(arranged('new')), { firstContact: 8, potted: [8] }).state;
+  assert.deepEqual([early.phase, early.winner], ['over', 1], 'the nominated black while not on it');
+  const both = settle(free(onTheBlack('new')), { firstContact: 9, potted: [9, 8] }).state;
+  assert.deepEqual([both.phase, both.winner], ['over', 0], 'the nominated ball and the black while on the black');
+  const nominated = settle(free(onTheBlack('new')), { firstContact: 9, potted: [9] }).state;
+  assert.deepEqual(
+    view(nominated),
+    { turn: 0, phase: 'ready', shotsLeft: 2, foul: false, freeShot: false },
+    'the nominated ball alone keeps the visit',
+  );
+  const second = settle(free(onTheBlack('new')), { firstContact: 9, potted: [9, 10] }).state;
+  assert.deepEqual([second.foul, second.turn, second.winner], [true, 1, null], 'a second opponent ball is a foul');
+});
+
+test('doubles: a black on the break re-racks for the same breaker without rotating partners', () => {
+  for (const rules of BOTH) {
+    const state = breaking(rules);
+    state.format = 'doubles';
+    const settled = settle(state, { potted: [8] }).state;
+    assert.deepEqual([settled.turn, settled.teamOrder, activeSeat(settled)], [0, [0, 0], 0], rules);
+    assert.deepEqual(settle(state, { breakRails: [1, 2, 3, 4] }).state.teamOrder, [1, 0], 'a fair break rotates');
+  }
 });
 
 test('doubles: the two visits belong to the team while partners alternate every shot', () => {

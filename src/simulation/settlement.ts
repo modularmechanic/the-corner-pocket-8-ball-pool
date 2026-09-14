@@ -182,7 +182,8 @@ export function settleShot(input: GameState, result: ShotResult, context: Settle
     state.turn = other(shooter);
     state.shotsLeft = turnOnly ? 0 : 2;
     // A lost cue ball must be placed in the kitchen. Otherwise Old Rules offer a free shot and optional kitchen
-    // placement; New Rules offer both only when the incoming player is foul snookered.
+    // placement; New Rules offer both only when the incoming player is foul snookered. The EPA poster is silent on a
+    // snooker after an in-off, so a lost cue ball never earns a free ball here, even if every kitchen spot is snookered.
     state.freeShot = old ? true : !scratched && snookered(state, state.turn);
     state.phase = scratched || state.freeShot ? 'ball-in-hand' : 'ready';
     const reason = offTable.length
@@ -212,7 +213,8 @@ export function settleShot(input: GameState, result: ShotResult, context: Settle
           ? 'No pot. Your second visit.'
           : 'Over to the other side. Make it count.';
   }
-  if (state.format === 'doubles') state.teamOrder[shooter] = other(state.teamOrder[shooter]);
+  // A black on the break re-racks for the same breaker, so the partners do not rotate.
+  if (state.format === 'doubles' && !eightBreak) state.teamOrder[shooter] = other(state.teamOrder[shooter]);
   if (arcade) {
     const lostCue = scratched && !eightBreak;
     arcade.combo = foul ? 0 : ownPotted;

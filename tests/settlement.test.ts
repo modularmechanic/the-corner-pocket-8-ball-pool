@@ -75,6 +75,8 @@ test('foul table covers contact, rail, scratch, illegal break and off-table outc
     const state = arranged();
     state.format = 'doubles';
     state.arcade!.potStreak[0] = 4;
+    // A stripe in open play, so the incoming side is never foul snookered by the rack.
+    Object.assign(state.balls[9], { x: 0, z: -2 });
     const outcome = settle(state, shot);
     assert.equal(outcome.state.foul, true);
     assert.equal(outcome.state.turn, 1);

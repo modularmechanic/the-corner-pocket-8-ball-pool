@@ -145,6 +145,39 @@ test('optional placement with no clear spot behind the head string leaves only t
   }
 });
 
+test('New Rules: placing behind the head string re-checks the foul snooker from the new spot', () => {
+  /** Team 1 (solids) holds a free ball with the cue ball on the table; ball 3 is ringed by `ring` at `centre`. */
+  const snookeredTable = (match: LocalMatch, centre: { x: number; z: number }, target: { x: number; z: number }) => {
+    const state = afterFoul(match.snapshot(), false);
+    state.freeShot = true;
+    for (const ball of state.balls) if (ball.id > 0) ball.pocketed = true;
+    Object.assign(state.balls[0], { x: 2, z: 0 });
+    [9, 10, 11, 12, 13, 14, 15, 8].forEach((id, i) => {
+      const angle = (i / 8) * Math.PI * 2;
+      Object.assign(state.balls[id], {
+        pocketed: false,
+        x: centre.x + Math.cos(angle) * TABLE.radius * 2.05,
+        z: centre.z + Math.sin(angle) * TABLE.radius * 2.05,
+      });
+    });
+    Object.assign(state.balls[3], { pocketed: false, ...target });
+    return state;
+  };
+  const match = new LocalMatch({ seed: 'baulk-recheck', mode: 'local', options: { rules: 'new' } });
+  try {
+    // The ring boxes in the cue ball: from the kitchen the solid is in plain view, so the free ball is gone.
+    match.arrange(snookeredTable(match, { x: 2, z: 0 }, { x: 4.5, z: 1.5 }));
+    assert.equal(match.dispatch({ type: 'place', x: -4, z: 0 }).ok, true);
+    assert.deepEqual([match.state.phase, match.state.freeShot], ['ready', false]);
+    // The ring boxes in the solid instead: still snookered from the kitchen, so the free ball stays.
+    match.arrange(snookeredTable(match, { x: 3, z: 1 }, { x: 3, z: 1 }));
+    assert.equal(match.dispatch({ type: 'place', x: -4, z: 0 }).ok, true);
+    assert.deepEqual([match.state.phase, match.state.freeShot], ['ready', true]);
+  } finally {
+    match.dispose();
+  }
+});
+
 test('the rule set is locked for the session through resets, rematches and new levels', () => {
   const match = new LocalMatch({ seed: 'rules-lock', mode: 'ai', options: { rules: 'old' } }),
     fallback = new LocalMatch({ seed: 'rules-default' });

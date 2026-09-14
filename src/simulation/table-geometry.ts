@@ -228,24 +228,26 @@ export function isCueLie(state: GameState, point: Point): boolean {
   const cue = state.balls[0];
   return !cue.pocketed && point.x === cue.x && point.z === cue.z;
 }
-/** Foul snooker test: no straight cue-ball path reaches any part of any ball the player is on. Every other ball,
- * block, portal, pocket mouth and cushion nose blocks; a ball already touching the cue ball is never snookered.
- * ponytail: the target's hittable width is sampled at 13 rays, so a sliver thinner than one gap reads as blocked. */
+/** Foul snooker test (EPA): the player cannot hit both extreme edges of any ball they are on in a straight line. Other
+ * balls, blocks, portals, pocket mouths and cushion noses block; balls the player is on never do, and a ball already
+ * touching the cue ball is never snookered.
+ * ponytail: each edge is one ray aimed just inside the extreme (6.3 / 6), so a blocker grazing the very rim is missed. */
 export function snookered(state: GameState, player: 0 | 1): boolean {
   const cue = state.balls[0];
   if (cue.pocketed) return false;
   const targets = legalTargets({ ...state, freeShot: false }, player);
+  const reaches = (angle: number) => {
+    const contact = firstTableContact(state, cue, angle);
+    return contact.kind === 'ball' && targets.some((ball) => ball.id === contact.id);
+  };
   return (
     targets.length > 0 &&
     !targets.some((target) => {
       const gap = distance(cue, target);
       if (gap <= TABLE.radius * 2 + 1e-3) return true;
-      const centre = Math.atan2(target.z - cue.z, target.x - cue.x);
-      for (let i = -6; i <= 6; i++) {
-        const contact = firstTableContact(state, cue, centre + Math.asin(((TABLE.radius * 2) / gap) * (i / 6.3)));
-        if (contact.kind === 'ball' && targets.some((ball) => ball.id === contact.id)) return true;
-      }
-      return false;
+      const centre = Math.atan2(target.z - cue.z, target.x - cue.x),
+        edge = Math.asin(((TABLE.radius * 2) / gap) * (6 / 6.3));
+      return reaches(centre - edge) && reaches(centre + edge);
     })
   );
 }
