@@ -18,9 +18,9 @@ export interface EffectPill {
   id: EffectId; title:string; icon:string; color:string; className:string;
   active:boolean; queued:boolean;
 }
-const aiNames:Record<Difficulty,string> = {casual:'The Newcomer',regular:'The Regular',expert:'The Hustler'};
+export const AI_NAMES:Readonly<Record<Difficulty,string>> = {casual:'The Newcomer',regular:'The Regular',expert:'The Hustler'};
 export function seatLabel(state:GameState,viewer:Pick<TableViewer,'mode'|'difficulty'|'room'>,seat:number):string {
-  if(viewer.mode==='ai')return seat===0?'You':seat===2?'AI Partner':state.format==='doubles'?`${aiNames[viewer.difficulty]} ${seat===1?'A':'B'}`:aiNames[viewer.difficulty];
+  if(viewer.mode==='ai')return seat===0?'You':seat===2?'AI Partner':state.format==='doubles'?`${AI_NAMES[viewer.difficulty]} ${seat===1?'A':'B'}`:AI_NAMES[viewer.difficulty];
   return viewer.mode==='local'?`Player ${seat+1}`:viewer.room?.players[seat]?.name || 'Seat open';
 }
 export function teamLabel(state:GameState,viewer:Pick<TableViewer,'mode'|'difficulty'|'room'>,team:number):string {

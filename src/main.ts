@@ -1,9 +1,9 @@
 import './style.css';
 import { initPhysics } from './simulation/game';
-import { LocalMatch, RemoteMatch, resultTeams, type Match, type MatchCommand, type RoomSnapshot } from './match';
+import { LocalMatch, RemoteMatch, type Match, type MatchCommand, type RoomSnapshot } from './match';
 import { LAYOUTS } from './simulation/arcade';
 import { normalizeLevel } from './simulation/level-policy';
-import { CUE_CATALOG, canEquipCue, equippedCue, type CueId } from './simulation/cues';
+import { CUE_CATALOG, canEquipCue, equippedCue } from './simulation/cues';
 import { POWER_UPS, STATUS_EFFECTS } from './presentation/effects';
 import { deriveTablePresentation, seatLabel, teamLabel } from './presentation/table-presentation';
 import { TABLE, activeSeat, seatCount, type GameFormat, type ArenaLayout, type Difficulty, type GameState, type Mode, type Shot, type TableEvent } from './simulation/types';
@@ -13,31 +13,22 @@ import { shell, icon } from './ui/shell';
 import { TableAudio } from './ui/audio';
 import { createIdentity } from './ui/identity';
 import { ShotSetup } from './ui/shot-setup';
+import { PlayerProfile, levelName } from './ui/player-profile';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 $('app').innerHTML = shell();
-const storage = {
-  get(key: string, fallback: string) { try { return localStorage.getItem(`corner-pocket:${key}`) ?? fallback; } catch { return fallback; } },
-  set(key: string, value: string) { try { localStorage.setItem(`corner-pocket:${key}`, value); } catch { /* Playing does not require storage. */ } },
-};
+const profile = new PlayerProfile((() => { try { return localStorage; } catch { return null; } })());
 const sound = new TableAudio();
-sound.enabled = storage.get('sound', 'true') === 'true';
-const savedVolume = Number(storage.get('volume', '.65'));
-sound.volume = Number.isFinite(savedVolume) ? savedVolume : .65;
+sound.enabled = profile.preferences.sound;
+sound.volume = profile.preferences.volume;
 let mode: Mode = 'ai';
-let difficulty: Difficulty = (['casual', 'regular', 'expert'].includes(storage.get('difficulty', 'regular')) ? storage.get('difficulty', 'regular') : 'regular') as Difficulty;
-let layout: ArenaLayout = Object.hasOwn(LAYOUTS, storage.get('layout', 'crossfire')) ? storage.get('layout', 'crossfire') as ArenaLayout : 'crossfire';
-const levelNames = ['First round', 'Trick shots', 'Cross currents', 'Hard knocks', 'House champion'];
-let unlockedLevel = normalizeLevel(storage.get('unlocked-level', '1'));
-let level = Math.min(unlockedLevel, normalizeLevel(storage.get('level', '1')));
 function renderLevels() {
   const select = $<HTMLSelectElement>('menu-level');
-  select.replaceChildren(...levelNames.map((name, index) => {
-    const option = document.createElement('option'); option.value = String(index + 1);
-    option.textContent = `${index + 1} · ${name}${index + 1 > unlockedLevel ? ' · Locked' : ''}`;
-    option.disabled = index + 1 > unlockedLevel; return option;
+  select.replaceChildren(...profile.levelOptions().map(({ value, label, disabled }) => {
+    const option = document.createElement('option'); option.value = value;
+    option.textContent = label; option.disabled = !!disabled; return option;
   }));
-  select.value = String(level);
+  select.value = String(profile.preferences.level);
 }
 let match: Match;
 let unsubscribeMatch: (()=>void) | undefined;
@@ -66,19 +57,12 @@ let cueFocusRestore='';
 let coinResetting = false;
 let inspectingTable = false;
 let menuMode: Mode = mode;
-let menuFormat: GameFormat = storage.get('format', 'singles') === 'doubles' ? 'doubles' : 'singles';
+let menuFormat: GameFormat = profile.preferences.format;
 let aiMessage = false;
 let identity: string;
 try { identity = sessionStorage.getItem('corner-pocket:identity') || createIdentity(); sessionStorage.setItem('corner-pocket:identity', identity); } catch { identity = createIdentity(); }
-interface HouseRecord { id: string; name: string; score: number; layout: ArenaLayout; win: boolean; date: string }
-function readRecords(): HouseRecord[] {
-  try {
-    const records: unknown = JSON.parse(storage.get('records', '[]'));
-    return Array.isArray(records) ? records.filter((record): record is HouseRecord => !!record && typeof record.id === 'string' && typeof record.name === 'string' && Number.isFinite(record.score) && record.score >= 0 && Object.hasOwn(LAYOUTS, record.layout) && typeof record.date === 'string').slice(0, 8) : [];
-  } catch { return []; }
-}
 function renderRecords() {
-  const records = readRecords();
+  const records = profile.records;
   $('high-scores').replaceChildren(); $('scores-empty').hidden = records.length > 0;
   for (const [index, record] of records.entries()) {
     const row = document.createElement('li'); row.className = 'menu-score-row';
@@ -89,19 +73,6 @@ function renderRecords() {
     const score = document.createElement('b'); score.textContent = Math.round(record.score).toLocaleString();
     row.append(rank, detail, score); $('high-scores').append(row);
   }
-}
-function saveResult() {
-  if (state.phase !== 'over' || !state.arcade) return;
-  if (match.capabilities.canAdvance) { unlockedLevel = Math.max(unlockedLevel, state.arcade?.level + 1); storage.set('unlocked-level', String(unlockedLevel)); }
-  const players = resultTeams(mode, seat);
-  const records = readRecords();
-  for (const player of players) {
-    const id = `${state.seed}:${mode}:${player}`;
-    if (records.some(record => record.id === id)) continue;
-    records.push({ id, name: playerName(player), score: state.arcade.scores[player], layout: state.arcade.layout, win: state.winner === player, date: new Date().toISOString() });
-  }
-  records.sort((a, b) => b.score - a.score || Number(b.win) - Number(a.win) || b.date.localeCompare(a.date));
-  storage.set('records', JSON.stringify(records.slice(0, 8))); renderRecords();
 }
 function setMenuPanel(setup: boolean) {
   $('menu-landing').hidden = setup; $('menu-setup').hidden = !setup;
@@ -127,7 +98,7 @@ function showMainMenu() {
   setMenuPanel(false); selectMenuMode(mode);
   stopAI(); renderRecords(); renderLevels();
   $<HTMLButtonElement>('menu-resume').hidden = !hasStarted || state.phase === 'over';
-  $<HTMLSelectElement>('menu-difficulty').value = difficulty;
+  $<HTMLSelectElement>('menu-difficulty').value = profile.preferences.difficulty;
   $('menu-session-note').textContent = mode === 'online' && room ? `Room ${room.code} keeps playing while this menu is open.` : 'Singles or doubles · Up to four players';
   openDialog('main-menu');
 }
@@ -137,10 +108,10 @@ function closeDialog(id: string) { $<HTMLDialogElement>(id).close(); }
 function openDialog(id: string) { cancelDrag(); if (!$<HTMLDialogElement>(id).open) $<HTMLDialogElement>(id).showModal(); }
 function canAct() { return initialized && match.actor.canAct && !anyDialog() && !match.pending && !coinResetting && !orbitPointer && !keyboardOrbit && !document.hidden; }
 function seatName(player: number) {
-  return seatLabel(state,{mode,difficulty,room},player);
+  return seatLabel(state,{mode,difficulty:profile.preferences.difficulty,room},player);
 }
 function playerName(team: number) {
-  return teamLabel(state,{mode,difficulty,room},team);
+  return teamLabel(state,{mode,difficulty:profile.preferences.difficulty,room},team);
 }
 function renderInvite() {
   const roster = $('invite-roster'); roster.replaceChildren(); roster.hidden = !room;
@@ -177,11 +148,11 @@ function syncMatch() {
   if(changedRack){
     if(mode==='online'&&!coinResetting&&hasStarted)sound.playMechanism('coin');
     resultKey='';aimAngle=0;if(scene)scene.aim.angle=0;cancelDrag();closeDialog('result-dialog');
-    level=normalizeLevel(state.arcade?.level);storage.set('level',String(level));
+    profile.set('level',normalizeLevel(state.arcade?.level));
   }else if(previousState&&(previousState.shotCount!==state.shotCount||activeSeat(previousState)!==activeSeat(state)))cancelDrag();
   if(room&&room.players.length>previousPlayers)toast(`${room.players.at(-1)!.name} joined.`);
   if(room&&!wasReady&&match.ready)closeDialog('invite-dialog');
-  if(state.phase==='over'&&(changedRack||previousState?.phase!=='over'))saveResult();
+  if(state.phase==='over'&&(changedRack||previousState?.phase!=='over')){profile.recordResult(state,mode,seat,playerName);renderRecords();}
 }
 function installMatch(next:Match) {
   unsubscribeMatch?.();match?.dispose();match=next;syncMatch();
@@ -242,7 +213,7 @@ function chooseCamera(overhead:boolean) {
   $('camera-toggle').setAttribute('aria-pressed',String(overhead));
   $('fps-view').setAttribute('aria-pressed',String(!overhead));
   $('table-view').setAttribute('aria-pressed','false');
-  storage.set('camera',overhead?'overhead':'angled');updateUI(true);
+  profile.set('camera',overhead?'overhead':'angled');updateUI(true);
 }
 function setAdjustment(mode:'spin'|'elevation'|null) {
   if(mode&&(!canAct()||state.phase!=='ready'))return;
@@ -287,22 +258,22 @@ function renderCueLocker() {
     button.style.setProperty('--cue-wood',cue.color);button.style.setProperty('--cue-accent',cue.accent);
     const stat=(name:string,value:number)=>`<span>${name}<b>${Math.round(value*100)}%</b><i style="--stat:${value/1.2*100}%"></i></span>`;
     button.innerHTML=`<i class="cue-swatch" aria-hidden="true"></i><div class="cue-card-title"><strong>${cue.name}</strong><span>${selected?'Equipped':unlocked?'Equip':`Level ${cue.unlockLevel}`}</span></div><small>${cue.wood} · ${cue.weightOz} oz</small><p>${cue.description}</p><div class="cue-stats">${stat('Power',cue.power)}${stat('Spin',cue.spin)}${stat('Curve',cue.curve)}</div>`;
-    button.onclick=async()=>{if(await command({type:'equip',cue:cue.id},'This cue cannot be equipped yet.'))storage.set('cue',cue.id);renderCueLocker();};
+    button.onclick=async()=>{if(await command({type:'equip',cue:cue.id},'This cue cannot be equipped yet.'))profile.set('cue',cue.id);renderCueLocker();};
     return button;
   }));
   if(cueFocusRestore&&!match.pending){const target=$('cue-collection').querySelector<HTMLButtonElement>(`[data-cue="${cueFocusRestore}"]`);if(target&&!target.disabled)target.focus();cueFocusRestore='';}
 }
 function openCueLocker(){openDialog('cue-dialog');renderCueLocker();}
 function equipPreferredCue() {
-  const preferred=storage.get('cue','ash-house');
-  if(canEquipCue(preferred,state.arcade?.level)&&match.capabilities.canEquip)void command({type:'equip',cue:preferred as CueId},'This cue is not available at this table.');
+  const preferred=profile.preferences.cue;
+  if(canEquipCue(preferred,state.arcade?.level)&&match.capabilities.canEquip)void command({type:'equip',cue:preferred},'This cue is not available at this table.');
 }
 function updateUI(force = false) {
   if (!state) return;
   const arcadeUI = state.arcade ? { ...state.arcade, clock: undefined } : undefined;
-  const key = JSON.stringify([!!orbitPointer,keyboardOrbit,shotSetup.adjustment,shotSetup.stage,state.cues,state.chalked, coinResetting, state.phase, presentation?.phase, presentation?.shotCount, presentation ? activeSeat(presentation) : null, state.turn, state.format, state.teamOrder, state.groups, state.shotCount, state.message, state.balls.filter(b => b.pocketed).map(b => b.id), state.winner, arcadeUI, difficulty, mode, room?.players, connected, aiMessage, anyDialog(), match.pending, document.hidden]);
+  const key = JSON.stringify([!!orbitPointer,keyboardOrbit,shotSetup.adjustment,shotSetup.stage,state.cues,state.chalked, coinResetting, state.phase, presentation?.phase, presentation?.shotCount, presentation ? activeSeat(presentation) : null, state.turn, state.format, state.teamOrder, state.groups, state.shotCount, state.message, state.balls.filter(b => b.pocketed).map(b => b.id), state.winner, arcadeUI, profile.preferences.difficulty, mode, room?.players, connected, aiMessage, anyDialog(), match.pending, document.hidden]);
   if (!force && key === lastUI) return; lastUI = key;
-  const viewModel=deriveTablePresentation(state,{mode,difficulty,room,connected,ready:match.ready,controlsTurn:match.actor.canAct,canInteract:canAct(),aiThinking:aiMessage,shotStage:shotSetup.stage,adjustment:shotSetup.adjustment,resetting:coinResetting});
+  const viewModel=deriveTablePresentation(state,{mode,difficulty:profile.preferences.difficulty,room,connected,ready:match.ready,controlsTurn:match.actor.canAct,canInteract:canAct(),aiThinking:aiMessage,shotStage:shotSetup.stage,adjustment:shotSetup.adjustment,resetting:coinResetting});
   for (const player of [0, 1]) {
     $(`name-${player}`).textContent = playerName(player);
     const roster = $(`roster-${player}`); roster.hidden = state.format !== 'doubles'; roster.replaceChildren();
@@ -329,9 +300,9 @@ function updateUI(force = false) {
   for (const m of ['ai','online','local']) { $(`mode-${m}`).classList.toggle('selected', mode === m); $(`mode-${m}`).setAttribute('aria-pressed', String(mode === m)); }
   $<HTMLSelectElement>('difficulty').disabled = mode !== 'ai';
   $<HTMLSelectElement>('layout').disabled = mode === 'online';
-  $<HTMLSelectElement>('layout').value = state.arcade?.layout || layout;
+  $<HTMLSelectElement>('layout').value = state.arcade?.layout || profile.preferences.layout;
   $('level-badge').textContent = `LV ${state.arcade?.level || 1}`;
-  $('level-badge').title = levelNames[(state.arcade?.level || 1) - 1];
+  $('level-badge').title = levelName(state.arcade?.level);
   $('portal-badge').hidden = !state.arcade?.portalTurns;
   $('portal-badge').textContent = `◎ ${state.arcade?.portalTurns || 0}`;
   $('status-text').textContent = viewModel.status.text;
@@ -344,7 +315,6 @@ function updateUI(force = false) {
   $('shot-status').classList.toggle('waiting', viewModel.status.waiting);
   $<HTMLButtonElement>('shoot-button').disabled = state.phase !== 'ready' || !canAct() || !!shotSetup.adjustment;
   $<HTMLInputElement>('power').disabled = state.phase !== 'ready' || !canAct() || shotSetup.stage !== 'power';
-  if (state.phase === 'over') saveResult();
   if (state.phase === 'over' && presentation.phase === 'over') {
     const key = `${state.seed}:${state.shotCount}:${state.winner}`;
     if (key !== resultKey && !$<HTMLDialogElement>('main-menu').open) {
@@ -361,7 +331,7 @@ function updateUI(force = false) {
 function newGame(nextMode:Mode=mode,nextFormat:GameFormat=state?.format??menuFormat) {
   if(nextMode==='online')return;
   sessionIntent++;
-  installMatch(new LocalMatch({seed:createIdentity().slice(0,8),mode:nextMode,difficulty,options:{layout,level,format:nextFormat}}));
+  installMatch(new LocalMatch({seed:createIdentity().slice(0,8),mode:nextMode,difficulty:profile.preferences.difficulty,options:{layout:profile.preferences.layout,level:profile.preferences.level,format:nextFormat}}));
   initialized=true;stopAI();aimAngle=0;scene.aim.angle=0;resultKey='';
   cancelDrag();setPower(.65);updateUI(true);equipPreferredCue();
 }
@@ -385,10 +355,10 @@ async function enterRoom(create:boolean) {
   $<HTMLButtonElement>('create-room').disabled=true;$<HTMLButtonElement>('join-room').disabled=true;
   const candidate=new RemoteMatch({identity:{token:identity,name}});
   try{
-    const result=create?await candidate.create({layout,level,format:$<HTMLSelectElement>('room-format').value==='doubles'?'doubles':'singles'}):await candidate.join(code);
+    const result=create?await candidate.create({layout:profile.preferences.layout,level:profile.preferences.level,format:$<HTMLSelectElement>('room-format').value==='doubles'?'doubles':'singles'}):await candidate.join(code);
     if(intent!==sessionIntent){candidate.dispose();return;}
     if(!result.ok)throw new Error(result.error||'Could not open the table.');
-    storage.set('name',name);hasStarted=true;installMatch(candidate);resultKey='';aimAngle=0;scene.aim.angle=0;cancelDrag();
+    profile.set('name',name);hasStarted=true;installMatch(candidate);resultKey='';aimAngle=0;scene.aim.angle=0;cancelDrag();
     closeDialog('main-menu');closeDialog('room-dialog');$('invite-code').textContent=room!.code;void sound.unlock();
     if(create||!match.ready)openDialog('invite-dialog');else toast('You’re in.');
     if(state.cues[seat]==='ash-house')equipPreferredCue();
@@ -414,8 +384,8 @@ function setupUI() {
   $('menu-resume').onclick = () => closeDialog('main-menu');
   const startFromMenu = (nextMode: Mode) => { hasStarted = true; newGame(nextMode, menuFormat); closeDialog('main-menu'); };
   renderLevels(); refreshMenuFormat();
-  $('menu-format').onchange = () => { menuFormat = $<HTMLSelectElement>('menu-format').value === 'doubles' ? 'doubles' : 'singles'; storage.set('format', menuFormat); refreshMenuFormat(); };
-  $('menu-level').onchange = () => { level = Math.min(unlockedLevel, normalizeLevel($<HTMLSelectElement>('menu-level').value)); storage.set('level', String(level)); };
+  $('menu-format').onchange = () => { menuFormat = $<HTMLSelectElement>('menu-format').value === 'doubles' ? 'doubles' : 'singles'; profile.set('format', menuFormat); refreshMenuFormat(); };
+  $('menu-level').onchange = () => profile.set('level', normalizeLevel($<HTMLSelectElement>('menu-level').value));
   const openLobby = () => { if (mode === 'online' && room && menuFormat === state.format) { $('invite-code').textContent = room.code; openDialog('invite-dialog'); } else { $<HTMLSelectElement>('room-format').value = menuFormat; openDialog('room-dialog'); } };
   $('menu-begin').onclick = () => { setMenuPanel(true); selectMenuMode(menuMode); $('menu-session-start').focus(); };
   $('menu-back').onclick = () => { setMenuPanel(false); $('menu-begin').focus(); };
@@ -424,23 +394,22 @@ function setupUI() {
   $('menu-online').onclick = () => selectMenuMode('online');
   $('menu-lobby').onclick = openLobby;
   $('menu-session-start').onclick = () => { if (menuMode === 'online') openLobby(); else startFromMenu(menuMode); };
-  $('menu-difficulty').onchange = () => { difficulty = $<HTMLSelectElement>('menu-difficulty').value as Difficulty; $<HTMLSelectElement>('difficulty').value = difficulty; storage.set('difficulty', difficulty); match.setDifficulty(difficulty); stopAI(); updateUI(true); };
+  $('menu-difficulty').onchange = () => { const difficulty = $<HTMLSelectElement>('menu-difficulty').value as Difficulty; $<HTMLSelectElement>('difficulty').value = difficulty; profile.set('difficulty', difficulty); match.setDifficulty(difficulty); stopAI(); updateUI(true); };
   const resolutionNote = () => { const perf=scene.getPerformance();$('resolution-note').textContent = `${Math.round(perf.fps)} FPS · ${perf.width} × ${perf.height} · ${perf.tier}. ${perf.gpuMs!==null?`GPU ${perf.gpuMs.toFixed(1)} ms · `:''}${perf.drawCalls} draws. Auto adjusts effects and resolution for smooth play.`; };
   window.setInterval(()=>{if($<HTMLDialogElement>('settings-dialog').open)resolutionNote();},1000);
   $('settings-button').onclick = () => { resolutionNote(); openDialog('settings-dialog'); };
   $('menu-settings').onclick = $('settings-button').onclick;
   const updateSound = () => { $('sound-toggle').innerHTML = icon(sound.enabled ? 'sound' : 'mute'); $('sound-toggle').setAttribute('aria-label', sound.enabled ? 'Mute sound' : 'Enable sound'); $('sound-toggle').setAttribute('aria-pressed', String(sound.enabled)); };
-  $('sound-toggle').onclick = () => { sound.enabled = !sound.enabled; if (sound.enabled) sound.unlock(); storage.set('sound', String(sound.enabled)); updateSound(); };
+  $('sound-toggle').onclick = () => { sound.enabled = !sound.enabled; if (sound.enabled) sound.unlock(); profile.set('sound', sound.enabled); updateSound(); };
   updateSound();
   $('fullscreen').onclick = async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); } catch { toast('Fullscreen is unavailable in this view.'); } };
   document.addEventListener('fullscreenchange', () => $('fullscreen').setAttribute('aria-label', document.fullscreenElement ? 'Exit fullscreen' : 'Enter fullscreen'));
   $<HTMLInputElement>('volume').value = String(sound.volume * 100);
-  $('volume').oninput = () => { sound.volume = Number($<HTMLInputElement>('volume').value) / 100; storage.set('volume', String(sound.volume)); sound.unlock(); };
+  $('volume').oninput = () => { sound.volume = Number($<HTMLInputElement>('volume').value) / 100; profile.set('volume', sound.volume); sound.unlock(); };
   $('preview-audio').onclick = () => sound.preview();
-  const savedQuality = storage.get('quality','auto') as Quality;
-  if (['auto','high','ultra','performance'].includes(savedQuality)) { $<HTMLSelectElement>('quality').value = savedQuality; scene.setQuality(savedQuality); }
-  $('quality').onchange = () => { const q = $<HTMLSelectElement>('quality').value as Quality; scene.setQuality(q); storage.set('quality', q); resolutionNote(); };
-  chooseCamera(storage.get('camera','angled')==='overhead');
+  $<HTMLSelectElement>('quality').value = profile.preferences.quality; scene.setQuality(profile.preferences.quality);
+  $('quality').onchange = () => { const q = $<HTMLSelectElement>('quality').value as Quality; scene.setQuality(q); profile.set('quality', q); resolutionNote(); };
+  chooseCamera(profile.preferences.camera==='overhead');
   $('camera').onchange=()=>chooseCamera($<HTMLSelectElement>('camera').value==='overhead');
   $('camera-toggle').onclick=()=>chooseCamera($<HTMLSelectElement>('camera').value!=='overhead');
   $('fps-view').onclick=()=>chooseCamera(false);
@@ -451,7 +420,7 @@ function setupUI() {
   $('aim-guide').onchange = () => { scene.aim.visible = $<HTMLInputElement>('aim-guide').checked; };
   $('layout').onchange = () => {
     if (mode === 'online') return;
-    layout = $<HTMLSelectElement>('layout').value as ArenaLayout; storage.set('layout', layout); newGame(); closeDialog('settings-dialog'); toast(LAYOUTS[layout].name);
+    const layout = $<HTMLSelectElement>('layout').value as ArenaLayout; profile.set('layout', layout); newGame(); closeDialog('settings-dialog'); toast(LAYOUTS[layout].name);
   };
   $('power').oninput = () => setPower(Number($<HTMLInputElement>('power').value) / 100);
   $('shoot-button').onclick = () => advanceShotSetup();
@@ -472,9 +441,9 @@ function setupUI() {
   $('mode-ai').onclick = () => { if (mode !== 'ai') newGame('ai'); };
   $('mode-local').onclick = () => { if (mode !== 'local') newGame('local'); };
   $('mode-online').onclick = () => { if (mode === 'online' && room) { $('invite-code').textContent = room.code; openDialog('invite-dialog'); } else { $<HTMLSelectElement>('room-format').value = menuFormat; openDialog('room-dialog'); } };
-  $<HTMLSelectElement>('difficulty').value = difficulty;
-  $('difficulty').onchange = () => { difficulty = $<HTMLSelectElement>('difficulty').value as Difficulty; $<HTMLSelectElement>('menu-difficulty').value = difficulty; storage.set('difficulty', difficulty); match.setDifficulty(difficulty); stopAI(); updateUI(true); };
-  $<HTMLInputElement>('player-name').value = storage.get('name', 'Player');
+  $<HTMLSelectElement>('difficulty').value = profile.preferences.difficulty;
+  $('difficulty').onchange = () => { const difficulty = $<HTMLSelectElement>('difficulty').value as Difficulty; $<HTMLSelectElement>('menu-difficulty').value = difficulty; profile.set('difficulty', difficulty); match.setDifficulty(difficulty); stopAI(); updateUI(true); };
+  $<HTMLInputElement>('player-name').value = profile.preferences.name;
   $('create-room').onclick = () => void enterRoom(true); $('join-room').onclick = () => void enterRoom(false);
   $('room-code').oninput = () => { $<HTMLInputElement>('room-code').value = $<HTMLInputElement>('room-code').value.toUpperCase().replace(/[^A-Z0-9]/g, ''); };
   $('room-code').onkeydown = event => { if (event.key === 'Enter') void enterRoom(false); };

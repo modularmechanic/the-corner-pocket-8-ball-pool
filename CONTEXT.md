@@ -22,3 +22,13 @@ _Avoid_: loaded, ready (ready belongs to Match)
 
 **Cutaway**:
 The walls and wall fittings hidden so the camera can see the table from outside the room.
+
+## Player
+
+**Player profile**:
+One device's preferences, house records and highest unlocked level. It shapes the menus and new local racks; online tables use the host's level.
+_Avoid_: settings (only one part of it), save, account
+
+**House record**:
+A finished rack's team score saved on this device; the eight best are kept.
+_Avoid_: high score, leaderboard
