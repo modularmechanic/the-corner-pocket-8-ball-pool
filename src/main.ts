@@ -7,14 +7,15 @@ import { LAYOUTS } from './simulation/arcade';
 import { normalizeLevel } from './simulation/level-policy';
 import { CUE_CATALOG, canEquipCue, equippedCue } from './simulation/cues';
 import { POWER_UPS, STATUS_EFFECTS } from './presentation/effects';
-import { deriveTablePresentation, seatLabel, teamLabel } from './presentation/table-presentation';
-import { activeSeat, type GameFormat, type ArenaLayout, type Difficulty, type GameState, type Mode, type Shot, type TableEvent } from './simulation/types';
+import { deriveTablePresentation, RULE_NAMES, seatLabel, teamLabel } from './presentation/table-presentation';
+import { inPlacementZone } from './simulation/table-geometry';
+import { activeSeat, type GameFormat, type ArenaLayout, type Difficulty, type GameState, type Mode, type RuleSet, type Shot, type TableEvent } from './simulation/types';
 import { PoolScene, type Quality } from './render/scene';
 import { shell, icon } from './ui/shell';
 import { TableAudio } from './ui/audio';
 import { createIdentity } from './ui/identity';
 import { ShotInputController, type PointerInput, type ShotInputView } from './ui/shot-input-controller';
-import { PlayerProfile } from './ui/player-profile';
+import { PlayerProfile, rackOptions } from './ui/player-profile';
 import { HudWriter, type HudElement } from './ui/hud-writer';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -94,7 +95,9 @@ function showMainMenu() {
   stopAI(); renderRecords(); renderLevels();
   $<HTMLButtonElement>('menu-resume').hidden = !hasStarted || state.phase === 'over';
   $<HTMLSelectElement>('menu-difficulty').value = profile.preferences.difficulty;
-  $('menu-session-note').textContent = match.mode === 'online' && match.room ? `Room ${match.room.code} keeps playing while this menu is open.` : 'Singles or doubles · Up to four players';
+  // Mid-session the selector shows the rules in play; a different choice applies from the next Start Session.
+  $<HTMLSelectElement>('menu-rules').value = hasStarted ? state.rules : profile.preferences.rules;
+  $('menu-session-note').textContent = match.mode === 'online' && match.room ? `Room ${match.room.code} keeps playing while this menu is open · ${RULE_NAMES[state.rules]}.` : hasStarted ? `${RULE_NAMES[state.rules]} in play · A new rule set applies from Start Session.` : 'Singles or doubles · Up to four players';
   openDialog('main-menu');
 }
 function toast(message: string) { $('toast').textContent = message; $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = window.setTimeout(() => $('toast').classList.remove('show'), 3000); }
@@ -207,10 +210,12 @@ function updateUI() {
     if (key !== resultKey && !$<HTMLDialogElement>('main-menu').open) { resultKey = key; openDialog('result-dialog'); }
   }
 }
-function newGame(nextMode:Mode=match.mode,nextFormat:GameFormat=state?.format??menuFormat) {
+const selectedRules = (id: string): RuleSet => $<HTMLSelectElement>(id).value === 'new' ? 'new' : 'old';
+/** New racks keep the running session's rules; Start Session passes `session: null` to apply the chosen rules. */
+function newGame(nextMode:Mode=match.mode,nextFormat:GameFormat=state?.format??menuFormat,session:GameState|null=state??null) {
   if(nextMode==='online')return;
   sessionIntent++;
-  installMatch(new LocalMatch({seed:createIdentity().slice(0,8),mode:nextMode,difficulty:profile.preferences.difficulty,options:{layout:profile.preferences.layout,level:profile.preferences.level,format:nextFormat}}));
+  installMatch(new LocalMatch({seed:createIdentity().slice(0,8),mode:nextMode,difficulty:profile.preferences.difficulty,options:rackOptions(profile.preferences,nextFormat,session)}));
   initialized=true;stopAI();resultKey='';
   input.newRack(.65);updateUI();equipPreferredCue();
 }
@@ -237,12 +242,13 @@ async function enterRoom(create:boolean) {
     const { RemoteMatch } = await import('./match/remote').catch(()=>{throw new Error('Online play could not load. Check your connection and try again.');});
     if(intent!==sessionIntent)return;
     candidate=new RemoteMatch({identity:{token:identity,name},url:roomServer.url});
-    const result=create?await candidate.create({layout:profile.preferences.layout,level:profile.preferences.level,format:$<HTMLSelectElement>('room-format').value==='doubles'?'doubles':'singles'}):await candidate.join(code);
+    const rules=selectedRules('room-rules');
+    const result=create?await candidate.create({layout:profile.preferences.layout,level:profile.preferences.level,format:$<HTMLSelectElement>('room-format').value==='doubles'?'doubles':'singles',rules}):await candidate.join(code);
     if(intent!==sessionIntent){candidate.dispose();return;}
     if(!result.ok)throw new Error(result.error||'Could not open the table.');
-    profile.set('name',name);hasStarted=true;installMatch(candidate);resultKey='';input.newRack();
+    profile.set('name',name);if(create)profile.set('rules',rules);hasStarted=true;installMatch(candidate);resultKey='';input.newRack();
     closeDialog('main-menu');closeDialog('room-dialog');$('invite-code').textContent=match.room!.code;void sound.unlock();
-    if(create||!match.ready)openDialog('invite-dialog');else toast('You’re in.');
+    if(create||!match.ready)openDialog('invite-dialog');else toast(`You’re in · ${RULE_NAMES[state.rules]}.`);
     if(state.cues[match.seat]==='ash-house')equipPreferredCue();
     updateUI();
   }catch(error){candidate?.dispose();if(intent===sessionIntent)$('room-error').textContent=error instanceof Error?error.message:'Could not open the table.';}
@@ -257,7 +263,7 @@ async function copy(text: string, message: string) {
 /** A matching open room shows its invitation; otherwise open a table in the menu's format. */
 function openLobby(format: GameFormat) {
   if (match.mode === 'online' && match.room && format === state.format) { $('invite-code').textContent = match.room.code; openDialog('invite-dialog'); }
-  else { $<HTMLSelectElement>('room-format').value = menuFormat; openDialog('room-dialog'); }
+  else { $<HTMLSelectElement>('room-format').value = menuFormat; $<HTMLSelectElement>('room-rules').value = profile.preferences.rules; openDialog('room-dialog'); }
 }
 function chooseDifficulty(difficulty: Difficulty) {
   $<HTMLSelectElement>('menu-difficulty').value = difficulty; $<HTMLSelectElement>('difficulty').value = difficulty;
@@ -273,17 +279,19 @@ function setupUI() {
   $('play-nav').onclick = showMainMenu;
   $<HTMLDialogElement>('main-menu').addEventListener('cancel', event => { if (!hasStarted) event.preventDefault(); });
   $('menu-resume').onclick = () => closeDialog('main-menu');
-  const startFromMenu = (nextMode: Mode) => { hasStarted = true; newGame(nextMode, menuFormat); closeDialog('main-menu'); };
+  const chooseMenuRules = () => profile.set('rules', selectedRules('menu-rules'));
+  const startFromMenu = (nextMode: Mode) => { hasStarted = true; chooseMenuRules(); newGame(nextMode, menuFormat, null); closeDialog('main-menu'); };
   renderLevels(); refreshMenuFormat();
   $('menu-format').onchange = () => { menuFormat = $<HTMLSelectElement>('menu-format').value === 'doubles' ? 'doubles' : 'singles'; profile.set('format', menuFormat); refreshMenuFormat(); };
   $('menu-level').onchange = () => profile.set('level', normalizeLevel($<HTMLSelectElement>('menu-level').value));
+  $('menu-rules').onchange = chooseMenuRules;
   $('menu-begin').onclick = () => { setMenuPanel(true); selectMenuMode(menuMode); $('menu-session-start').focus(); };
   $('menu-back').onclick = () => { setMenuPanel(false); $('menu-begin').focus(); };
   $('menu-start').onclick = () => selectMenuMode('ai');
   $('menu-local').onclick = () => selectMenuMode('local');
   $('menu-online').onclick = () => selectMenuMode('online');
-  $('menu-lobby').onclick = () => openLobby(menuFormat);
-  $('menu-session-start').onclick = () => { if (menuMode === 'online') openLobby(menuFormat); else startFromMenu(menuMode); };
+  $('menu-lobby').onclick = () => { chooseMenuRules(); openLobby(menuFormat); };
+  $('menu-session-start').onclick = () => { if (menuMode === 'online') { chooseMenuRules(); openLobby(menuFormat); } else startFromMenu(menuMode); };
   $('menu-difficulty').onchange = () => chooseDifficulty($<HTMLSelectElement>('menu-difficulty').value as Difficulty);
   const resolutionNote = () => { const perf=scene.getPerformance();$('resolution-note').textContent = `${Math.round(perf.fps)} FPS · ${perf.width} × ${perf.height} · ${perf.tier}. ${perf.gpuMs!==null?`GPU ${perf.gpuMs.toFixed(1)} ms · `:''}${perf.drawCalls} draws. Auto adjusts effects and resolution for smooth play.`; };
   window.setInterval(()=>{if($<HTMLDialogElement>('settings-dialog').open)resolutionNote();},1000);
@@ -350,7 +358,7 @@ function createShotInput() {
     },
     tableAt: (x, y) => scene.screenToTable(x, y),
     tableControlAt: (x, y) => scene.hitTableControl(x, y),
-    showPlacement: point => scene.showPlacement(point),
+    showPlacement: point => scene.showPlacement(point && inPlacementZone(state, point) ? point : null),
     showAim: ({ contactEditing, ...aim }) => { Object.assign(scene.aim, aim); scene.contactEditing = contactEditing; },
     beginOrbit: () => scene.beginOrbit(), orbitBy: (dx, dy) => scene.orbitBy(dx, dy), rotateView: (yaw, pitch) => scene.rotateView(yaw, pitch), endOrbit: () => scene.endOrbit(),
     resetAimPointer: () => scene.resetAimPointer(),

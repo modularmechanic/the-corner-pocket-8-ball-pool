@@ -58,16 +58,27 @@ export function settleShot(input:GameState,result:ShotResult,context:SettlementC
   for(const id of shot.potted)if(id>0&&id!==8) {
     if(!group||groupOf(id)===group)ownPotted++;else opponentPotted++;
   }
+  // Old Rules allowance: a foul hands over two shots (one visit if the fouler held two),
+  // a legal miss on the first spends the second, and any legal pot cancels it.
+  const oldRules=state.rules==='old',allowance=state.shotsLeft;
+  state.shotsLeft=0;
   if(state.phase!=='over') {
+    let next=foul?'Ball in hand.':'Keep playing.';
     if(foul) {
-      state.turn=other(shooter);state.phase='ball-in-hand';
+      state.turn=other(shooter);
+      if(oldRules)state.shotsLeft=allowance>0?0:2;
+      // Old Rules: only a scratched or off-table cue ball is placed, and only in the kitchen.
+      state.phase=!oldRules||scratched?'ball-in-hand':'ready';
+      if(oldRules)next=`${state.shotsLeft?'Two shots':'One visit'}${scratched?' — place the cue ball behind the head string.':' from where the cue ball lies.'}`;
       const reason=offTable.length?'Ball left the table':scratched?'Cue ball scratched':shot.firstContact===null?'No ball hit':wrongContact?'Wrong ball hit first':illegalBreak?'Break needs four balls to a rail':'No rail after contact';
-      state.message=`${reason}. Ball in hand — click the felt to place.`;
+      state.message=`${reason}. ${oldRules?next:'Ball in hand — click the felt to place.'}`;
     } else {
-      if(ownPotted===0)state.turn=other(shooter);
-      state.phase='ready';state.message=ownPotted>0?`${ownPotted+opponentPotted===1?'Nice pot':'Beautiful shot'}. Keep the table.`:'Over to the other side. Make it count.';
+      const secondShot=ownPotted===0&&allowance===2;
+      if(ownPotted===0&&!secondShot){state.turn=other(shooter);next='Over to the other side.';}
+      if(secondShot)state.shotsLeft=1;
+      state.phase='ready';state.message=ownPotted>0?`${ownPotted+opponentPotted===1?'Nice pot':'Beautiful shot'}. Keep the table.`:secondShot?'No pot. Take your second shot.':'Over to the other side. Make it count.';
     }
-    if(respotEight)state.message='Eight on the break — respotted. '+(foul?'Ball in hand.':'Keep playing.');
+    if(respotEight)state.message='Eight on the break — respotted. '+next;
   }
   if(state.format==='doubles')state.teamOrder[shooter]=other(state.teamOrder[shooter]);
   if(arcade) {

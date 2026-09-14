@@ -21,9 +21,9 @@ function finished(level: number, winner: 0 | 1, seed = 'profile'): GameState {
 const names = (team: number) => `Team ${team + 1}`;
 
 test('corrupt or unavailable storage falls back to typed defaults', () => {
-  const { storage } = memory({ difficulty: 'nightmare', layout: 'moon', volume: 'loud', level: '99', 'unlocked-level': '2', quality: '8k', cue: 'broom', records: '{nope', sound: 'maybe' });
+  const { storage } = memory({ difficulty: 'nightmare', layout: 'moon', volume: 'loud', level: '99', 'unlocked-level': '2', quality: '8k', cue: 'broom', records: '{nope', sound: 'maybe', rules: 'house' });
   const profile = new PlayerProfile(storage);
-  assert.deepEqual(profile.preferences, { sound: true, volume: .65, difficulty: 'regular', layout: 'crossfire', level: 2, format: 'singles', quality: 'auto', camera: 'angled', cue: 'ash-house', name: 'Player' });
+  assert.deepEqual(profile.preferences, { sound: true, volume: .65, difficulty: 'regular', layout: 'crossfire', level: 2, format: 'singles', rules: 'old', quality: 'auto', camera: 'angled', cue: 'ash-house', name: 'Player' });
   assert.deepEqual(profile.records, []);
   const throwing: ProfileStorage = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); } };
   for (const blocked of [new PlayerProfile(throwing), new PlayerProfile(null)]) {

@@ -1,9 +1,9 @@
 import { LAYOUTS } from '../simulation/arcade';
 import { DEFAULT_CUE, getCue, type CueId } from '../simulation/cues';
 import { MAX_LEVEL, normalizeLevel } from '../simulation/level-policy';
-import type { ArenaLayout, Difficulty, GameFormat, GameState, Mode } from '../simulation/types';
+import type { ArenaLayout, Difficulty, GameFormat, GameOptions, GameState, Mode, RuleSet } from '../simulation/types';
 import { canAdvance, resultTeams } from '../match/policy';
-import { AI_NAMES } from '../presentation/table-presentation';
+import { AI_NAMES, RULE_NAMES } from '../presentation/table-presentation';
 import type { RenderQuality } from '../render/performance';
 
 /** The subset of Web Storage the profile needs; an in-memory map works in Node. */
@@ -11,7 +11,7 @@ export interface ProfileStorage { getItem(key: string): string | null; setItem(k
 export interface HouseRecord { id: string; name: string; score: number; layout: ArenaLayout; win: boolean; date: string }
 export interface Preferences {
   sound: boolean; volume: number; difficulty: Difficulty; layout: ArenaLayout; level: number;
-  format: GameFormat; quality: RenderQuality; camera: 'angled' | 'overhead'; cue: CueId; name: string;
+  format: GameFormat; rules: RuleSet; quality: RenderQuality; camera: 'angled' | 'overhead'; cue: CueId; name: string;
 }
 export interface MenuOption<T extends string = string> { value: T; label: string; disabled?: boolean }
 
@@ -21,8 +21,15 @@ const entries = <K extends string, V>(record: Record<K, V>) => Object.entries(re
 export const DIFFICULTY_OPTIONS: (MenuOption<Difficulty> & { opponent: string })[] =
   entries(AI_NAMES).map(([value, opponent]) => ({ value, label: value[0].toUpperCase() + value.slice(1), opponent }));
 export const LAYOUT_OPTIONS: MenuOption<ArenaLayout>[] = entries(LAYOUTS).map(([value, layout]) => ({ value, label: layout.name }));
+const RULE_DETAILS = { old: 'Two shots after a foul', new: 'Ball in hand anywhere' } satisfies Record<RuleSet, string>;
+export const RULE_OPTIONS: MenuOption<RuleSet>[] = entries(RULE_DETAILS).map(([value, detail]) => ({ value, label: `${RULE_NAMES[value]} · ${detail}` }));
 export const QUALITY_OPTIONS: MenuOption<RenderQuality>[] = entries(QUALITY_LABELS).map(([value, label]) => ({ value, label }));
 export const levelName = (level: unknown) => LEVEL_NAMES[normalizeLevel(level) - 1];
+
+/** A new local rack's options. A running session keeps its rule set; only starting a session (no `session`) applies the chosen one. */
+export function rackOptions(preferences: Readonly<Preferences>, format: GameFormat, session: Pick<GameState, 'rules'> | null): GameOptions {
+  return { layout: preferences.layout, level: preferences.level, format, rules: session ? session.rules : preferences.rules };
+}
 
 const PREFIX = 'corner-pocket:', MAX_RECORDS = 8;
 const oneOf = <T extends string>(record: Record<T, unknown>, value: string | null, fallback: T): T =>
@@ -48,6 +55,7 @@ export class PlayerProfile {
       layout: oneOf(LAYOUTS, this.read('layout'), 'crossfire'),
       level: Math.min(this.unlocked, normalizeLevel(this.read('level'))),
       format: this.read('format') === 'doubles' ? 'doubles' : 'singles',
+      rules: this.read('rules') === 'new' ? 'new' : 'old',
       quality: oneOf(QUALITY_LABELS, this.read('quality'), 'auto'),
       camera: this.read('camera') === 'overhead' ? 'overhead' : 'angled',
       cue: getCue(this.read('cue'))?.id ?? DEFAULT_CUE,

@@ -3,6 +3,7 @@ import { PoolGame } from '../simulation/game';
 import { choosePlacement, chooseShot } from '../simulation/ai';
 import { activeSeat, seatCount, type Difficulty, type GameOptions, type GameState, type Mode, type Shot, type TableEvent } from '../simulation/types';
 import { normalizeLevel } from '../simulation/level-policy';
+import { inPlacementZone } from '../simulation/table-geometry';
 import { canAdvance, humanControls, matchCapabilities } from './policy';
 import type { CommandResult } from './protocol';
 import type { Match, MatchActor, MatchChange, MatchCommand, MatchUpdate } from './types';
@@ -105,13 +106,15 @@ export class LocalMatch implements Match {
       return { ok: true };
     }
     if (activeSeat(state) !== seat || this.mode === 'ai' && (seat === 0 ? controller !== 'human' : controller !== 'ai')) return { ok: false, error: 'Wait for your turn.' };
+    if (command.type === 'place' && state.phase === 'ball-in-hand' && !inPlacementZone(state, command)) return { ok: false, error: 'Place the cue ball behind the head string.' };
     const ok = command.type === 'shoot' ? this.game.shoot(command.shot) : command.type === 'place' ? this.game.placeCue(command.x, command.z) : this.game.chalkCue();
     if (ok) { if (controller === 'human') this.pauseAI(); this.changed(); }
     return { ok };
   }
   private reset(seed?: string, options?: GameOptions) {
     const state = this.state;
-    const next = { layout: state.arcade?.layout, level: state.arcade?.level, format: state.format, ...options };
+    // The rule set is fixed for the session: resets, rematches and new levels keep it.
+    const next = { layout: state.arcade?.layout, level: state.arcade?.level, format: state.format, ...options, rules: state.rules };
     this.game.dispose(); this.game = new PoolGame(seed || this.nextSeed(), { ...next, level: normalizeLevel(next.level) });
     const restored = this.game.snapshot(); restored.cues = normalizeCues(state.cues, restored.format, restored.arcade?.level); this.game.arrange(restored);
     this.accumulator = 0; this.events = []; this.pauseAI(); this.trackEvents(); this.changed();

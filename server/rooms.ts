@@ -68,6 +68,7 @@ export function attachRooms(http: HttpServer, origins = allowedOrigins()) {
       if (typeof ack !== 'function') return;
       if (limited() || !validIdentity(data)) return ack({ ok: false, error: 'Please wait a moment and try again.' });
       if (data.format !== undefined && data.format !== 'singles' && data.format !== 'doubles') return ack({ ok: false, error: 'Choose singles or doubles for this table.' });
+      if (data.rules !== undefined && data.rules !== 'old' && data.rules !== 'new') return ack({ ok: false, error: 'Choose Old Rules or New Rules for this table.' });
       if (rooms.size >= 120) return ack({ ok: false, error: 'The club is full. Please try again shortly.' });
       leave(socket);
       let code: string; do { code = randomBytes(5).toString('hex').slice(0, 6).toUpperCase(); } while (rooms.has(code));

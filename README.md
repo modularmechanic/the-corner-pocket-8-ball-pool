@@ -25,7 +25,7 @@ Open [http://localhost:3000](http://localhost:3000). The same process serves the
 - **Cue collection:** press B or open the trophy button. Five level-unlocked woods/weights trade power, draw and curve. Equipment belongs to each seat, including doubles; online stats and unlocks are validated by the server.
 - **Shot guide:** twin white rails animate arrows toward contact. A colored outgoing fan widens with the cut angle; head-on shots show parallel rails. Green/yellow/red combines angle and power as a visual difficulty cue, not a pot probability.
 - **Scoreboard:** each team has its own side card; potted balls are shown in full color.
-- **Ball in hand:** click a clear spot on the felt after a foul.
+- **Ball in hand:** click a clear spot on the felt when you have ball in hand. Under Old Rules, place it behind the head string.
 - **Solo:** choose Casual, Regular, or Expert. The AI evaluates clear potting paths and cut angles, with different aim error and shot selection by difficulty. Select Doubles for you and an AI partner against two AI opponents.
 - **Pass & play:** select the gamepad button and share the mouse.
 - **Friends:** select the friends button, open a table, and share the six-character room code or invitation link. Friends join through the same room server. Builds without a room server hide the friends entries, and invitation links show that online play is unavailable. Choose Singles for two players or Doubles for four.
@@ -35,6 +35,11 @@ Room codes seed the rack. The server owns online physics, legality, turns and th
 For friends on the same network, use the host computer's LAN address in place of `localhost`. Friends over the internet need a publicly reachable deployment of the complete Node server. A static build provides multiplayer only when `VITE_ROOM_SERVER_URL` names a reachable room server (see Production).
 
 ## House rules
+
+Choose **Old Rules** or **New Rules** on the setup screen; the choice holds for the whole session, including rematches and new levels. Old Rules is the default and your last choice is remembered. In a private room everyone plays the host's rules.
+
+- **New Rules:** after a foul, the opponent has ball in hand anywhere on the table and one normal visit.
+- **Old Rules:** after a foul, the opponent has two shots. If the cue ball was potted or left the table, they place it behind the head string; otherwise they play it from where it stopped. Both shots follow the normal contact rules. A legal pot on the first shot turns the two shots into an ordinary visit; a legal miss leaves the second shot, after which ordinary rules apply. A foul while holding two shots loses the remaining shot and gives the other side one visit. In doubles the two shots belong to the team, and partners still alternate.
 
 Doubles uses Scotch doubles: partners alternate after every completed shot, including a legal pot that keeps their team at the table. Each team shares its ball group, score, chalk and power-ups. Only the current teammate can shoot or place the cue ball; reconnecting preserves the seat and shot order.
 

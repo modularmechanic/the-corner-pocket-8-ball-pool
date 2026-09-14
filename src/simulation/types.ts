@@ -8,6 +8,8 @@ export type Group = 'solids' | 'stripes';
 export type Difficulty = 'casual' | 'regular' | 'expert';
 export type Mode = 'ai' | 'online' | 'local';
 export type GameFormat = 'singles' | 'doubles';
+/** Old Rules: a foul gives two shots. New Rules: a foul gives ball in hand anywhere. */
+export type RuleSet = 'old' | 'new';
 export type Phase = 'ready' | 'rolling' | 'ball-in-hand' | 'over';
 export type ArenaLayout = 'crossfire' | 'fortress' | 'gauntlet';
 export type HazardKind = 'ramp' | 'portal' | 'electric' | 'water' | 'slime' | 'smoke';
@@ -23,10 +25,12 @@ export interface ArcadeState {
   buffs: [PlayerBuffs, PlayerBuffs]; destroyed: [number, number];
   activeShot: { overdrive: boolean; frozen: boolean; ward: boolean; focus:boolean; sticky:boolean;chalked?:boolean;elevation?:number;tipX?:number;tipY?:number };
 }
-export interface GameOptions { layout?: ArenaLayout; level?: number; format?:GameFormat }
+export interface GameOptions { layout?: ArenaLayout; level?: number; format?:GameFormat; rules?:RuleSet }
 export interface Ball { id: number; x: number; z: number; vx: number; vz: number; pocketed: boolean; elevation?: number; vy?:number; airborne?:boolean; teleport?: number }
 export interface GameState {
   format:GameFormat; teamOrder:[0|1,0|1]; cues: CueId[];
+  /** Fixed for the session. `shotsLeft` is the current team's Old Rules two-shot allowance, counting this shot; 0 is a normal visit. */
+  rules:RuleSet; shotsLeft:0|1|2;
   seed: string; balls: Ball[]; turn: 0 | 1; groups: [Group | null, Group | null];
   phase: Phase; shotCount: number; winner: 0 | 1 | null; message: string;
   lastPotted: number[]; foul: boolean;
@@ -70,8 +74,8 @@ export function newRack(seed: string): Ball[] {
   }
   return balls.sort((a, b) => a.id - b.id);
 }
-export function initialState(seed: string, format:GameFormat='singles'): GameState {
-  return { format:format==='doubles'?'doubles':'singles',teamOrder:[0,0],cues:Array.from({length:format==='doubles'?4:2},()=>'ash-house' as CueId),seed, balls: newRack(seed), turn: 0, groups: [null, null], phase: 'ready', shotCount: 0, winner: null, message: 'The table is yours. Make the break.', lastPotted: [], foul: false, chalked: [false,false] };
+export function initialState(seed: string, format:GameFormat='singles', rules:RuleSet='new'): GameState {
+  return { format:format==='doubles'?'doubles':'singles',rules:rules==='old'?'old':'new',shotsLeft:0,teamOrder:[0,0],cues:Array.from({length:format==='doubles'?4:2},()=>'ash-house' as CueId),seed, balls: newRack(seed), turn: 0, groups: [null, null], phase: 'ready', shotCount: 0, winner: null, message: 'The table is yours. Make the break.', lastPotted: [], foul: false, chalked: [false,false] };
 }
 export function legalTargets(state: GameState, player = state.turn): Ball[] {
   const active = state.balls.filter(b => !b.pocketed && b.id !== 0);
