@@ -2,7 +2,7 @@ import { activeSeat, seatCount, type ArenaLayout, type GameState, type Mode } fr
 import type { RoomSnapshot } from '../match/protocol';
 import type { deriveTablePresentation } from '../presentation/table-presentation';
 import { BALL_COLORS } from '../render/materials';
-import type { ShotSetupState } from './shot-input-controller';
+import { canTouchShoot, DIAL_GAIN, type ShotSetupState } from './shot-input-controller';
 import { levelName } from './player-profile';
 import { icon } from './shell';
 
@@ -22,6 +22,8 @@ export interface HudView {
   setup: Readonly<ShotSetupState>;
   /** Shown in Settings before a rack has a layout. */
   layout: ArenaLayout;
+  /** Touch controls are showing; their dial, Engage, power slider and Shoot are written only then. */
+  touch?: boolean;
   /** The cue view waits for a click to lock the pointer. */
   lockHint?: boolean;
 }
@@ -59,6 +61,7 @@ export class HudWriter {
     this.disabled('power', !ready || !canAct || setup.stage !== 'power');
     this.writeShotSetup(view);
     this.hidden('lock-hint', !view.lockHint);
+    if (view.touch) this.writeTouchControls(view);
     if (state.phase === 'over') {
       const level = arcade?.level || 1;
       this.text('result-title', mode === 'ai' ? state.winner === 0 ? 'The table is yours.' : 'The house takes this one.' : `${table.teams[state.winner ?? 0].name} takes the rack.`);
@@ -118,6 +121,19 @@ export class HudWriter {
     this.value('cue-angle', String(degrees)); this.text('cue-angle-value', `${degrees}°`);
     this.value('power', String(percent)); this.style('power-fill', 'height', `${setup.power * 100}%`);
     this.patch('power-value.html', String(percent), element => { element.innerHTML = `${percent}<span>%</span>`; });
+  }
+
+  private writeTouchControls({ state, setup, canAct }: HudView) {
+    const ready = state.phase === 'ready' && canAct, engaged = setup.stage === 'power', percent = Math.round(setup.power * 100);
+    const engage = engaged ? 'Cancel cue' : 'Engage cue';
+    this.text('touch-engage', engage); this.attr('touch-engage', 'aria-label', engage);
+    this.attr('touch-engage', 'aria-pressed', String(engaged)); this.disabled('touch-engage', !engaged && !ready);
+    this.disabled('touch-shoot', !canTouchShoot(setup, canAct, state.phase));
+    this.attr('touch-power', 'aria-disabled', String(!engaged || !ready)); this.attr('touch-power', 'aria-valuenow', String(percent));
+    this.style('touch-power-fill', 'height', `${percent}%`); this.text('touch-power-value', `${percent}%`);
+    this.toggle('aim-dial', 'inactive', engaged || !ready);
+    // The face turns with the finger: the cue angle un-geared, which wraps seamlessly since 2π / DIAL_GAIN is whole turns.
+    this.style('aim-dial-face', 'transform', `rotate(${(setup.angle / DIAL_GAIN).toFixed(3)}rad)`);
   }
 
   private patch(key: string, value: string | boolean, write: (element: HudElement) => void) {

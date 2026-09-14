@@ -83,3 +83,46 @@ body{overflow:hidden}#app,.club{width:100%;height:100svh;overflow:hidden}.game-s
 /* Pointer lock hint (mouse, cue view). */
 .lock-hint{position:absolute;left:50%;bottom:124px;transform:translateX(-50%);padding:6px 13px;border-radius:20px;background:#142018cc;border:1px solid #d6c08a33;color:#e0d1a5;font-size:11px;letter-spacing:.3px;white-space:nowrap;pointer-events:none;backdrop-filter:blur(8px)}
 @media(max-width:700px){.lock-hint{bottom:140px}}
+
+/* Touch input: the game surface never scrolls or zooms; dialogs keep their own scrolling. */
+html,body{overscroll-behavior:none}.club{touch-action:none}.club-dialog,.main-menu{overscroll-behavior:contain}dialog button,dialog select,dialog summary{touch-action:manipulation}
+.touch-only{display:none}
+[data-input=touch] .mouse-only{display:none!important}
+[data-input=touch] .club{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+[data-input=touch]{--safe-l:max(12px,env(safe-area-inset-left));--safe-r:max(12px,env(safe-area-inset-right));--safe-b:max(12px,env(safe-area-inset-bottom));--dial:132px;--shoot:80px;--slider-w:76px;--tool:36px;--row:calc(max(18px,env(safe-area-inset-bottom)) + 70px)}
+[data-input=touch] .aim-dial{display:block;position:absolute;left:var(--safe-l);bottom:var(--row);width:var(--dial);height:var(--dial);border-radius:50%;background:radial-gradient(circle,#1a2a22 0 60%,#0d1813 61%);border:1px solid #d6c08a66;box-shadow:0 6px 22px #0009;touch-action:none;transition:opacity .2s}
+.aim-dial.inactive{opacity:.45}
+.aim-dial-face{position:absolute;inset:5px;border-radius:50%;background:repeating-conic-gradient(#e7d6a6 0 1.6deg,transparent 1.6deg 15deg);pointer-events:none}
+.aim-dial-face::after{content:'';position:absolute;inset:15%;border-radius:50%;background:radial-gradient(circle at 40% 32%,#2a3d31,#101c16 72%);box-shadow:inset 0 0 0 1px #d6c08a33}
+.aim-dial-face::before{content:'';position:absolute;left:50%;top:-1px;width:7px;height:24%;transform:translateX(-50%);border-radius:4px;background:#f3c969;box-shadow:0 0 8px #f3c96988;z-index:1}
+.aim-dial-label{position:absolute;inset:0;display:grid;place-items:center;font-size:12px;font-weight:600;letter-spacing:2px;color:#cdbb8b;pointer-events:none}
+[data-input=touch] .touch-engage{display:flex;align-items:center;justify-content:center;position:absolute;left:calc(var(--safe-l) + var(--dial) + 10px);right:calc(var(--safe-r) + var(--shoot) + 10px);bottom:var(--row);max-width:220px;height:56px;margin:0 auto;padding:0 10px;border:1px solid #d8bf78;border-radius:28px;background:#132019e6;color:#f1d38c;font-size:15px;font-weight:650;white-space:nowrap;box-shadow:0 6px 20px #0008;touch-action:manipulation}
+.touch-engage[aria-pressed=true]{background:#3b2a1ce8;border-color:#e39b6b;color:#ffd6a6}
+[data-input=touch] .touch-shoot{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;position:absolute;right:var(--safe-r);bottom:var(--row);width:var(--shoot);height:var(--shoot);border-radius:50%;background:#c9ad78;border:1px solid #f0d9a2;color:#1c291d;font-size:13px;font-weight:700;box-shadow:0 6px 22px #0009;touch-action:manipulation}
+[data-input=touch] .touch-shoot:disabled{opacity:.35}
+[data-input=touch] .touch-power{display:flex;flex-direction:column;align-items:center;gap:6px;position:absolute;right:calc(var(--safe-r) + (var(--shoot) - var(--slider-w)) / 2);bottom:calc(var(--row) + var(--shoot) + 12px);width:var(--slider-w);height:clamp(170px,55svh,calc(100svh - var(--row) - var(--shoot) - 190px));touch-action:none;transition:opacity .2s}
+.touch-power[aria-disabled=true]{opacity:.5}
+.touch-power strong{font-size:17px;font-weight:600;color:#f0dca6;font-variant-numeric:tabular-nums;text-shadow:0 1px 6px #000}
+.touch-power-track{position:relative;flex:1;width:100%;overflow:hidden;border-radius:16px;background:#0f1c16de;border:1px solid #d6c08a66;box-shadow:0 6px 22px #0009}
+.touch-power-track::after{content:'';position:absolute;inset:0;background:repeating-linear-gradient(to top,transparent 0 calc(10% - 1px),#ffffff26 calc(10% - 1px) 10%);pointer-events:none}
+#touch-power-fill{position:absolute;left:0;right:0;bottom:0;height:0;background:linear-gradient(#f0d894,#9dbb85);box-shadow:0 0 18px #e6ca7e88}
+/* Portrait: tools, status and the adjustment panel stack above the dial, left of the slider. */
+[data-input=touch] .stage-tools{top:auto;left:var(--safe-l);right:calc(var(--safe-r) + var(--slider-w) + 12px);bottom:calc(var(--row) + var(--dial) + 10px);transform:none;flex-direction:row;flex-wrap:wrap;justify-content:flex-start;gap:6px}
+[data-input=touch] .stage-tools .icon-button{width:var(--tool);height:var(--tool);touch-action:manipulation}
+[data-input=touch] .shot-status{left:var(--safe-l);bottom:calc(var(--row) + var(--dial) + 104px);transform:none}
+[data-input=touch] .cue-setup{left:var(--safe-l);bottom:calc(var(--row) + var(--dial) + 136px)}
+@media(max-height:700px){[data-input=touch]{--dial:118px;--shoot:72px;--tool:34px}}
+@media(min-width:700px) and (min-height:700px){[data-input=touch]{--dial:150px;--shoot:92px;--slider-w:84px;--tool:40px}}
+/* Landscape: tools and dial share a left column; Shoot sits beside the slider; the mode tabs move right of Engage. */
+@media(orientation:landscape){
+  [data-input=touch]{--dial:112px;--shoot:76px;--slider-w:72px;--tool:34px;--row:var(--safe-b)}
+  [data-input=touch] .touch-engage{right:auto;width:128px;margin:0}
+  [data-input=touch] .touch-shoot{right:calc(var(--safe-r) + var(--slider-w) + 10px)}
+  [data-input=touch] .touch-power{right:var(--safe-r);bottom:var(--safe-b);height:clamp(150px,60svh,calc(100svh - 130px))}
+  [data-input=touch] .stage-tools{right:auto;display:grid;grid-template-columns:repeat(4,var(--tool));gap:6px}
+  [data-input=touch] .shot-status{left:50%;top:max(18px,env(safe-area-inset-top));bottom:auto;transform:translateX(-50%)}
+  [data-input=touch] .cue-setup{left:calc(var(--safe-l) + 4 * var(--tool) + 30px);bottom:calc(var(--safe-b) + var(--dial) + 10px)}
+  [data-input=touch] .bottom-hud{left:auto;right:calc(var(--safe-r) + var(--slider-w) + var(--shoot) + 24px);transform:none}
+}
+@media(orientation:landscape) and (min-height:700px){[data-input=touch]{--dial:150px;--shoot:92px;--slider-w:84px;--tool:40px}}
+@media(orientation:landscape) and (max-height:500px){[data-input=touch] .scoreboard{top:40px}[data-input=touch] .scoreboard .player{padding:7px 10px;min-width:190px}[data-input=touch] .scoreboard .ball-rack{margin-top:5px}[data-input=touch] .scoreboard .mini-ball{width:14px;height:14px}}

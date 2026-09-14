@@ -67,6 +67,21 @@ test('the pointer-lock hint shows only while the cue view waits for a click', ()
   hud.write(view(state)); assert.equal(element('lock-hint').hidden, true);
 });
 
+test('touch Engage, power slider, Shoot and dial follow the shot setup; mouse frames skip the touch writes', () => {
+  const { log, element } = fakeDocument(), hud = new HudWriter(element), state = table();
+  const aim = { stage: 'aim' as const, adjustment: null, angle: 0, power: .65, elevation: 0, tipX: 0, tipY: 0 };
+  hud.write(view(state));
+  assert.equal(log.some(entry => entry.startsWith('touch-') || entry.startsWith('aim-dial')), false, 'mouse frames never write touch controls');
+  hud.write(view(state, { touch: true, setup: aim }));
+  assert.deepEqual([element('touch-engage').textContent, 'disabled' in element('touch-engage').attributes, 'disabled' in element('touch-shoot').attributes, element('touch-power').attributes['aria-disabled']], ['Engage cue', false, true, 'true']);
+  hud.write(view(state, { touch: true, setup: { ...aim, stage: 'power', power: 0 } }));
+  assert.deepEqual([element('touch-engage').attributes['aria-pressed'], 'disabled' in element('touch-shoot').attributes, element('touch-power').attributes['aria-valuenow']], ['true', true, '0'], 'no power, no Shoot');
+  hud.write(view(state, { touch: true, setup: { ...aim, stage: 'power', power: .7 } }));
+  assert.deepEqual([element('touch-engage').textContent, 'disabled' in element('touch-shoot').attributes, element('touch-power').attributes['aria-disabled'], element('touch-power-value').textContent], ['Cancel cue', false, 'false', '70%']);
+  hud.write(view(state, { touch: true, canAct: false, setup: { ...aim, stage: 'power', power: .7 } }));
+  assert.equal('disabled' in element('touch-shoot').attributes, true, 'Shoot waits for the seat to act');
+});
+
 test('room names are escaped in the roster and invitation', () => {
   const { element } = fakeDocument(), hud = new HudWriter(element), state = table(); state.format = 'doubles';
   const room: RoomSnapshot = { code: 'ABC123', format: 'doubles', capacity: 4, state, events: [], players: [{ name: '<img src=x>', connected: true, seat: 0, team: 0 }, { name: 'Guest', connected: false, seat: 1, team: 1 }] };

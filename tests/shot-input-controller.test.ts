@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ShotInputController, type KeyInput, type PointerInput, type ShotInputCommand, type ShotInputContext, type ShotInputView } from '../src/ui/shot-input-controller';
+import { DIAL_GAIN, ShotInputController, type KeyInput, type PointerInput, type ShotInputCommand, type ShotInputContext, type ShotInputView } from '../src/ui/shot-input-controller';
 
 function rig(overrides: Partial<ShotInputContext> = {}) {
   const context: ShotInputContext = { canAct: true, blocked: false, phase: 'ready', width: 600, cueView: true, ownTurn: true, ...overrides };
@@ -201,4 +201,52 @@ test('right-drag orbit keeps working on a locked pointer from movement alone', (
   input.pointerMove(pointer(50, 50, { buttons: 2, dx: 12, dy: -4 })); input.pointerMove(pointer(50, 50, { buttons: 2, dx: 3 }));
   input.pointerUp(pointer(50, 50, { button: 2 }));
   assert.deepEqual(calls, ['begin-orbit', 'orbit 12,-4', 'orbit 3,0', 'end-orbit']);
+});
+
+test('a finger on the table never locks aim or shoots; ball in hand still places', () => {
+  const { input, commands, calls, aimed, scene, pointer } = rig(); scene.lockApi = true;
+  const tap = (x: number, y: number) => { input.pointerDown(pointer(x, y, { touch: true })); input.pointerMove(pointer(x + 30, y + 90, { touch: true, buttons: 1 })); input.pointerUp(pointer(x + 30, y + 90, { touch: true })); };
+  tap(100, 100); tap(100, 100);
+  assert.deepEqual([input.setup.stage, input.setup.angle, commands.length, aimed.length, calls.includes('request-lock')], ['aim', 0, 0, 0, false]);
+  input.toggleEngage(); input.setSliderPower(.8); tap(100, 100); tap(100, 100);
+  assert.deepEqual([input.setup.stage, input.setup.power, commands.length], ['power', .8, 0], 'an engaged cue ignores table taps');
+  const placing = rig({ phase: 'ball-in-hand' });
+  placing.input.pointerMove(placing.pointer(150, 50, { touch: true })); placing.input.pointerDown(placing.pointer(150, 50, { touch: true }));
+  assert.deepEqual([placing.calls, placing.commands], [['placement'], [{ type: 'place', x: 1.5, z: .5 }]]);
+});
+
+test('the aim dial turns the cue by a geared fraction of the finger turn and wraps', () => {
+  const { input, scene } = rig();
+  input.rotateDial(.4);
+  assert.ok(Math.abs(input.setup.angle - .4 * DIAL_GAIN) < 1e-12); assert.equal(scene.aim.angle, input.setup.angle);
+  input.rotateDial(Math.PI * 2 - .4);
+  assert.ok(Math.abs(input.setup.angle) < 1e-12, 'a finger crossing the dial seam is a small turn back, not a full circle');
+  for (let i = 0; i < 20; i++) input.rotateDial(3);
+  assert.ok(input.setup.angle > -Math.PI && input.setup.angle <= Math.PI);
+  assert.ok(Math.abs(input.setup.angle - Math.atan2(Math.sin(15), Math.cos(15))) < 1e-9);
+  const turned = input.setup.angle;
+  input.rotateDial(NaN); input.toggleEngage(); input.rotateDial(1);
+  assert.equal(input.setup.angle, turned, 'engaged aim stays locked');
+  const idle = rig({ canAct: false }); idle.input.rotateDial(1); assert.equal(idle.input.setup.angle, 0);
+});
+
+test('touch engage, slider and Shoot: power only while engaged, letting go never shoots, Shoot is gated', () => {
+  const { input, commands, scene } = rig();
+  input.setTip(0, -.3); input.setElevation(.2);
+  input.setSliderPower(.7); input.touchShoot();
+  assert.deepEqual([input.setup.power, commands.length], [.65, 0], 'the slider and Shoot wait for Engage');
+  input.toggleEngage();
+  assert.deepEqual([input.setup.stage, input.setup.power], ['power', 0]);
+  input.touchShoot(); assert.equal(commands.length, 0, 'no shot without power');
+  input.setSliderPower(.02); assert.equal(input.setup.power, 0, 'the bottom of the slider is no power');
+  input.setSliderPower(1.4); assert.equal(input.setup.power, 1);
+  input.setSliderPower(.72);
+  assert.deepEqual([input.setup.power, scene.aim.pullback, commands.length], [.72, .72, 0], 'the cue pulls back with the slider and nothing shoots');
+  input.toggleAdjustment('spin'); input.touchShoot(); assert.equal(commands.length, 0, 'an open contact adjustment blocks Shoot');
+  input.toggleAdjustment('spin'); input.touchShoot();
+  assert.deepEqual(commands, [{ type: 'shoot', shot: { angle: 0, power: .72, elevation: .2, tipX: 0, tipY: -.3 } }]);
+  input.toggleEngage();
+  assert.deepEqual([input.setup.stage, input.setup.elevation, input.setup.tipY], ['aim', .2, -.3], 'disengaging keeps contact and elevation');
+  const idle = rig({ canAct: false }); idle.input.toggleEngage(); idle.input.touchShoot();
+  assert.deepEqual([idle.input.setup.stage, idle.commands.length], ['aim', 0]);
 });

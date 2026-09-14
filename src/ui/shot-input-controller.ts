@@ -6,6 +6,8 @@ export interface PointerInput {
   id: number; x: number; y: number; button: number; buttons: number; primary: boolean; shift: boolean;
   /** Movement since the previous event; a locked pointer reports only this. */
   dx?: number; dy?: number;
+  /** A finger never aims, locks aim or shoots from the table. */
+  touch?: boolean;
 }
 export interface KeyInput { code: string; repeat: boolean; shift: boolean; target: 'text' | 'button' | 'other' }
 export interface ShotInputContext {
@@ -46,7 +48,13 @@ export interface ShotInputView {
   exitPointerLock(): void;
 }
 
+/** A full finger turn of the aim dial turns the cue a quarter turn. */
+export const DIAL_GAIN = .25;
+/** The touch Shoot button needs an engaged cue with power set. */
+export const canTouchShoot = (setup: Readonly<ShotSetupState>, canAct: boolean, phase: GameState['phase']) =>
+  canAct && phase === 'ready' && setup.stage === 'power' && setup.power > 0 && !setup.adjustment;
 const finite = (...values: number[]) => values.every(Number.isFinite);
+const wrap = (angle: number) => Math.atan2(Math.sin(angle), Math.cos(angle));
 const clampTip = (x: number, y: number) => { const scale = Math.min(1, .8 / (Math.hypot(x, y) || 1)); return { tipX: x * scale, tipY: y * scale }; };
 
 /** Owns the two-click shot setup, held modifiers and temporary orbit; emits table commands without touching the DOM. */
@@ -105,6 +113,30 @@ export class ShotInputController {
   setElevation(value: number) { if (Number.isFinite(value)) this.setupState.elevation = Math.max(0, Math.min(Math.PI / 3, value)); this.publish(); }
   setTip(x: number, y: number) { if (finite(x, y)) Object.assign(this.setupState, clampTip(x, y)); this.publish(); }
 
+  /** Touch aim dial: a finger turn in radians (any wrap) turns the cue by DIAL_GAIN of it, until the cue is engaged. */
+  rotateDial(radians: number) {
+    const setup = this.setupState;
+    if (!Number.isFinite(radians) || !this.canAct || this.context().phase !== 'ready' || setup.stage !== 'aim') return;
+    setup.angle = wrap(setup.angle + wrap(radians) * DIAL_GAIN);
+    this.publish();
+  }
+  /** Touch Engage: lock aim with no power set (the desktop first click); pressing again disengages, keeping contact and elevation. */
+  toggleEngage() {
+    const setup = this.setupState;
+    if (setup.stage === 'power') { setup.stage = 'aim'; this.publish(); return; }
+    if (!this.canAct || this.context().phase !== 'ready') return;
+    Object.assign(setup, { stage: 'power', adjustment: null, power: 0 });
+    this.view.resetAimPointer(); this.publish();
+  }
+  /** Touch power slider position, 0 (bottom) to 1; the bottom 5% is no power. Only an engaged cue listens, and letting go never shoots. */
+  setSliderPower(value: number) {
+    if (!Number.isFinite(value) || this.setupState.stage !== 'power' || !this.canAct || this.context().phase !== 'ready') return;
+    this.setupState.power = value < .05 ? 0 : Math.min(1, value);
+    this.publish();
+  }
+  /** Touch Shoot button. */
+  touchShoot() { if (canTouchShoot(this.setupState, this.canAct, this.context().phase)) this.emit({ type: 'shoot', shot: this.shot() }); }
+
   /** Browser pointer lock state. Losing a lock this controller did not release is an Escape: cancel the setup. */
   pointerLockChanged(locked: boolean) {
     const released = this.releasingLock; this.releasingLock = false;
@@ -137,7 +169,7 @@ export class ShotInputController {
     const { phase, width } = this.context();
     if (!this.canAct || this.shotPointer !== null && this.shotPointer !== pointer.id) return;
     if (phase === 'ball-in-hand') { this.view.showPlacement(this.view.tableAt(pointer.x, pointer.y)); return; }
-    if (phase !== 'ready') return;
+    if (phase !== 'ready' || pointer.touch) return;
     if (setup.adjustment) this.moveAdjustment(pointer.x, pointer.y, pointer.shift);
     else if (setup.stage === 'aim') this.moveAim(pointer.x, pointer.y, pointer.shift);
     else if (finite(pointer.x, pointer.y, width)) {
@@ -158,7 +190,7 @@ export class ShotInputController {
     this.lastPointer = { x: pointer.x, y: pointer.y };
     const phase = this.context().phase;
     if (phase === 'ball-in-hand') { const point = this.view.tableAt(pointer.x, pointer.y); if (point) this.emit({ type: 'place', ...point }); return; }
-    if (phase !== 'ready') return;
+    if (phase !== 'ready' || pointer.touch) return;
     // In the cue view an unlocked click only takes the cue: it locks the pointer, never aim or a shot.
     if (!this.locked && this.lockAvailable && this.context().cueView && this.view.requestPointerLock()) return;
     if (this.setupState.stage === 'aim') this.moveAim(pointer.x, pointer.y, pointer.shift);
