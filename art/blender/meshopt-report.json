@@ -1,0 +1,282 @@
+{
+  "ale-handpump.glb": {
+    "originalBytes": 450768,
+    "meshoptBytes": 294756,
+    "validatorErrors": 0,
+    "primitives": 6,
+    "triangles": 9008
+  },
+  "booth-bench.glb": {
+    "originalBytes": 458080,
+    "meshoptBytes": 319252,
+    "validatorErrors": 0,
+    "primitives": 3,
+    "triangles": 7198
+  },
+  "bottle-copperfin-lod.glb": {
+    "originalBytes": 49728,
+    "meshoptBytes": 19740,
+    "validatorErrors": 0,
+    "primitives": 6,
+    "triangles": 1346
+  },
+  "bottle-copperfin.glb": {
+    "originalBytes": 230076,
+    "meshoptBytes": 57328,
+    "validatorErrors": 0,
+    "primitives": 6,
+    "triangles": 10222
+  },
+  "bottle-juniper-lod.glb": {
+    "originalBytes": 38472,
+    "meshoptBytes": 17444,
+    "validatorErrors": 0,
+    "primitives": 6,
+    "triangles": 1001
+  },
+  "bottle-juniper.glb": {
+    "originalBytes": 163264,
+    "meshoptBytes": 44244,
+    "validatorErrors": 0,
+    "primitives": 6,
+    "triangles": 7158
+  },
+  "bottle-northstar-lod.glb": {
+    "originalBytes": 41148,
+    "meshoptBytes": 16704,
+    "validatorErrors": 0,
+    "primitives": 5,
+    "triangles": 1078
+  },
+  "bottle-northstar.glb": {
+    "originalBytes": 188540,
+    "meshoptBytes": 45396,
+    "validatorErrors": 0,
+    "primitives": 5,
+    "triangles": 8130
+  },
+  "bottle-orchard-lod.glb": {
+    "originalBytes": 42768,
+    "meshoptBytes": 17888,
+    "validatorErrors": 0,
+    "primitives": 6,
+    "triangles": 1138
+  },
+  "bottle-orchard.glb": {
+    "originalBytes": 215540,
+    "meshoptBytes": 54136,
+    "validatorErrors": 0,
+    "primitives": 6,
+    "triangles": 9670
+  },
+  "bottle-redharbor-lod.glb": {
+    "originalBytes": 34596,
+    "meshoptBytes": 16556,
+    "validatorErrors": 0,
+    "primitives": 6,
+    "triangles": 847
+  },
+  "bottle-redharbor.glb": {
+    "originalBytes": 178272,
+    "meshoptBytes": 45924,
+    "validatorErrors": 0,
+    "primitives": 6,
+    "triangles": 7798
+  },
+  "brass-beer-taps.glb": {
+    "originalBytes": 338484,
+    "meshoptBytes": 84464,
+    "validatorErrors": 0,
+    "primitives": 7,
+    "triangles": 14710
+  },
+  "cask-stack.glb": {
+    "originalBytes": 1225920,
+    "meshoptBytes": 469172,
+    "validatorErrors": 0,
+    "primitives": 6,
+    "triangles": 42776
+  },
+  "club-decor-front.glb": {
+    "originalBytes": 24492,
+    "meshoptBytes": 12836,
+    "validatorErrors": 0,
+    "primitives": 4,
+    "triangles": 566
+  },
+  "club-decor-left.glb": {
+    "originalBytes": 57472,
+    "meshoptBytes": 22976,
+    "validatorErrors": 0,
+    "primitives": 5,
+    "triangles": 1010
+  },
+  "club-decor-right.glb": {
+    "originalBytes": 108756,
+    "meshoptBytes": 33176,
+    "validatorErrors": 0,
+    "primitives": 4,
+    "triangles": 3390
+  },
+  "drink-citrus.glb": {
+    "originalBytes": 105680,
+    "meshoptBytes": 32436,
+    "validatorErrors": 0,
+    "primitives": 8,
+    "triangles": 4804
+  },
+  "drink-cola.glb": {
+    "originalBytes": 118436,
+    "meshoptBytes": 36616,
+    "validatorErrors": 0,
+    "primitives": 9,
+    "triangles": 5260
+  },
+  "drink-martini.glb": {
+    "originalBytes": 328804,
+    "meshoptBytes": 267744,
+    "validatorErrors": 0,
+    "primitives": 7,
+    "triangles": 4070
+  },
+  "drink-redwine.glb": {
+    "originalBytes": 89648,
+    "meshoptBytes": 25560,
+    "validatorErrors": 0,
+    "primitives": 4,
+    "triangles": 4240
+  },
+  "drink-whisky.glb": {
+    "originalBytes": 76756,
+    "meshoptBytes": 24652,
+    "validatorErrors": 0,
+    "primitives": 5,
+    "triangles": 3556
+  },
+  "hearth-fireplace.glb": {
+    "originalBytes": 976928,
+    "meshoptBytes": 817672,
+    "validatorErrors": 0,
+    "primitives": 9,
+    "triangles": 8684
+  },
+  "heritage-jukebox.glb": {
+    "originalBytes": 1059024,
+    "meshoptBytes": 417468,
+    "validatorErrors": 0,
+    "primitives": 11,
+    "triangles": 35628
+  },
+  "heritage-lamp.glb": {
+    "originalBytes": 411408,
+    "meshoptBytes": 95552,
+    "validatorErrors": 0,
+    "primitives": 4,
+    "triangles": 19738
+  },
+  "liquor-amber-lod.glb": {
+    "originalBytes": 46484,
+    "meshoptBytes": 18380,
+    "validatorErrors": 0,
+    "primitives": 5,
+    "triangles": 1315
+  },
+  "liquor-decanter-lod.glb": {
+    "originalBytes": 52484,
+    "meshoptBytes": 20868,
+    "validatorErrors": 0,
+    "primitives": 5,
+    "triangles": 1397
+  },
+  "liquor-green-lod.glb": {
+    "originalBytes": 47316,
+    "meshoptBytes": 19820,
+    "validatorErrors": 0,
+    "primitives": 6,
+    "triangles": 1331
+  },
+  "liquor-square-lod.glb": {
+    "originalBytes": 43116,
+    "meshoptBytes": 17880,
+    "validatorErrors": 0,
+    "primitives": 5,
+    "triangles": 1080
+  },
+  "memorabilia-darts.glb": {
+    "originalBytes": 979424,
+    "meshoptBytes": 408052,
+    "validatorErrors": 0,
+    "primitives": 5,
+    "triangles": 31408
+  },
+  "memorabilia-frame.glb": {
+    "originalBytes": 1279512,
+    "meshoptBytes": 463328,
+    "validatorErrors": 0,
+    "primitives": 5,
+    "triangles": 47486
+  },
+  "memorabilia-stout.glb": {
+    "originalBytes": 1041420,
+    "meshoptBytes": 419984,
+    "validatorErrors": 0,
+    "primitives": 6,
+    "triangles": 34272
+  },
+  "oak-pub-table.glb": {
+    "originalBytes": 298256,
+    "meshoptBytes": 255832,
+    "validatorErrors": 0,
+    "primitives": 3,
+    "triangles": 2654
+  },
+  "pub-chair.glb": {
+    "originalBytes": 390284,
+    "meshoptBytes": 296052,
+    "validatorErrors": 0,
+    "primitives": 3,
+    "triangles": 5126
+  },
+  "pub-photo-frame.glb": {
+    "originalBytes": 481520,
+    "meshoptBytes": 435560,
+    "validatorErrors": 0,
+    "primitives": 4,
+    "triangles": 2716
+  },
+  "pub-pint.glb": {
+    "originalBytes": 184408,
+    "meshoptBytes": 51708,
+    "validatorErrors": 0,
+    "primitives": 6,
+    "triangles": 7678
+  },
+  "slot-cabinet.glb": {
+    "originalBytes": 751768,
+    "meshoptBytes": 164548,
+    "validatorErrors": 0,
+    "primitives": 10,
+    "triangles": 33232
+  },
+  "snug-divider.glb": {
+    "originalBytes": 371940,
+    "meshoptBytes": 278976,
+    "validatorErrors": 0,
+    "primitives": 4,
+    "triangles": 4970
+  },
+  "sports-tv.glb": {
+    "originalBytes": 287752,
+    "meshoptBytes": 64576,
+    "validatorErrors": 0,
+    "primitives": 6,
+    "triangles": 13080
+  },
+  "wall-panel.glb": {
+    "originalBytes": 283252,
+    "meshoptBytes": 253356,
+    "validatorErrors": 0,
+    "primitives": 3,
+    "triangles": 1754
+  }
+}
