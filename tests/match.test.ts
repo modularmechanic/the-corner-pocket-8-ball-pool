@@ -1,10 +1,10 @@
 import { before, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { initPhysics } from '../src/simulation/game';
-import { LocalMatch, MATCH_STEP } from '../src/match/local';
+import { initPhysics, PoolGame } from '../src/simulation/game';
+import { CATCH_UP_STEPS, LocalMatch, MATCH_STEP } from '../src/match/local';
 import { canAdvance } from '../src/match/policy';
 import { MAX_LEVEL, normalizeLevel } from '../src/simulation/level-policy';
-import { activeSeat, type GameState } from '../src/simulation/types';
+import { activeSeat, type GameState, type TableEvent } from '../src/simulation/types';
 import { SnapshotTimeline, NETWORK_DELAY } from '../src/match/timeline';
 before(initPhysics);
 function settled(match: LocalMatch) { for (let i = 0; i < 4000 && match.state.phase === 'rolling'; i++) match.update(MATCH_STEP, { aiPaused: true }); assert.notEqual(match.state.phase, 'rolling'); }
@@ -79,6 +79,75 @@ test('a warm cached view picks up idle pickup spawns and expiries', () => {
       match.update(seconds);
       assert.deepEqual(match.state.arcade!.pickups, match.snapshot().arcade!.pickups);
     }
+  } finally { match.dispose(); }
+});
+
+/** Counts the fixed physics steps each update() runs. */
+function countSteps(match: LocalMatch) {
+  const game = (match as unknown as { game: PoolGame }).game, step = game.step.bind(game), counter = { steps: 0 };
+  game.step = dt => { counter.steps++; return step(dt); };
+  return counter;
+}
+const impacts = (events: TableEvent[]) => events.filter(event => ['cue', 'ball', 'cushion', 'pocket', 'jump', 'land'].includes(event.kind));
+
+test('a tab hidden mid-shot catches up silently in bounded updates to the same table as one long update', () => {
+  const shot = { angle: 0, power: 1 }, hidden = 120;
+  // The former behaviour: one update runs every rolling step, then advances the quiet remainder.
+  const reference = new PoolGame('catch-up', { level: 1 }), heard: TableEvent[] = [];
+  reference.onEvent = event => heard.push(event);
+  // Casual AI never chalks, so no live AI command adds an event to the settle frame.
+  const local = new LocalMatch({ seed: 'catch-up', mode: 'local' }), ai = new LocalMatch({ seed: 'catch-up', mode: 'ai', difficulty: 'casual' });
+  try {
+    assert.equal(reference.shoot(shot), true);
+    let left = hidden;
+    for (; left + 1e-10 >= MATCH_STEP && reference.state.phase === 'rolling'; left = Math.max(0, left - MATCH_STEP)) reference.step(MATCH_STEP);
+    const settledAt = heard.length;
+    reference.advanceIdle(Math.floor((left + 1e-10) / MATCH_STEP) * MATCH_STEP);
+    assert.ok(impacts(heard).length > 10 && reference.state.phase !== 'rolling');
+    assert.ok(heard.slice(settledAt).some(event => event.kind === 'spawn' || event.kind === 'expire'), 'the idle remainder has pickup events to silence');
+    // Local frames after the first add no time, so both runs perform identical clock arithmetic.
+    // The AI table uses real 60 Hz frames with AI planning enabled. Both mute exactly as main.ts
+    // does for a visible tab: only a frame longer than half a second.
+    for (const [match, frame] of [[local, Number.MIN_VALUE], [ai, 1 / 60]] as const) {
+      const counter = countSteps(match);
+      assert.equal(match.dispatch({ type: 'shoot', shot }).ok, true); match.drainEvents();
+      let updates = 0;
+      for (let dt = hidden; match.state.phase === 'rolling'; dt = frame) {
+        counter.steps = 0; match.update(dt, { muted: dt > .5 }); updates++;
+        assert.ok(counter.steps <= CATCH_UP_STEPS, `update ${updates} ran ${counter.steps} steps`);
+        assert.deepEqual(match.drainEvents(), [], `catch-up update ${updates} stays silent, including its settle and idle remainder`);
+        if (match.state.phase !== 'rolling') break;
+        assert.equal(match.actor.canAct, false); assert.equal(match.thinking, false);
+        assert.equal(match.dispatch({ type: 'shoot', shot }).ok, false, 'no shot is accepted before the backlog settles');
+      }
+      assert.ok(updates >= Math.ceil(reference.snapshot().simulation!.rollTime / (CATCH_UP_STEPS * MATCH_STEP)));
+      assert.deepEqual(match.state.balls, reference.snapshot().balls);
+    }
+    assert.deepEqual(local.snapshot(), reference.snapshot());
+  } finally { reference.dispose(); local.dispose(); ai.dispose(); }
+});
+
+test('a rolling hitch within one update budget stays audible; only steps beyond it are discarded', () => {
+  const within = new LocalMatch({ seed: 'hitch', mode: 'local' }), beyond = new LocalMatch({ seed: 'hitch', mode: 'local' });
+  try {
+    for (const match of [within, beyond]) { assert.equal(match.dispatch({ type: 'shoot', shot: { angle: 0, power: 1 } }).ok, true); match.drainEvents(); }
+    // Nearly a full step is already waiting, so the half-second hitch totals just under 61 steps.
+    within.update(MATCH_STEP * .99); within.update(.5);
+    assert.ok(impacts(within.drainEvents()).length > 0, 'main.ts plays a half-second frame, so the match keeps its events');
+    beyond.update(.5 + 2 * MATCH_STEP);
+    assert.deepEqual(beyond.drainEvents(), [], 'a frame with more steps than the budget is catch-up');
+  } finally { within.dispose(); beyond.dispose(); }
+});
+
+test('an idle table catches up an hour at pickup events without physics steps', () => {
+  const match = new LocalMatch({ seed: 'idle-catch-up', mode: 'local' });
+  try {
+    const counter = countSteps(match), started = performance.now();
+    match.update(3600);
+    assert.equal(counter.steps, 0);
+    assert.ok(Math.abs(match.state.arcade!.clock! - 3600) < 1e-6);
+    assert.ok(performance.now() - started < 250, 'idle catch-up is proportional to pickup events, not ticks');
+    assert.ok(match.drainEvents().some(event => event.kind === 'spawn'), 'idle catch-up keeps its pickup events');
   } finally { match.dispose(); }
 });
 

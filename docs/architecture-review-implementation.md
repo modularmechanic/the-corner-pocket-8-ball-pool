@@ -49,6 +49,7 @@ Evidence: four pure presentation tests pass for status precedence, queued/curren
 - Menus are presentation. A running local match keeps advancing physics and the pickup clock while a menu is open, just as an online room does.
 - Local AI planning can pause independently while a dialog is open, the tab is hidden or a reset animation runs.
 - Local elapsed time is caught up after browser throttling. Rolling motion uses fixed 120 Hz steps; settled tables advance the pickup clock at event boundaries instead of looping through every quiet physics tick. Hidden/catchup impact audio is discarded.
+- A rolling backlog longer than one update's budget (`CATCH_UP_STEPS`, 60 steps or half a second) runs at most that many steps per update and finishes over later frames, so the shot fast-forwards instead of freezing the first visible frame. Only events from an update with more steps than that budget are discarded, including that update's settle and idle remainder; the last half second or less of a backlog, like any hitch within the budget, plays as normal. Commands stay rejected until the shot settles. The final table matches a single long update exactly.
 - An online room needs all reserved seats connected before accepting actions or advancing an idle pickup clock. An in-flight shot still settles if somebody disconnects. A finished rack stops its clock.
 
 ## Validation recorded on 14 September 2026
