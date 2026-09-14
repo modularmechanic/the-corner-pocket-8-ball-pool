@@ -5,6 +5,19 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import type { RenderBudget } from './performance';
 
+/** Three keys programs on the bound target: the canvas gets ACES + sRGB, any render
+ * target gets NoToneMapping + linear (WebGLPrograms.js getParameters). Bloom toggles
+ * therefore swap every lit material's program, and hidden meshes compile on first
+ * show. Compile both variants at an idle moment (renderer.compile includes invisible
+ * objects) so neither happens mid-shot. */
+export function prewarmPrograms(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, composer: boolean) {
+  const previous = renderer.getRenderTarget(), target = composer ? new THREE.WebGLRenderTarget(1, 1) : null;
+  try {
+    if (target) { renderer.setRenderTarget(target); renderer.compile(scene, camera); }
+    renderer.setRenderTarget(null); renderer.compile(scene, camera);
+  } finally { renderer.setRenderTarget(previous); target?.dispose(); }
+}
+
 /** Official GLSL passes, with HDR glow confined to the pub's brightest practical lights. */
 export class PoolPostprocessing {
   private composer?: EffectComposer;
