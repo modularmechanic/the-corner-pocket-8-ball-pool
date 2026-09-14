@@ -418,9 +418,11 @@ test('cue choices are seat-owned, level-validated and synchronized through shots
 });
 
 test('the build-time room server setting disables, targets same-origin or names a server', () => {
-  for (const setting of [undefined, '', '  ', 'not a url', 'ftp://rooms.example']) assert.equal(resolveRoomServer(setting), null, String(setting));
+  for (const setting of [undefined, '', '  ', 'not a url', 'ftp://rooms.example', 'http://rooms.example']) assert.equal(resolveRoomServer(setting), null, String(setting));
   assert.deepEqual(resolveRoomServer('same-origin'), {});
-  assert.deepEqual(resolveRoomServer(' https://rooms.example:8443 '), { url: 'https://rooms.example:8443/' });
+  assert.deepEqual(resolveRoomServer(' https://rooms.example:8443 '), { url: 'https://rooms.example:8443' });
+  assert.deepEqual(resolveRoomServer('https://rooms.example/pool/?x=1'), { url: 'https://rooms.example' }, 'a path would be read as a Socket.IO namespace');
+  for (const local of ['http://localhost:3000', 'http://127.0.0.1:3000']) assert.deepEqual(resolveRoomServer(local), { url: local }, 'plain HTTP is only for local servers');
   assert.deepEqual(allowedOrigins(' https://a.example, ,http://b.example:5173 '), ['https://a.example', 'http://b.example:5173']);
   assert.deepEqual(allowedOrigins(undefined), []);
 });
@@ -434,5 +436,22 @@ test('room transport answers cross-origin browsers only for configured origins',
     const address = `http://127.0.0.1:${(http.address() as { port: number }).port}`;
     assert.equal(await handshake(address, 'https://friends.example'), 'https://friends.example');
     assert.equal(await handshake(address, 'https://elsewhere.example'), null);
+  } finally { await rooms.close(); }
+});
+
+test('WebSocket-only browsers from other origins are refused unless configured', async () => {
+  const connects = (address: string, origin: string) => new Promise<boolean>(resolve => {
+    const socket = io(address, { forceNew: true, transports: ['websocket'], reconnection: false, extraHeaders: { Origin: origin } });
+    socket.once('connect', () => { socket.disconnect(); resolve(true); });
+    socket.once('connect_error', () => { socket.disconnect(); resolve(false); });
+  });
+  assert.equal(await connects(url, 'https://elsewhere.example'), false, 'CORS alone does not guard WebSocket upgrades');
+  assert.equal(await connects(url, url), true, 'pages served by the room server connect');
+  const http = createServer(), rooms = attachRooms(http, ['https://friends.example']);
+  await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = `http://127.0.0.1:${(http.address() as { port: number }).port}`;
+    assert.equal(await connects(address, 'https://friends.example'), true);
+    assert.equal(await connects(address, 'https://elsewhere.example'), false);
   } finally { await rooms.close(); }
 });

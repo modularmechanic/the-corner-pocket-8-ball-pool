@@ -16,9 +16,20 @@ function validIdentity(data: unknown): data is Identity {
 export function allowedOrigins(setting = process.env.CORS_ORIGIN): string[] {
   return (setting ?? '').split(',').map(origin => origin.trim()).filter(Boolean);
 }
+/** Browsers send Origin on polling and WebSocket handshakes; clients without one (tests, tools) are not browsers. */
+export function originAllowed(origin: string | undefined, host: string | undefined, origins: readonly string[]): boolean {
+  if (!origin) return true;
+  if (origins.includes(origin)) return true;
+  try { return !!host && new URL(origin).host === host; } catch { return false; }
+}
 /** Without allowed origins, browsers can only reach rooms from pages served by this server. */
 export function attachRooms(http: HttpServer, origins = allowedOrigins()) {
-  const io = new Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>(http, { maxHttpBufferSize: 16_384, ...(origins.length ? { cors: { origin: origins } } : {}) });
+  const io = new Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>(http, {
+    maxHttpBufferSize: 16_384,
+    // `cors` only answers polling preflights; allowRequest also guards direct WebSocket upgrades.
+    allowRequest: (request, callback) => callback(null, originAllowed(request.headers.origin, request.headers.host, origins)),
+    ...(origins.length ? { cors: { origin: origins } } : {}),
+  });
   const rooms = new Map<string, Room>();
   const syncSeats = (room: Room) => room.match.setReady(room.seats.length === seatCount(room.match.state.format) && room.seats.every(seat => !!seat.socketId));
   const info = (room: Room): RoomSnapshot => ({ code: room.code, format: room.match.state.format, capacity: seatCount(room.match.state.format), players: room.seats.map((s, seat) => ({ name: s.name, connected: !!s.socketId, seat, team: teamOfSeat(seat) })), state: room.match.state, events: [] });

@@ -12,9 +12,9 @@ if (process.env.NODE_ENV === 'production') {
   app.use(express.static(resolve('dist')));
   app.get('/{*path}', (_req, res) => res.sendFile(resolve('dist/index.html')));
 } else {
-  // The development page talks to this process's rooms unless told otherwise.
-  process.env.VITE_ROOM_SERVER_URL ??= 'same-origin';
-  const { createServer: createViteServer } = await import('vite');
+  const { createServer: createViteServer, loadEnv } = await import('vite');
+  // The development page talks to this process's rooms unless the environment or a .env file says otherwise.
+  if (loadEnv('development', process.cwd(), 'VITE_').VITE_ROOM_SERVER_URL === undefined) process.env.VITE_ROOM_SERVER_URL = 'same-origin';
   const vite = await createViteServer({ server: { middlewareMode: true, hmr: { server: http } }, appType: 'spa' });
   app.use(vite.middlewares);
 }
