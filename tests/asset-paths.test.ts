@@ -29,3 +29,15 @@ test('every prop path the render modules request exists under public/', () => {
     }
   }
 });
+
+// Quantized positions move mesh offsets onto node transforms; code that reuses raw geometry
+// (gallery artwork, instanced props) then places it at the room origin.
+test('no pub model uses KHR_mesh_quantization', () => {
+  const glbs = files([PUB_PROPS, PUB_DRESSING_PROPS, PUB_DRINK_PROPS, PUB_ENTERTAINMENT_PROPS, PUB_GALLERY_PROPS, PUB_CLUB_DECOR_PROPS]).filter(path => path.endsWith('.glb'));
+  assert.ok(glbs.length > 30);
+  for (const path of glbs) {
+    const glb = readFileSync(new URL(`../public/${path}`, import.meta.url));
+    const json = JSON.parse(glb.subarray(20, 20 + glb.readUInt32LE(12)).toString()) as { extensionsUsed?: string[] };
+    assert.ok(!json.extensionsUsed?.includes('KHR_mesh_quantization'), `${path} is not quantized`);
+  }
+});
