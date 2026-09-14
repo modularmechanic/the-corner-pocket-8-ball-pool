@@ -54,7 +54,7 @@ test('two friends share an authoritative seeded table; other turns, extra player
   const room=server.rooms.get(created.code)!;
   for(let i=0;room.match.state.phase==='rolling'&&i<4000;i++)room.match.update(1/120);
   assert.equal(room.match.state.shotCount,1);
-  const snapshot=JSON.parse(JSON.stringify(room.match.snapshot())); guest.disconnect(); await delay(50);
+  const snapshot=JSON.parse(JSON.stringify(room.match.state)); guest.disconnect(); await delay(50);
   const returning=await client();
   const rejoined=await request(returning,'room:join',{name:'Guest',token:guestId,code:created.code});
   assert.equal(rejoined.seat,1); assert.deepEqual(rejoined.state,{...snapshot,arcade:{...snapshot.arcade,clock:rejoined.state.arcade.clock}}); assert.equal(rejoined.players.length,2);

@@ -444,10 +444,12 @@ export class PoolGame {
     }
     this.zoneOccupants.set(ball.id,occupied);
   }
+  /** Detached table data without the continuation metadata that only arrange() needs. */
+  detachedState(): GameState { return structuredClone(this.current); }
   snapshot(): GameState {
-    return structuredClone({...this.current,simulation:{shotResult:this.shotResult,legalBefore:this.legalBefore,stillTime:this.stillTime,rollTime:this.rollTime,
+    return {...this.detachedState(),simulation:structuredClone({shotResult:this.shotResult,legalBefore:this.legalBefore,stillTime:this.stillTime,rollTime:this.rollTime,
       portalRewardPending:this.portalRewardPending,pickupDraws:this.pickupDraws,nextPickupAt:this.nextPickupAt,nextPickupId:this.nextPickupId,
-      obstacleCooldown:[...this.obstacleCooldown],portalCooldown:[...this.portalCooldown],zoneOccupants:[...this.zoneOccupants].map(([id,zones])=>[id,[...zones]]),hazardRewards:[...this.hazardRewards],activeContacts:[...this.activeContacts],cueSpin:this.cueSpin,pendingSpin:this.pendingSpin}});
+      obstacleCooldown:[...this.obstacleCooldown],portalCooldown:[...this.portalCooldown],zoneOccupants:[...this.zoneOccupants].map(([id,zones])=>[id,[...zones]]),hazardRewards:[...this.hazardRewards],activeContacts:[...this.activeContacts],cueSpin:this.cueSpin,pendingSpin:this.pendingSpin})};
   }
   dispose() { this.events.free(); this.world.free(); }
 }

@@ -44,10 +44,11 @@ export class LocalMatch implements Match {
     this.game = new PoolGame(config.seed, { ...config.options, level: normalizeLevel(config.options?.level) });
     this.trackEvents();
   }
+  /** Frozen detached view, rebuilt only after a command, a rolling step or a table event. */
   get state(): GameState {
     if (!this.cached) {
       const freeze = (value: object) => { for (const child of Object.values(value)) if (child && typeof child === 'object') freeze(child); Object.freeze(value); };
-      this.cached = this.game.snapshot(); freeze(this.cached);
+      this.cached = this.game.detachedState(); freeze(this.cached);
     }
     return this.cached;
   }
@@ -69,7 +70,7 @@ export class LocalMatch implements Match {
   pauseAI() { this.plan = null; this.aiElapsed = 0;this.aiCameraStable=0;this.aiStrokeElapsed=0; this.aiPhase = ''; }
   subscribe(listener: (change: MatchChange) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   private changed() { this.cached = null; for (const listener of this.listeners) listener({ type: 'state' }); }
-  private trackEvents() { this.game.onEvent = event => { if (!this.muted && this.events.length < 160) this.events.push(event); }; }
+  private trackEvents() { this.game.onEvent = event => { this.cached = null; if (!this.muted && this.events.length < 160) this.events.push(event); }; }
   drainEvents() { return this.events.splice(0); }
   get hasEvents() { return this.events.length > 0; }
   presentation() { return this.state; }
@@ -118,7 +119,6 @@ export class LocalMatch implements Match {
     this.muted = !!options.muted; if (this.muted) this.events = [];
     if (options.aiPaused) this.pauseAI();
     if (this.disposed || !Number.isFinite(dt) || dt <= 0) return;
-    this.cached = null;
     const initialPhase = this.game.state.phase;
     if (initialPhase === 'over' || !this.available && initialPhase !== 'rolling') { this.accumulator = 0; this.pauseAI(); return; }
     this.accumulator += dt;
@@ -131,8 +131,12 @@ export class LocalMatch implements Match {
         const idle = Math.floor((this.accumulator + 1e-10) / MATCH_STEP) * MATCH_STEP;
         this.game.advanceIdle(idle); this.accumulator = Math.max(0, this.accumulator - idle); break;
       }
-      this.game.step(MATCH_STEP); this.accumulator = Math.max(0, this.accumulator - MATCH_STEP);
+      this.game.step(MATCH_STEP); this.cached = null; this.accumulator = Math.max(0, this.accumulator - MATCH_STEP);
     }
+    // Spawns and expiries emit events; a quiet table only moves its pickup clock,
+    // so the frozen view is shared and just that number is refreshed.
+    const clock = this.game.state.arcade?.clock, view = this.cached;
+    if (view?.arcade && view.arcade.clock !== clock) this.cached = Object.freeze({ ...view, arcade: Object.freeze({ ...view.arcade, clock }) });
     if (options.aiPaused || !this.available || this.mode !== 'ai' || activeSeat(this.state) === 0 || !['ready', 'ball-in-hand'].includes(this.state.phase)) this.pauseAI();
     else this.updateAI(Math.min(dt, .1),options.aiCameraReady!==false);
   }

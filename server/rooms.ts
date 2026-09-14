@@ -16,7 +16,7 @@ export function attachRooms(http: HttpServer) {
   const io = new Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>(http, { maxHttpBufferSize: 16_384 });
   const rooms = new Map<string, Room>();
   const syncSeats = (room: Room) => room.match.setReady(room.seats.length === seatCount(room.match.state.format) && room.seats.every(seat => !!seat.socketId));
-  const info = (room: Room): RoomSnapshot => ({ code: room.code, format: room.match.state.format, capacity: seatCount(room.match.state.format), activeSeat: activeSeat(room.match.state), players: room.seats.map((s, seat) => ({ name: s.name, connected: !!s.socketId, seat, team: teamOfSeat(seat) })), state: room.match.snapshot(), events: [] });
+  const info = (room: Room): RoomSnapshot => ({ code: room.code, format: room.match.state.format, capacity: seatCount(room.match.state.format), activeSeat: activeSeat(room.match.state), players: room.seats.map((s, seat) => ({ name: s.name, connected: !!s.socketId, seat, team: teamOfSeat(seat) })), state: room.match.state, events: [] });
   const publish = (room: Room) => { io.to(room.code).emit('room:state', { ...info(room), events: room.match.drainEvents() }); };
   const socketRoom = (socket: RoomSocket) => socket.data.room ? rooms.get(socket.data.room) : undefined;
   function leave(socket: RoomSocket) {
