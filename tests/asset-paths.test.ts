@@ -29,6 +29,3 @@ test('every prop path the render modules request exists under public/', () => {
     }
   }
 });
-
-// Pub GLBs are meshopt-compressed and quantized (scripts/meshopt-pub-assets.py). Quantization moves
-// mesh offsets onto node transforms; tests/pub-placement.test.ts checks every surface still lands in place.
