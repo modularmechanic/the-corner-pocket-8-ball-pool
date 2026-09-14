@@ -14,13 +14,17 @@ function fixture(){
 }
 function count(scene:THREE.Scene){const result={point:0,area:0,spot:0};scene.traverseVisible(object=>{if(object instanceof THREE.PointLight)result.point++;if(object instanceof THREE.RectAreaLight)result.area++;if(object instanceof THREE.SpotLight)result.spot++;});return result;}
 
-test('practical light budgets reduce shader loop counts and retain all three table spotlights',()=>{
+function lit(scene:THREE.Scene){const result={point:0,area:0};scene.getObjectByName('adaptive-practical-lights')!.traverseVisible(object=>{if(object instanceof THREE.PointLight&&object.intensity>0)result.point++;if(object instanceof THREE.RectAreaLight&&object.intensity>0)result.area++;});return result;}
+
+test('adaptive tiers fade pooled practicals without changing the light counts that key shader programs',()=>{
   const {scene,budget,camera,points}=fixture();
-  for(const [tier,point,area]of [['balanced',6,2],['fast',4,2],['minimum',3,1]] as const){
-    budget.configure('auto',tier);for(let i=0;i<30;i++)budget.update(camera,1/120);
-    assert.deepEqual(count(scene),{point,area,spot:3});assert.ok(points.every(light=>!light.visible));
-    assert.deepEqual(budget.getCounts(),{pointLights:point,areaLights:area});
+  for(const [tier,point,area]of [['refined',6,2],['balanced',6,2],['fast',4,2],['light',3,1],['minimum',3,1],['refined',6,2]] as const){
+    budget.configure('auto',tier,'refined');for(let i=0;i<60;i++)budget.update(camera,1/120);
+    assert.deepEqual(count(scene),{point:6,area:2,spot:3},`${tier} keeps the session's shader light counts`);
+    assert.deepEqual(lit(scene),{point,area},`${tier} lights only its allowance`);
+    assert.ok(points.every(light=>!light.visible));assert.deepEqual(budget.getCounts(),{pointLights:6,areaLights:2});
   }
+  budget.configure('auto','minimum','fast');assert.deepEqual(count(scene),{point:4,area:2,spot:3},'a phone ceiling keeps a smaller fixed pool');
   assert.deepEqual(practicalLightLimits('performance','performance'),{points:3,areas:1});budget.dispose();
 });
 
@@ -46,8 +50,12 @@ test('reflection capture restores every original practical and never leaves dupl
   group.visible=true;assert.deepEqual(count(scene),{point:3,area:1,spot:3});budget.dispose();
 });
 
-test('high quality and disposal restore original source visibility without touching table lamps',()=>{
-  const {scene,budget,points}=fixture();budget.configure('high','high');assert.deepEqual(count(scene),{point:14,area:4,spot:3});
+test('high and ultra pool generously, and disposal restores original source visibility without touching table lamps',()=>{
+  const {scene,budget,points,camera}=fixture();
+  budget.configure('high','high');for(let i=0;i<60;i++)budget.update(camera,1/120);
+  assert.deepEqual(count(scene),{point:8,area:3,spot:3});assert.deepEqual(lit(scene),{point:8,area:3});
+  budget.configure('ultra','ultra');for(let i=0;i<60;i++)budget.update(camera,1/120);
+  assert.deepEqual(count(scene),{point:12,area:4,spot:3});assert.deepEqual(lit(scene),{point:12,area:4});
   budget.configure('auto','fast');assert.ok(points.every(light=>!light.visible));budget.dispose();
   assert.equal(scene.getObjectByName('adaptive-practical-lights'),undefined);assert.deepEqual(count(scene),{point:14,area:4,spot:3});
 });

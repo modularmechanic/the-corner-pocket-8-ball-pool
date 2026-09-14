@@ -573,11 +573,12 @@ export class PoolScene {
     this.quality=quality;this.performanceBudget.setQuality(quality);this.applyGraphicsBudget();
   }
   private applyGraphicsBudget() {
-    const budget=this.performanceBudget.budget;
-    this.practicalLights.configure(this.quality,budget.tier);
+    const budget=this.performanceBudget.budget,ceiling=this.performanceBudget.ceiling;
+    this.practicalLights.configure(this.quality,budget.tier,ceiling.tier);
     this.roomReflections?.setResolution(budget.reflectionSize);
     for(const [index,lamp]of this.tableLights.entries()){
-      lamp.castShadow=budget.shadowLights===3||index===1;
+      // Casters follow the ceiling (program keys); shadow intensity is a uniform.
+      lamp.castShadow=ceiling.shadowLights===3||index===1;lamp.shadow.intensity=budget.shadowLights===3||index===1?.8:0;
       const size=Math.min(this.renderer.capabilities.maxTextureSize,budget.shadowSize);
       if(lamp.shadow.mapSize.x!==size){lamp.shadow.map?.dispose();lamp.shadow.map=null;lamp.shadow.mapSize.setScalar(size);}
       lamp.shadow.radius=3.75*lamp.shadow.mapSize.x/1024;
@@ -606,7 +607,7 @@ export class PoolScene {
     // Gameplay motion always gets fresh shadows. Tiny spinning pickup details
     // may update at 30 Hz while the balls, cue and coin return are stationary.
     if(changed||(this.decorativeShadowsDirty&&this.decorativeShadowAge>=1/30)){
-      for(const lamp of this.tableLights)if(lamp.castShadow)lamp.shadow.needsUpdate=true;
+      for(const lamp of this.tableLights)if(lamp.castShadow&&lamp.shadow.intensity>0)lamp.shadow.needsUpdate=true;
       this.decorativeShadowsDirty=false;this.decorativeShadowAge=0;
     }
   }
