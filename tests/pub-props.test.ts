@@ -11,20 +11,38 @@ function stubCanvasDocument() {
   const gradient = { addColorStop() {} };
   const canvas = () => {
     const element = { width: 1, height: 1, getContext: () => context };
-    const context: Record<string, unknown> = new Proxy({ canvas: element, createLinearGradient: () => gradient, createRadialGradient: () => gradient, measureText: (text: string) => ({ width: text.length * 8 }) },
-      { get: (target, key) => Reflect.get(target, key) ?? (() => {}) });
+    const context: Record<string, unknown> = new Proxy(
+      {
+        canvas: element,
+        createLinearGradient: () => gradient,
+        createRadialGradient: () => gradient,
+        measureText: (text: string) => ({ width: text.length * 8 }),
+      },
+      { get: (target, key) => Reflect.get(target, key) ?? (() => {}) },
+    );
     return element;
   };
   Object.defineProperty(globalThis, 'document', { value: { createElement: canvas }, configurable: true });
 }
 
-test('the table and the pub request the wood scans once, and bottle placeholders share their models\' parent', () => {
+test("the table and the pub request the wood scans once, and bottle placeholders share their models' parent", () => {
   stubCanvasDocument();
-  const parses = new Map<string, number>(), hanging = <T>(url: string) => { parses.set(url, (parses.get(url) ?? 0) + 1); return new Promise<T>(() => {}); };
+  const parses = new Map<string, number>(),
+    hanging = <T>(url: string) => {
+      parses.set(url, (parses.get(url) ?? 0) + 1);
+      return new Promise<T>(() => {});
+    };
   const installer = createPropInstaller({ model: hanging, texture: hanging });
   const requests: [string, ModelRequest][] = [];
-  const recording: PropInstaller = { ...installer, model: (path, request) => { requests.push([path, request]); installer.model(path, request); } };
-  const surfaces = createTableSurfaces(recording), pub = buildPub(new THREE.Scene(), recording);
+  const recording: PropInstaller = {
+    ...installer,
+    model: (path, request) => {
+      requests.push([path, request]);
+      installer.model(path, request);
+    },
+  };
+  const surfaces = createTableSurfaces(recording),
+    pub = buildPub(new THREE.Scene(), recording);
   try {
     for (const [, path] of WOOD_SCAN_MAPS) assert.equal(parses.get(`/${path}`), 1, `${path} is parsed once for both`);
     assert.equal(parses.get(`/${PUB_PROPS.wallPanel}`), 1);
@@ -32,8 +50,15 @@ test('the table and the pub request the wood scans once, and bottle placeholders
       const [, request] = requests.find(([requested]) => requested === path)!;
       assert.ok('parent' in request && request.placeholder instanceof Array);
       const [placeholder] = request.placeholder as THREE.Object3D[];
-      assert.ok(placeholder.parent === request.parent, `${path} placeholder follows the rear-wall cutaway with its model`);
+      assert.ok(
+        placeholder.parent === request.parent,
+        `${path} placeholder follows the rear-wall cutaway with its model`,
+      );
       assert.equal(request.parent.parent?.name, 'pub-rear-bar');
     }
-  } finally { installer.dispose(); pub.dispose(); surfaces.dispose(); }
+  } finally {
+    installer.dispose();
+    pub.dispose();
+    surfaces.dispose();
+  }
 });

@@ -10,8 +10,17 @@ export type MatchCommand =
   | { type: 'rematch' }
   | { type: 'advance' }
   | { type: 'reset'; seed?: string; options?: GameOptions };
-export interface MatchActor { seat: number; team: 0 | 1; controller: 'human' | 'ai'; canAct: boolean }
-export interface MatchUpdate { aiPaused?: boolean; muted?: boolean; aiCameraReady?: boolean }
+export interface MatchActor {
+  seat: number;
+  team: 0 | 1;
+  controller: 'human' | 'ai';
+  canAct: boolean;
+}
+export interface MatchUpdate {
+  aiPaused?: boolean;
+  muted?: boolean;
+  aiCameraReady?: boolean;
+}
 export type MatchChange = { type: 'state' | 'connection' | 'replaced' } | { type: 'error'; error: string };
 export interface Match {
   readonly mode: Mode;

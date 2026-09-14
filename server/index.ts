@@ -14,10 +14,15 @@ if (process.env.NODE_ENV === 'production') {
 } else {
   const { createServer: createViteServer, loadEnv } = await import('vite');
   // The development page talks to this process's rooms unless the environment or a .env file says otherwise.
-  if (loadEnv('development', process.cwd(), 'VITE_').VITE_ROOM_SERVER_URL === undefined) process.env.VITE_ROOM_SERVER_URL = 'same-origin';
+  if (loadEnv('development', process.cwd(), 'VITE_').VITE_ROOM_SERVER_URL === undefined)
+    process.env.VITE_ROOM_SERVER_URL = 'same-origin';
   const vite = await createViteServer({ server: { middlewareMode: true, hmr: { server: http } }, appType: 'spa' });
   app.use(vite.middlewares);
 }
 const port = Number(process.env.PORT) || 3000;
 http.listen(port, '0.0.0.0', () => console.log(`The Corner Pocket is open at http://localhost:${port}`));
-process.on('SIGTERM', async () => { await multiplayer.close(); http.close(); process.exit(0); });
+process.on('SIGTERM', async () => {
+  await multiplayer.close();
+  http.close();
+  process.exit(0);
+});

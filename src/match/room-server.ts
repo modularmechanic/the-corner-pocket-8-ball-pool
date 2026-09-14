@@ -11,6 +11,10 @@ export function resolveRoomServer(setting: string | undefined): { url?: string }
   try {
     const url = new URL(value);
     // Socket.IO reads a URL path as a namespace, so only the origin is kept.
-    return url.protocol === 'https:' || url.protocol === 'http:' && LOCAL_HOSTS.has(url.hostname) ? { url: url.origin } : null;
-  } catch { return null; }
+    return url.protocol === 'https:' || (url.protocol === 'http:' && LOCAL_HOSTS.has(url.hostname))
+      ? { url: url.origin }
+      : null;
+  } catch {
+    return null;
+  }
 }

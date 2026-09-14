@@ -1,12 +1,27 @@
 import type { CueId } from '../simulation/cues';
 import type { GameFormat, GameOptions, GameState, Shot, TableEvent } from '../simulation/types';
 
-export interface CommandResult { ok: boolean; error?: string }
-export interface Identity { token: string; name: string }
-export interface RoomPlayer { name: string; connected: boolean; seat: number; team: 0 | 1 }
+export interface CommandResult {
+  ok: boolean;
+  error?: string;
+}
+export interface Identity {
+  token: string;
+  name: string;
+}
+export interface RoomPlayer {
+  name: string;
+  connected: boolean;
+  seat: number;
+  team: 0 | 1;
+}
 export interface RoomSnapshot {
-  code: string; format: GameFormat; capacity: 2 | 4;
-  players: RoomPlayer[]; state: GameState; events: TableEvent[];
+  code: string;
+  format: GameFormat;
+  capacity: 2 | 4;
+  players: RoomPlayer[];
+  state: GameState;
+  events: TableEvent[];
 }
 export type RoomReply = CommandResult & Partial<RoomSnapshot> & { seat?: number };
 export type AcceptedRoom = RoomSnapshot & { ok: true; seat: number };
@@ -25,7 +40,16 @@ export interface ServerToClientEvents {
   'room:state': (room: RoomSnapshot) => void;
   'room:replaced': () => void;
 }
-export interface SocketData { room?: string; seat?: number }
+export interface SocketData {
+  room?: string;
+  seat?: number;
+}
 export function acceptedRoom(reply: RoomReply): reply is AcceptedRoom {
-  return reply.ok && !!reply.state && typeof reply.code === 'string' && typeof reply.seat === 'number' && Array.isArray(reply.players);
+  return (
+    reply.ok &&
+    !!reply.state &&
+    typeof reply.code === 'string' &&
+    typeof reply.seat === 'number' &&
+    Array.isArray(reply.players)
+  );
 }

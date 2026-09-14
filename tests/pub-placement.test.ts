@@ -22,69 +22,116 @@ const round = (value: number) => Math.round(value * 1e4) / 1e4 || 0;
 
 async function placements(): Promise<Placement[]> {
   const errors = installHeadlessPubAssets();
-  const scene = new THREE.Scene(), installer = createPropInstaller();
-  const surfaces = createTableSurfaces(installer), pub = buildPub(scene, installer);
-  new TableModel(scene, surfaces, { plaque: new THREE.Texture(), brushedSteel: new THREE.Texture(), coinFace: new THREE.Texture(), balls: Array.from({ length: 16 }, () => new THREE.Texture()) });
+  const scene = new THREE.Scene(),
+    installer = createPropInstaller();
+  const surfaces = createTableSurfaces(installer),
+    pub = buildPub(scene, installer);
+  new TableModel(scene, surfaces, {
+    plaque: new THREE.Texture(),
+    brushedSteel: new THREE.Texture(),
+    coinFace: new THREE.Texture(),
+    balls: Array.from({ length: 16 }, () => new THREE.Texture()),
+  });
   try {
     const settled = await installer.settled();
     assert.deepEqual([settled.failed, errors], [[], []]);
     scene.updateMatrixWorld(true);
-    const records: Placement[] = [], world = new THREE.Matrix4(), instance = new THREE.Matrix4(), box = new THREE.Box3();
-    scene.traverseVisible(object => {
+    const records: Placement[] = [],
+      world = new THREE.Matrix4(),
+      instance = new THREE.Matrix4(),
+      box = new THREE.Box3();
+    scene.traverseVisible((object) => {
       if (!(object instanceof THREE.Mesh)) return;
-      const label = (Array.isArray(object.material) ? object.material : [object.material]).map(material => material.name || material.type).join('+');
-      const geometry = object.geometry as THREE.BufferGeometry, uv = geometry.getAttribute('uv');
+      const label = (Array.isArray(object.material) ? object.material : [object.material])
+        .map((material) => material.name || material.type)
+        .join('+');
+      const geometry = object.geometry as THREE.BufferGeometry,
+        uv = geometry.getAttribute('uv');
       // Each decade's four photographs merge into one mesh over one atlas, so its extremes cannot see two
       // photos trading cells: record every triangle's own box and UV window instead.
       if (/^Pool club photographs/.test(label) && !(object instanceof THREE.InstancedMesh)) {
-        const index = geometry.index, position = geometry.getAttribute('position'), corner = new THREE.Vector3(), uvWindow = new THREE.Box2(), texel = new THREE.Vector2();
+        const index = geometry.index,
+          position = geometry.getAttribute('position'),
+          corner = new THREE.Vector3(),
+          uvWindow = new THREE.Box2(),
+          texel = new THREE.Vector2();
         for (let start = 0; start < (index ?? position).count; start += 3) {
-          box.makeEmpty(); uvWindow.makeEmpty();
+          box.makeEmpty();
+          uvWindow.makeEmpty();
           for (let k = start; k < start + 3; k++) {
             const vertex = index ? index.getX(k) : k;
             box.expandByPoint(corner.fromBufferAttribute(position, vertex).applyMatrix4(object.matrixWorld));
             uvWindow.expandByPoint(texel.set(uv.getX(vertex), uv.getY(vertex)));
           }
-          records.push([label, ...[...box.min.toArray(), ...box.max.toArray(), ...uvWindow.min.toArray(), ...uvWindow.max.toArray()].map(round)]);
+          records.push([
+            label,
+            ...[...box.min.toArray(), ...box.max.toArray(), ...uvWindow.min.toArray(), ...uvWindow.max.toArray()].map(
+              round,
+            ),
+          ]);
         }
         return;
       }
       geometry.computeBoundingBox();
       const uvRange: number[] = [];
       if (uv) {
-        const min = [Infinity, Infinity], max = [-Infinity, -Infinity];
-        for (let i = 0; i < uv.count; i++) for (const axis of [0, 1]) {
-          const value = axis ? uv.getY(i) : uv.getX(i);
-          min[axis] = Math.min(min[axis], value); max[axis] = Math.max(max[axis], value);
-        }
+        const min = [Infinity, Infinity],
+          max = [-Infinity, -Infinity];
+        for (let i = 0; i < uv.count; i++)
+          for (const axis of [0, 1]) {
+            const value = axis ? uv.getY(i) : uv.getX(i);
+            min[axis] = Math.min(min[axis], value);
+            max[axis] = Math.max(max[axis], value);
+          }
         uvRange.push(...min, ...max);
       }
       const instances = object instanceof THREE.InstancedMesh ? object.count : 1;
       for (let i = 0; i < instances; i++) {
         world.copy(object.matrixWorld);
-        if (object instanceof THREE.InstancedMesh) { object.getMatrixAt(i, instance); world.multiply(instance); }
+        if (object instanceof THREE.InstancedMesh) {
+          object.getMatrixAt(i, instance);
+          world.multiply(instance);
+        }
         box.copy(geometry.boundingBox!).applyMatrix4(world);
         records.push([label, ...[...box.min.toArray(), ...box.max.toArray(), ...uvRange].map(round)]);
       }
     });
     return records;
-  } finally { installer.dispose(); pub.dispose(); surfaces.dispose(); }
+  } finally {
+    installer.dispose();
+    pub.dispose();
+    surfaces.dispose();
+  }
 }
 
 test('every pub and table surface keeps its world placement and UV range', async () => {
   const actual = await placements();
-  if (process.env.WRITE_PUB_PLACEMENT) writeFileSync(FIXTURE, `[\n${actual.map(record => JSON.stringify(record)).sort().join(',\n')}\n]\n`);
+  if (process.env.WRITE_PUB_PLACEMENT)
+    writeFileSync(
+      FIXTURE,
+      `[\n${actual
+        .map((record) => JSON.stringify(record))
+        .sort()
+        .join(',\n')}\n]\n`,
+    );
   const expected = JSON.parse(readFileSync(FIXTURE, 'utf8')) as Placement[];
   const unmatched = new Map<string, number[][]>();
-  for (const [label, ...values] of actual) unmatched.set(label, [...unmatched.get(label) ?? [], values]);
+  for (const [label, ...values] of actual) unmatched.set(label, [...(unmatched.get(label) ?? []), values]);
   // Matched as a multiset: load order decides scene order, never placement.
   const moved: string[] = [];
   for (const [label, ...values] of expected) {
     const candidates = unmatched.get(label) ?? [];
-    let best = -1, error = Infinity;
+    let best = -1,
+      error = Infinity;
     candidates.forEach((candidate, index) => {
-      const distance = candidate.length === values.length ? Math.max(...candidate.map((value, axis) => Math.abs(value - values[axis]))) : Infinity;
-      if (distance < error) { best = index; error = distance; }
+      const distance =
+        candidate.length === values.length
+          ? Math.max(...candidate.map((value, axis) => Math.abs(value - values[axis])))
+          : Infinity;
+      if (distance < error) {
+        best = index;
+        error = distance;
+      }
     });
     if (error <= TOLERANCE) candidates.splice(best, 1);
     else moved.push(`"${label}" is no longer drawn at box/UV [${values}]; nearest [${candidates[best] ?? 'none'}]`);

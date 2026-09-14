@@ -7,7 +7,10 @@ export class SnapshotTimeline {
   private events: { at: number; event: TableEvent }[] = [];
   private latest: GameState | null = null;
   push(state: GameState, events: TableEvent[], now: number, immediate = false) {
-    if (this.latest?.seed !== state.seed) { this.clear(); immediate = true; }
+    if (this.latest?.seed !== state.seed) {
+      this.clear();
+      immediate = true;
+    }
     this.latest = state;
     this.snapshots.push({ at: now - (immediate ? NETWORK_DELAY : 0), state });
     if (this.snapshots.length > 24) this.snapshots.shift();
@@ -20,12 +23,14 @@ export class SnapshotTimeline {
     return this.snapshots[0]?.state ?? this.latest;
   }
   sample(now: number): GameState | null {
-    const target = now - NETWORK_DELAY, shown = this.shown(now);
-    const before = this.snapshots[0], after = this.snapshots[1];
+    const target = now - NETWORK_DELAY,
+      shown = this.shown(now);
+    const before = this.snapshots[0],
+      after = this.snapshots[1];
     if (!before) return shown;
     if (!after || target <= before.at || before.state.seed !== after.state.seed) return before.state;
     if (before.state.phase !== 'rolling' || after.state.shotCount !== before.state.shotCount) return before.state;
-    const alpha = Math.max(0, Math.min(1, (target - before.at) / Math.max(.01, after.at - before.at)));
+    const alpha = Math.max(0, Math.min(1, (target - before.at) / Math.max(0.01, after.at - before.at)));
     return { ...before.state, balls: interpolateBalls(before.state.balls, after.state.balls, alpha) };
   }
   drainEvents(now: number): TableEvent[] {
@@ -33,6 +38,12 @@ export class SnapshotTimeline {
     while (this.events.length && this.events[0].at <= now) ready.push(this.events.shift()!.event);
     return ready;
   }
-  mute() { this.events = []; }
-  clear() { this.snapshots = []; this.events = []; this.latest = null; }
+  mute() {
+    this.events = [];
+  }
+  clear() {
+    this.snapshots = [];
+    this.events = [];
+    this.latest = null;
+  }
 }
