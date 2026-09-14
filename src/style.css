@@ -115,6 +115,24 @@ a {
   display: grid;
   place-items: center;
 }
+.rulebook-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.rulebook-tabs button {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #b4a5735e;
+  border-radius: 5px;
+  font-size: 11px;
+  color: #c4b488;
+}
+.rulebook-tabs button[aria-pressed='true'] {
+  background: #a58a3c28;
+  border-color: #e6c27f;
+  color: #ede6cf;
+}
 .club-dialog h2 {
   font:
     38px/1.05 'Libre Caslon Display',

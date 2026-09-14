@@ -8,6 +8,7 @@ import { normalizeLevel } from './simulation/level-policy';
 import { CUE_CATALOG, canEquipCue, equippedCue } from './simulation/cues';
 import { POWER_UPS, STATUS_EFFECTS } from './presentation/effects';
 import { deriveTablePresentation, RULE_NAMES, seatLabel, teamLabel } from './presentation/table-presentation';
+import { defaultRuleSet, ruleBook, RULES_SOURCE } from './presentation/rule-book';
 import { inPlacementZone } from './simulation/table-geometry';
 import {
   activeSeat,
@@ -397,6 +398,28 @@ function updateUI() {
   }
 }
 const selectedRules = (id: string): RuleSet => ($<HTMLSelectElement>(id).value === 'new' ? 'new' : 'old');
+function renderRuleBook(rules: RuleSet) {
+  $('rulebook-tab-old').setAttribute('aria-pressed', String(rules === 'old'));
+  $('rulebook-tab-new').setAttribute('aria-pressed', String(rules === 'new'));
+  $('rulebook-source').textContent = RULES_SOURCE[rules];
+  $('rulebook-sections').replaceChildren(
+    ...ruleBook(rules).map(({ title, bullets }) => {
+      const section = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.textContent = title;
+      const list = document.createElement('ul');
+      list.replaceChildren(
+        ...bullets.map((bullet) => {
+          const item = document.createElement('li');
+          item.textContent = bullet;
+          return item;
+        }),
+      );
+      section.append(summary, list);
+      return section;
+    }),
+  );
+}
 /** New racks keep the running session's rules; Start Session passes `session: null` to apply the chosen rules. */
 function newGame(
   nextMode: Mode = match.mode,
@@ -596,6 +619,12 @@ function setupUI() {
     dialog.addEventListener('close', () => updateUI());
   });
   $('help-button').onclick = () => openDialog('rules-dialog');
+  $('rulebook-button').onclick = () => {
+    renderRuleBook(defaultRuleSet(hasStarted, state.rules, profile.preferences.rules));
+    openDialog('rulebook-dialog');
+  };
+  $('rulebook-tab-old').onclick = () => renderRuleBook('old');
+  $('rulebook-tab-new').onclick = () => renderRuleBook('new');
   $('play-nav').onclick = showMainMenu;
   $<HTMLDialogElement>('main-menu').addEventListener('cancel', (event) => {
     if (!hasStarted) event.preventDefault();
@@ -617,6 +646,10 @@ function setupUI() {
   };
   $('menu-level').onchange = () => profile.set('level', normalizeLevel($<HTMLSelectElement>('menu-level').value));
   $('menu-rules').onchange = chooseMenuRules;
+  $('menu-rules-info').onclick = () => {
+    renderRuleBook(selectedRules('menu-rules'));
+    openDialog('rulebook-dialog');
+  };
   $('menu-begin').onclick = () => {
     setMenuPanel(true);
     selectMenuMode(menuMode);
