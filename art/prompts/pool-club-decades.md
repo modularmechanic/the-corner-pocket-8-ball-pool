@@ -6,7 +6,7 @@ Actual generated originals are 1254×1254 PNGs (627×627 per quadrant); the prom
 
 ## 1980s
 
-Destination: `public/textures/pub/pool-1980s-atlas.png`
+Destination: `art/textures/pub/pool-1980s-atlas.png`
 
 Use case: photorealistic-natural / historical-scene. Asset type: texture atlas containing FOUR separate fictional pool-club photographs for framed pictures inside a 3D English pub game. Produce ONE perfectly SQUARE 2048×2048 image. Layout is EXACTLY two columns by two rows of EQUAL SQUARE photographs, edge to edge, occupying the entire canvas: no outer margin, no gutters, no separators, no frames, no rounded corners. Each quadrant is a separate full-bleed photograph with its own different people, composition and event; do not blend scenes across the central boundaries. All people are fictional adults, not celebrities, and look naturally human with correct hands and cue grips. Authentic 8-ball pool tables and wooden cues, convincing green baize, balls and pub interiors. No added words, dates, captions, logos, readable signs, watermark, or decorative collage effects. These are invented club memories, not reproductions of archival photographs. 
 Era and medium: 1980s Britain. Scanned consumer 35mm color prints, restrained warm fading, tiny authentic film grain, direct flash, soft edges. Feathered hair, modest moustaches, patterned jumpers, high-waisted trousers, polo shirts. No modern phones or flat screens.
@@ -18,7 +18,7 @@ Bottom-right: a mixed adult doubles charity team of four, one Black man, two whi
 
 ## 1990s
 
-Destination: `public/textures/pub/pool-1990s-atlas.png`
+Destination: `art/textures/pub/pool-1990s-atlas.png`
 
 Use case: photorealistic-natural / historical-scene. Asset type: texture atlas containing FOUR separate fictional pool-club photographs for framed pictures inside a 3D English pub game. Produce ONE perfectly SQUARE 2048×2048 image. Layout is EXACTLY two columns by two rows of EQUAL SQUARE photographs, edge to edge, occupying the entire canvas: no outer margin, no gutters, no separators, no frames, no rounded corners. Each quadrant is a separate full-bleed photograph with its own different people, composition and event; do not blend scenes across the central boundaries. All people are fictional adults, not celebrities, and look naturally human with correct hands and cue grips. Authentic 8-ball pool tables and wooden cues, convincing green baize, balls and pub interiors. No added words, dates, captions, logos, readable signs, watermark, or decorative collage effects. These are invented club memories, not reproductions of archival photographs. 
 Era and medium: 1990s Britain. Genuine-looking scanned 35mm consumer color photography, slightly cool flash, gentle grain, occasional red-eye-like catchlights but clear natural faces. Period denim, loose sports polos, waistcoats, practical shirts, 1990s hair. No smartphones.
@@ -30,7 +30,7 @@ Bottom-right: 1999 adult South Asian pool player receives a cup from an older wh
 
 ## 2000s
 
-Destination: `public/textures/pub/pool-2000s-atlas.png`
+Destination: `art/textures/pub/pool-2000s-atlas.png`
 
 Use case: photorealistic-natural / historical-scene. Asset type: texture atlas containing FOUR separate fictional pool-club photographs for framed pictures inside a 3D English pub game. Produce ONE perfectly SQUARE 2048×2048 image. Layout is EXACTLY two columns by two rows of EQUAL SQUARE photographs, edge to edge, occupying the entire canvas: no outer margin, no gutters, no separators, no frames, no rounded corners. Each quadrant is a separate full-bleed photograph with its own different people, composition and event; do not blend scenes across the central boundaries. All people are fictional adults, not celebrities, and look naturally human with correct hands and cue grips. Authentic 8-ball pool tables and wooden cues, convincing green baize, balls and pub interiors. No added words, dates, captions, logos, readable signs, watermark, or decorative collage effects. These are invented club memories, not reproductions of archival photographs. 
 Era and medium: 2000s Britain. Early digital compact-camera snapshots, direct flash and mild highlight clipping, realistic slightly crunchy sensor detail, natural imperfect framing. Period button shirts, zip fleeces, fitted polo shirts, modest spiky hair. No contemporary 2020s fashion.
@@ -42,7 +42,7 @@ Bottom-right: 2009 older adult club stalwart receives a retirement trophy from a
 
 ## 2010s
 
-Destination: `public/textures/pub/pool-2010s-atlas.png`
+Destination: `art/textures/pub/pool-2010s-atlas.png`
 
 Use case: photorealistic-natural / historical-scene. Asset type: texture atlas containing FOUR separate fictional pool-club photographs for framed pictures inside a 3D English pub game. Produce ONE perfectly SQUARE 2048×2048 image. Layout is EXACTLY two columns by two rows of EQUAL SQUARE photographs, edge to edge, occupying the entire canvas: no outer margin, no gutters, no separators, no frames, no rounded corners. Each quadrant is a separate full-bleed photograph with its own different people, composition and event; do not blend scenes across the central boundaries. All people are fictional adults, not celebrities, and look naturally human with correct hands and cue grips. Authentic 8-ball pool tables and wooden cues, convincing green baize, balls and pub interiors. No added words, dates, captions, logos, readable signs, watermark, or decorative collage effects. These are invented club memories, not reproductions of archival photographs. 
 Era and medium: 2010s Britain. Natural digital documentary photography and occasional phone-camera-style snapshots, believable ambient pub light with clear faces and a little sensor grain. Period casual denim, check shirts, simple polos and cardigans. Not a glossy advertisement.
@@ -54,7 +54,7 @@ Bottom-right: 2019 league presentation, older adult Asian woman player lifting a
 
 ## 2020s
 
-Destination: `public/textures/pub/pool-2020s-atlas.png`
+Destination: `art/textures/pub/pool-2020s-atlas.png`
 
 Use case: photorealistic-natural / historical-scene. Asset type: texture atlas containing FOUR separate fictional pool-club photographs for framed pictures inside a 3D English pub game. Produce ONE perfectly SQUARE 2048×2048 image. Layout is EXACTLY two columns by two rows of EQUAL SQUARE photographs, edge to edge, occupying the entire canvas: no outer margin, no gutters, no separators, no frames, no rounded corners. Each quadrant is a separate full-bleed photograph with its own different people, composition and event; do not blend scenes across the central boundaries. All people are fictional adults, not celebrities, and look naturally human with correct hands and cue grips. Authentic 8-ball pool tables and wooden cues, convincing green baize, balls and pub interiors. No added words, dates, captions, logos, readable signs, watermark, or decorative collage effects. These are invented club memories, not reproductions of archival photographs. 
 Era and medium: 2020s Britain. Current candid high-quality phone and mirrorless photography, natural skin pores, realistic mixed warm pub light and daylight, crisp but not oversharpened, no beauty retouching or cinematic fantasy. Modern practical casual clothing; every person an adult.

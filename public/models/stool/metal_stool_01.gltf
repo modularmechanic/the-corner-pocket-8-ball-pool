@@ -3,6 +3,12 @@
     "generator": "Khronos glTF Blender I/O v5.1.18",
     "version": "2.0"
   },
+  "extensionsUsed": [
+    "EXT_texture_webp"
+  ],
+  "extensionsRequired": [
+    "EXT_texture_webp"
+  ],
   "scene": 0,
   "scenes": [
     {
@@ -54,32 +60,44 @@
   "textures": [
     {
       "sampler": 0,
-      "source": 0
+      "extensions": {
+        "EXT_texture_webp": {
+          "source": 0
+        }
+      }
     },
     {
       "sampler": 0,
-      "source": 1
+      "extensions": {
+        "EXT_texture_webp": {
+          "source": 1
+        }
+      }
     },
     {
       "sampler": 0,
-      "source": 2
+      "extensions": {
+        "EXT_texture_webp": {
+          "source": 2
+        }
+      }
     }
   ],
   "images": [
     {
-      "mimeType": "image/jpeg",
+      "mimeType": "image/webp",
       "name": "metal_stool_01_nor_gl",
-      "uri": "textures/metal_stool_01_nor_gl_2k.jpg"
+      "uri": "textures/metal_stool_01_nor_gl_1k.webp"
     },
     {
-      "mimeType": "image/jpeg",
+      "mimeType": "image/webp",
       "name": "metal_stool_01_diff",
-      "uri": "textures/metal_stool_01_diff_2k.jpg"
+      "uri": "textures/metal_stool_01_diff_1k.webp"
     },
     {
-      "mimeType": "image/jpeg",
+      "mimeType": "image/webp",
       "name": "metal_stool_01_metal-metal_stool_01_rough",
-      "uri": "textures/metal_stool_01_arm_2k.jpg"
+      "uri": "textures/metal_stool_01_arm_1k.webp"
     }
   ],
   "accessors": [

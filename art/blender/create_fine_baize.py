@@ -2,6 +2,8 @@
 import bpy, math, json
 from pathlib import Path
 ROOT=Path('/Users/clemensvanderwalt/Documents/ChatGPT/coolpool')
+# Only color/normal/surface are loaded at runtime; if re-run, move baize-height.png and
+# baize-roughness.png to art/textures/table/ afterward (unused by the game, kept for provenance).
 OUT=ROOT/'public/textures/table';OUT.mkdir(parents=True,exist_ok=True)
 scene=bpy.data.scenes.new('Corner Pocket Fine Baize Bake')
 previous_scene=bpy.context.window.scene
