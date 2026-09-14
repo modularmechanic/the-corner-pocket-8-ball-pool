@@ -65,9 +65,9 @@ export interface OverheadFit { rotated:boolean;left:number;right:number;top:numb
 export function fitOverheadView(width:number,height:number,insets:ViewportInsets,fill=.94):OverheadFit {
   if(!(width>0&&height>0)){width=16;height=9;}
   const edge=(value:number)=>Number.isFinite(value)?Math.max(0,value):0;
-  let top=edge(insets.top),right=edge(insets.right),bottom=edge(insets.bottom),left=edge(insets.left);
-  // Measurements that leave almost nothing (a hidden or collapsed HUD) fall back to the whole canvas.
-  if(width-left-right<width*.25||height-top-bottom<height*.25)top=right=bottom=left=0;
+  // Controls never get more than 85% of an axis: a crowded screen shrinks both sides and keeps the table between them.
+  const share=(size:number,a:number,b:number)=>{const scale=Math.min(1,size*.85/(a+b||1));return [a*scale,b*scale];};
+  const [left,right]=share(width,edge(insets.left),edge(insets.right)),[top,bottom]=share(height,edge(insets.top),edge(insets.bottom));
   const freeWidth=width-left-right,freeHeight=height-top-bottom;
   const flat=Math.min(freeWidth/(2*6.60),freeHeight/(2*3.72)),upright=Math.min(freeWidth/(2*3.72),freeHeight/(2*6.60));
   const rotated=upright>flat,scale=Math.max(flat,upright)*fill,centerX=left+freeWidth/2,centerY=top+freeHeight/2;

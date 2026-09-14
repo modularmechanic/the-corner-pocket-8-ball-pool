@@ -82,18 +82,25 @@ test('returning from perspective orbit to overhead blends projection and keeps p
   assert.deepEqual(blend.camera.projectionMatrix,overhead.projectionMatrix);
 });
 
-test('touch overhead fit frames the whole table inside the controls\' free area for phone portrait, phone landscape and tablet',()=>{
-  // Viewports with the pixels the scoreboard, tool row, dial, Engage, Shoot and power slider cover.
+test('touch overhead fit frames the whole table inside the controls\' free area on phones and tablets, never the whole canvas',()=>{
+  // Canvas-sized viewports (visible area with browser bars) and the pixels the scoreboard, tools, dial, Engage, Shoot, mode tabs and slider cover.
   const cases=[
-    {name:'phone portrait 390x844',width:390,height:844,insets:{top:160,right:100,bottom:230,left:8},rotated:true},
-    {name:'phone landscape 844x390',width:844,height:390,insets:{top:108,right:184,bottom:80,left:171},rotated:false},
-    {name:'tablet portrait 768x1024',width:768,height:1024,insets:{top:180,right:100,bottom:242,left:8},rotated:false},
+    {name:'small phone portrait 360x584',width:360,height:584,insets:{top:121,right:94,bottom:300,left:8},rotated:false},
+    {name:'phone portrait 390x664',width:390,height:664,insets:{top:121,right:94,bottom:300,left:8},rotated:false},
+    {name:'tall phone portrait 390x844',width:390,height:844,insets:{top:121,right:98,bottom:316,left:8},rotated:true},
+    {name:'phone landscape 844x340',width:844,height:340,insets:{top:64,right:178,bottom:8,left:190},rotated:false},
+    {name:'tablet portrait 768x1024',width:768,height:1024,insets:{top:153,right:112,bottom:296,left:8},rotated:false},
+    {name:'tablet landscape 1024x768',width:1024,height:768,insets:{top:188,right:180,bottom:8,left:244},rotated:false},
+    // A measurement that leaves no room (a collapsed HUD): controls get 85% of the height, the table the rest.
+    {name:'crowded 390x844',width:390,height:844,insets:{top:500,right:0,bottom:400,left:0},rotated:false},
   ];
   for(const {name,width,height,insets,rotated}of cases){
     const fit=fitOverheadView(width,height,insets),camera=new THREE.OrthographicCamera(-8,8,4,-4,.1,100);applyOverheadFit(camera,fit);
     assert.equal(fit.rotated,rotated,`${name}: the long table axis follows the screen axis that frames it larger`);
     const pixel=(x:number,z:number)=>{const p=new THREE.Vector3(x,0,z).project(camera);return {x:(p.x+1)/2*width,y:(1-p.y)/2*height};};
-    const free={left:insets.left,right:width-insets.right,top:insets.top,bottom:height-insets.bottom};
+    const vertical=Math.min(1,height*.85/(insets.top+insets.bottom)),horizontal=Math.min(1,width*.85/(insets.left+insets.right||1));
+    const free={left:insets.left*horizontal,right:width-insets.right*horizontal,top:insets.top*vertical,bottom:height-insets.bottom*vertical};
+    assert.notDeepEqual(fit,fitOverheadView(width,height,{top:0,right:0,bottom:0,left:0}),`${name}: never the whole canvas`);
     const center=pixel(0,0);
     assert.ok(Math.abs(center.x-(free.left+free.right)/2)<1e-6&&Math.abs(center.y-(free.top+free.bottom)/2)<1e-6,`${name}: table centered in the free area`);
     const corners=[-6.6,6.6].flatMap(x=>[-3.72,3.72].map(z=>pixel(x,z)));
@@ -105,8 +112,6 @@ test('touch overhead fit frames the whole table inside the controls\' free area 
     const point=new THREE.Vector3(2.4,.18,-1.1),ndc=point.clone().project(camera);
     assert.ok(rayFromViewport(camera,ndc.x,ndc.y).intersectPlane(new THREE.Plane(new THREE.Vector3(0,1,0),-.18),new THREE.Vector3())!.distanceTo(point)<1e-7);
   }
-  const whole=fitOverheadView(390,844,{top:0,right:0,bottom:0,left:0});
-  assert.deepEqual(fitOverheadView(390,844,{top:500,right:0,bottom:400,left:0}),whole,'a collapsed measurement falls back to the whole canvas');
   assert.deepEqual(fitOverheadView(0,NaN,{top:NaN,right:-5,bottom:0,left:0}),fitOverheadView(16,9,{top:0,right:0,bottom:0,left:0}));
 });
 

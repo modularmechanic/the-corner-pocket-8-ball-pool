@@ -281,12 +281,13 @@ function fitTouchOverhead() {
   touchFitted = true;
   const box = $('scene').getBoundingClientRect(), portrait = matchMedia('(orientation: portrait)').matches;
   const rects = (...elements: (Element | null)[]) => elements.map(element => element?.getBoundingClientRect()).filter((rect): rect is DOMRect => !!rect?.width && !!rect.height);
-  const tools = document.querySelector('.stage-tools'), dial = $('aim-dial'), shoot = $('touch-shoot');
-  const top = Math.max(box.top, ...rects($('player-0'), $('player-1')).map(rect => rect.bottom)) - box.top;
-  const right = box.right - Math.min(box.right, ...rects($('touch-power'), shoot).map(rect => rect.left));
-  // Portrait stacks the tools, status, dial, Engage and Shoot along the bottom; landscape keeps tools and dial in a left column.
-  const left = portrait ? 0 : Math.max(box.left, ...rects(tools, dial).map(rect => rect.right)) - box.left;
-  const bottom = box.bottom - Math.min(box.bottom, ...rects($('touch-engage'), document.querySelector('.bottom-hud'), ...(portrait ? [tools, $('shot-status'), dial, shoot] : [])).map(rect => rect.top));
+  const tools = document.querySelector('.stage-tools'), dial = $('aim-dial'), shoot = $('touch-shoot'), engage = $('touch-engage'), tabs = document.querySelector('.bottom-hud');
+  // Portrait stacks tools, dial, Engage, Shoot and the mode tabs along the bottom; landscape puts tools and dial in a left column
+  // and the tabs, slider, Engage and Shoot in a right column. The status line is not a control and may cross the table.
+  const top = Math.max(box.top, ...rects($('player-0'), $('player-1'), document.querySelector('.header-actions')).map(rect => rect.bottom)) - box.top;
+  const left = Math.max(box.left, ...rects(...(portrait ? [] : [tools, dial])).map(rect => rect.right)) - box.left;
+  const right = box.right - Math.min(box.right, ...rects($('touch-power'), shoot, ...(portrait ? [] : [engage, tabs])).map(rect => rect.left));
+  const bottom = box.bottom - Math.min(box.bottom, ...rects(...(portrait ? [tools, dial, engage, shoot, tabs] : [])).map(rect => rect.top));
   const gap = 8;
   scene.setOverheadInsets({ top: top + gap, right: right + gap, bottom: bottom + gap, left: left + gap });
 }
