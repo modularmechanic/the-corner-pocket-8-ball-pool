@@ -86,11 +86,6 @@ export class PoolScene {
   private renderedSeed = '';
   private renderedShotCount = 0;
   private arena = new ArenaVisuals(this.scene);
-  // The shadow budget watches these groups.
-  private tableOccluders: THREE.Object3D[] = [];
-  private obstacles = this.arena.obstacles;
-  private hazards = this.arena.hazards;
-  private pickups = this.arena.pickups;
   private pocketDrops = new Map<number, PocketDrop>();
   private outFades = new Map<number,OutFade>();
   private effects: TableEffects;
@@ -180,7 +175,7 @@ export class PoolScene {
     this.pub = buildPub(this.scene, this.propInstaller);
   }
   private buildTable() {
-    this.table=new TableModel(this.scene,this.surfaces,drawTableTextures(this.ballMaps));this.tableOccluders=this.table.occluders;
+    this.table=new TableModel(this.scene,this.surfaces,drawTableTextures(this.ballMaps));
   }
   private buildBalls() {
     const geo = new THREE.SphereGeometry(TABLE.radius, 64, 48);
@@ -303,14 +298,14 @@ export class PoolScene {
       values.push(object.id,object.visible?1:0,p.x,p.y,p.z,q.x,q.y,q.z,q.w,s.x,s.y,s.z);
     });
     const values=this.shadowValues;values.length=0;
-    for(const object of this.tableOccluders)gather(object,values);
+    for(const object of this.table.occluders)gather(object,values);
     for(const ball of this.balls)gather(ball,values);
     gather(this.cue,values);
-    for(const obstacle of this.obstacles.values())gather(obstacle.group,values);
+    for(const obstacle of this.arena.obstacles.values())gather(obstacle.group,values);
     const changed=this.shadowRevision.changed(values);
     const decorative=this.decorativeShadowValues;decorative.length=0;
-    for(const pickup of this.pickups.values())gather(pickup.group,decorative);
-    for(const hazard of this.hazards.values())gather(hazard.group,decorative);
+    for(const pickup of this.arena.pickups.values())gather(pickup.group,decorative);
+    for(const hazard of this.arena.hazards.values())gather(hazard.group,decorative);
     this.decorativeShadowsDirty=this.decorativeShadowRevision.changed(decorative)||this.decorativeShadowsDirty;
     this.decorativeShadowAge+=dt;
     // Gameplay motion always gets fresh shadows. Tiny spinning pickup details
