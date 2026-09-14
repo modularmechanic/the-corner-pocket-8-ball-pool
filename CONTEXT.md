@@ -32,3 +32,23 @@ _Avoid_: settings (only one part of it), save, account
 **House record**:
 A finished rack's team score saved on this device; the eight best are kept.
 _Avoid_: high score, leaderboard
+
+## Rules
+
+**Rule set**:
+How a foul is paid for, chosen when a session starts and fixed until the session ends. Online, the host's rule set applies to every seat.
+_Avoid_: mode, ruleset toggle, house rules (that is the whole rulebook)
+
+**Old Rules**:
+The rule set in which a foul gives the opponent two shots. The default.
+
+**New Rules**:
+The rule set in which a foul gives the opponent ball in hand anywhere and one visit.
+
+**Two shots**:
+The Old Rules allowance a team receives after the other side fouls. A legal pot turns it into an ordinary visit; a foul while holding it forfeits the rest and gives the other side one visit.
+_Avoid_: free shot, bonus shot, extra turn
+
+**Kitchen**:
+The area behind the head string, where the cue ball is placed after a scratch under Old Rules. Placing it there is head string placement.
+_Avoid_: baulk
