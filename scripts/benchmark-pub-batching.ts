@@ -55,6 +55,6 @@ scene.traverseVisible(object=>{
   contributors.push({name:`${owner}/${object.name||list[0].name||object.geometry.type}`,triangles:Math.round(groups.reduce((sum,group)=>sum+group.count/3,0)*instances),instances});
   for(const group of groups){const material=list[group.materialIndex??0];if(!material?.visible)continue;materials.add(material);const passes=material.transparent&&material.side===THREE.DoubleSide&&!material.forceSinglePass?2:1;drawCalls+=passes;if(material.transparent)transparentDrawCalls+=passes;triangles+=group.count/3*(object instanceof THREE.InstancedMesh?object.count:1);}
 });
-console.log(JSON.stringify({loadedProps:settled.loaded.length,failedProps:settled.failed,meshes,drawCalls,transparentDrawCalls,triangles:Math.round(triangles),materials:materials.size,geometries:geometries.size,constructionMs:Math.round(performance.now()-started),errors,topTriangleContributors:contributors.sort((a,b)=>b.triangles-a.triangles).slice(0,8),diagnostics:pub.diagnostics?.()},null,2));
+console.log(JSON.stringify({fixture:'current',loadedProps:settled.loaded.length,failedProps:settled.failed,meshes,drawCalls,transparentDrawCalls,triangles:Math.round(triangles),materials:materials.size,geometries:geometries.size,constructionMs:Math.round(performance.now()-started),errors,topTriangleContributors:contributors.sort((a,b)=>b.triangles-a.triangles).slice(0,8),diagnostics:pub.diagnostics?.()},null,2));
 installer.dispose();pub.dispose();
 if(errors.length||settled.failed.length)process.exitCode=1;
