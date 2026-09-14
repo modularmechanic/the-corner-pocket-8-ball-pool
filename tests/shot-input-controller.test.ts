@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DIAL_GAIN, ShotInputController, type KeyInput, type PointerInput, type ShotInputCommand, type ShotInputContext, type ShotInputView } from '../src/ui/shot-input-controller';
+import { DIAL_GAIN, inputSchemeFor, ShotInputController, type KeyInput, type PointerInput, type ShotInputCommand, type ShotInputContext, type ShotInputView } from '../src/ui/shot-input-controller';
 
 function rig(overrides: Partial<ShotInputContext> = {}) {
   const context: ShotInputContext = { canAct: true, blocked: false, phase: 'ready', width: 600, cueView: true, ownTurn: true, ...overrides };
@@ -225,11 +225,12 @@ test('locked movement spikes are clamped and the first report after locking is i
   const { input, aimed, scene, pointer, click, hover } = rig(); scene.lockApi = true;
   hover(100, 100); click(100, 100); input.pointerLockChanged(true);
   input.pointerMove(pointer(100, 100, { dx: 3000, dy: -2000 }));
-  input.pointerMove(pointer(100, 100, { dx: 4000 })); input.pointerMove(pointer(100, 100, { dx: -151, dy: 90 })); input.pointerMove(pointer(100, 100, { dx: NaN }));
-  assert.deepEqual(aimed, [{ x: 100, y: 100 }, { x: 250, y: 100 }, { x: 100, y: 190 }, { x: 100, y: 190 }]);
+  input.pointerMove(pointer(100, 100, { dx: 4000 })); input.pointerMove(pointer(100, 100, { dx: -451, dy: 90 }));
+  input.pointerMove(pointer(100, 100, { dx: 380, dy: -390 })); input.pointerMove(pointer(100, 100, { dx: NaN }));
+  assert.deepEqual(aimed, [{ x: 100, y: 100 }, { x: 500, y: 100 }, { x: 100, y: 190 }, { x: 480, y: -200 }, { x: 480, y: -200 }], 'a fast coalesced 380 px move passes; spikes stop at 400 px');
   input.pointerLockChanged(false); input.pointerLockChanged(true); aimed.length = 0;
   input.pointerMove(pointer(100, 100, { dx: 80 })); input.pointerMove(pointer(100, 100, { dx: 5 }));
-  assert.deepEqual(aimed.map(point => point.x), [100, 105], 'every new lock drops its first report');
+  assert.deepEqual(aimed.map(point => point.x), [480, 485], 'every new lock drops its first report');
 });
 
 test('right-drag orbit keeps working on a locked pointer from movement alone', () => {
@@ -308,13 +309,37 @@ test('Space and the shot button cannot send a zero-power shot after Engage', () 
   assert.deepEqual(commands, [{ type: 'shoot', shot: { angle: 0, power: .4, elevation: 0, tipX: 0, tipY: 0 } }]);
 });
 
-test('a mouse taking over from a finger mid-shot keeps the slider power and pulls back along the cue', () => {
+test('a mouse after the touch slider keeps the slider power and pulls back along the cue', () => {
   const { input, pointer } = rig();
-  input.pointerMove(pointer(40, 700, { touch: true })); input.toggleEngage(); input.setSliderPower(.7);
+  // Touch laptop: the mouse rests over the table while a finger uses Engage and the slider (off the canvas).
+  input.pointerMove(pointer(520, 90)); input.toggleEngage(); input.setSliderPower(.7);
   input.pointerMove(pointer(520, 90));
-  assert.equal(input.setup.power, .7, 'the first mouse move re-anchors instead of wiping the power');
+  assert.equal(input.setup.power, .7, 'the next mouse move continues from the slider instead of jumping');
   input.pointerMove(pointer(520, 120));
   assert.ok(Math.abs(input.setup.power - (.7 + 30 / 180)) < 1e-9, 'pulling back toward the player adds power');
+  input.setSliderPower(.4); input.pointerMove(pointer(520, 120));
+  assert.equal(input.setup.power, .4, 'every slider change becomes the new anchor');
+  // A finger on the table between mouse moves re-anchors too.
   input.pointerMove(pointer(60, 650, { touch: true })); input.setSliderPower(.3); input.pointerMove(pointer(300, 300));
   assert.equal(input.setup.power, .3);
+});
+
+test('an unlocked aim lock (click before any mouse movement) lets the next click shoot instead of taking the cue', () => {
+  const { input, commands, calls, scene, pointer, click } = rig(); scene.lockApi = true;
+  click(100, 100); assert.equal(input.setup.stage, 'power', 'no movement seen yet: the click locks aim unlocked');
+  input.pointerMove(pointer(100, 160, { dx: 0, dy: 60 }));
+  assert.equal(input.lockHint, false, 'no "Click to take the cue" hint while a shot is set up');
+  click(100, 160);
+  assert.deepEqual([calls.includes('request-lock'), commands.length], [false, 1]);
+  input.cancel(); input.pointerMove(pointer(100, 160, { dx: 1 })); click(100, 160);
+  assert.deepEqual([calls.includes('request-lock'), input.setup.stage], [true, 'aim'], 'back at the aim stage the click takes the cue again');
+});
+
+test('a stylus drives the touch controls until a real mouse has been used; fingers always do', () => {
+  assert.equal(inputSchemeFor('touch', true, false), 'touch');
+  assert.equal(inputSchemeFor('mouse', false, true), 'mouse');
+  assert.equal(inputSchemeFor('pen', false, false), 'touch', 'Android reports a fine pointer whenever a stylus exists: a hovering pen must not aim');
+  assert.equal(inputSchemeFor('pen', true, false), 'mouse', 'a pen on a computer where a mouse was used works like the mouse');
+  assert.equal(inputSchemeFor('pen', true, true), 'touch', 'a touch-only device keeps the pen on touch controls');
+  assert.equal(inputSchemeFor('', true, false), 'touch');
 });

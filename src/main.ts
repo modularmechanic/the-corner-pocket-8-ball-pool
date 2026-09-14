@@ -14,7 +14,7 @@ import { PoolScene, type Quality } from './render/scene';
 import { shell, icon } from './ui/shell';
 import { TableAudio } from './ui/audio';
 import { createIdentity } from './ui/identity';
-import { ShotInputController, type PointerInput, type ShotInputView } from './ui/shot-input-controller';
+import { inputSchemeFor, ShotInputController, type PointerInput, type ShotInputView } from './ui/shot-input-controller';
 import { PlayerProfile, rackOptions } from './ui/player-profile';
 import { HudWriter, type HudElement } from './ui/hud-writer';
 
@@ -422,8 +422,10 @@ function createShotInput() {
 }
 function setupInput() {
   const canvas = scene.renderer.domElement;
-  // A pen works like a mouse, except on touch-only devices (an iPad with a Pencil and no trackpad).
-  const fingerLike = (event: PointerEvent) => event.pointerType === 'touch' || event.pointerType === 'pen' && matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches;
+  let seenMouse = false;
+  const noteMouse = (event: PointerEvent) => { if (event.pointerType === 'mouse') seenMouse = true; };
+  window.addEventListener('pointermove', noteMouse, true);
+  const fingerLike = (event: PointerEvent) => { noteMouse(event); return inputSchemeFor(event.pointerType, seenMouse, matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches) === 'touch'; };
   const pointer = (event: PointerEvent): PointerInput => ({ id: event.pointerId, x: event.clientX, y: event.clientY, button: event.button, buttons: event.buttons, primary: event.isPrimary, shift: event.shiftKey, dx: event.movementX, dy: event.movementY, touch: fingerLike(event) });
   window.addEventListener('pointerdown', event => setTouchInput(fingerLike(event)), true);
   new ResizeObserver(fitTouchOverhead).observe($('scene'));

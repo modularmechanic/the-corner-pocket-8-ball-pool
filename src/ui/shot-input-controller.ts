@@ -57,7 +57,13 @@ export const LOCK_REFUSAL_MEMORY_MS = 5000;
 /** Chained refusals outside the cooldown (no permission, sandboxed page) that turn locking off for the session. */
 export const LOCK_REFUSAL_LIMIT = 3;
 /** Largest locked movement accepted from one event; Chrome on Windows can report spikes of thousands of pixels. */
-export const LOCKED_MOVE_LIMIT = 150;
+export const LOCKED_MOVE_LIMIT = 400;
+/**
+ * Which controls a pointer drives. A pen counts as a mouse only once a real mouse has been used in this session on a device
+ * with a fine pointer: Android reports a fine pointer whenever a stylus is present, and a hovering stylus must never aim.
+ */
+export const inputSchemeFor = (pointerType: string, seenMouse: boolean, coarseOnly: boolean): 'touch' | 'mouse' =>
+  pointerType === 'mouse' || pointerType === 'pen' && seenMouse && !coarseOnly ? 'mouse' : 'touch';
 /** The touch Shoot button (and Space after Engage) needs an engaged cue with power set. */
 export const canTouchShoot = (setup: Readonly<ShotSetupState>, canAct: boolean, phase: GameState['phase']) =>
   canAct && phase === 'ready' && setup.stage === 'power' && setup.power > 0 && !setup.adjustment;
@@ -92,7 +98,7 @@ export class ShotInputController {
   get canAct() { return this.context().canAct && !this.orbiting; }
   get pointerLocked() { return this.locked; }
   /** "Click to take the cue": the cue view is waiting for a click to lock the pointer. */
-  get lockHint() { const { cueView, phase } = this.context(); return this.lockAvailable && !this.locked && cueView && this.canAct && phase === 'ready'; }
+  get lockHint() { const { cueView, phase } = this.context(); return this.lockAvailable && !this.locked && cueView && this.canAct && phase === 'ready' && this.setupState.stage === 'aim'; }
   // ponytail: a page that refuses every lock but is clicked less often than LOCK_REFUSAL_MEMORY_MS keeps retrying, one swallowed click each time; detect the refusal reason if that shows up.
   private get lockAvailable() { return this.movementReported && this.refusals < LOCK_REFUSAL_LIMIT; }
 
@@ -144,13 +150,14 @@ export class ShotInputController {
     // A mouse taking over mid-shot pulls back along the cue, as after a click.
     const direction = this.view.screenDirection(setup.angle), length = Math.hypot(direction.x, direction.y);
     if (finite(direction.x, direction.y) && length > 0) Object.assign(this.powerAnchor, { dx: direction.x / length, dy: direction.y / length });
-    this.view.resetAimPointer(); this.publish();
+    this.view.resetAimPointer(); this.reanchorPower(); this.publish();
   }
   /** Touch power slider position, 0 (bottom) to 1; the bottom 5% is no power. Only an engaged cue listens, and letting go never shoots. */
   setSliderPower(value: number) {
     if (!Number.isFinite(value) || this.setupState.stage !== 'power' || !this.canAct || this.context().phase !== 'ready') return;
     this.setupState.power = value < .05 ? 0 : Math.min(1, value);
-    this.publish();
+    // A mouse on a touch laptop continues from the slider's power rather than its own last pull-back.
+    this.reanchorPower(); this.publish();
   }
   /** Touch Shoot button. */
   touchShoot() { if (canTouchShoot(this.setupState, this.canAct, this.context().phase)) this.emit({ type: 'shoot', shot: this.shot() }); }
@@ -219,7 +226,8 @@ export class ShotInputController {
     if (phase === 'ball-in-hand') { const point = this.view.tableAt(pointer.x, pointer.y); if (point) this.emit({ type: 'place', ...point }); return; }
     if (phase !== 'ready' || pointer.touch) return;
     // In the cue view an unlocked click only takes the cue: it locks the pointer, never aim or a shot.
-    if (!this.locked && this.lockAvailable && this.context().cueView && this.view.requestPointerLock()) return;
+    // Only while aiming: a shot click after an unlocked aim lock must shoot, not take the cue.
+    if (!this.locked && this.setupState.stage === 'aim' && this.lockAvailable && this.context().cueView && this.view.requestPointerLock()) return;
     if (this.setupState.stage === 'aim') this.moveAim(pointer.x, pointer.y, pointer.shift);
     this.shotPointer = pointer.id;
     if (!this.locked) this.view.capturePointer(pointer.id, false);
