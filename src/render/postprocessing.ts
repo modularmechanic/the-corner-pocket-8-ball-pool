@@ -50,6 +50,25 @@ export class PoolPostprocessing {
     // make the quality telemetry misleading and blur the output upsample.
     this.composer!.setPixelRatio(ratio);this.composer!.setSize(width,height);
   }
+  /** Compile the bloom and output pass programs alongside `prewarmPrograms`, so turning bloom
+   * on never compiles mid-shot. Nothing draws; the passes keep 1×1 targets until bloom is enabled. */
+  prewarm() {
+    this.initialize();
+    const renderer = this.renderer, previous = renderer.getRenderTarget(), target = new THREE.WebGLRenderTarget(1, 1), quad = new THREE.Mesh();
+    try {
+      // Bloom's full-screen quads draw into its own targets: the linear, untone-mapped variant.
+      renderer.setRenderTarget(target);
+      for (const material of [this.bloom!.materialHighPassFilter, ...this.bloom!.separableBlurMaterials, this.bloom!.compositeMaterial, this.bloom!.blendMaterial]) {
+        quad.material = material; renderer.compile(quad, this.camera);
+      }
+      // OutputPass sets its tone-mapping and colour-space defines inside render(), so run it
+      // against a renderer whose only draw call is a compile.
+      renderer.setRenderTarget(null);
+      const compileOnly = { outputColorSpace: renderer.outputColorSpace, toneMapping: renderer.toneMapping, toneMappingExposure: renderer.toneMappingExposure,
+        setRenderTarget() {}, render: (object: THREE.Object3D, camera: THREE.Camera) => renderer.compile(object, camera) };
+      this.output!.render(compileOnly as unknown as THREE.WebGLRenderer, this.composer!.writeBuffer, this.composer!.readBuffer, 0, false);
+    } finally { renderer.setRenderTarget(previous); target.dispose(); }
+  }
   render(scene: THREE.Scene, camera: THREE.Camera, dt: number) {
     if (!this.enabled||!this.composer||!this.scenePass) { this.renderer.render(scene, camera); return; }
     this.scenePass.camera = camera; this.composer.render(dt);

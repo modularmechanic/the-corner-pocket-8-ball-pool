@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { prewarmPrograms } from '../src/render/postprocessing';
+import { PoolPostprocessing, prewarmPrograms } from '../src/render/postprocessing';
 
 function fakeRenderer(){
   const previous=new THREE.WebGLRenderTarget(4,4),compiled:(THREE.WebGLRenderTarget|null)[]=[];
@@ -19,4 +19,24 @@ test('program prewarm compiles the composer (render target) and canvas variants,
   assert.equal(bloom.bound(),bloom.previous);
   const direct=fakeRenderer();prewarmPrograms(direct.renderer,scene,camera,false);
   assert.deepEqual(direct.compiled,[null],'without float targets only the canvas variant exists');assert.equal(direct.bound(),direct.previous);
+});
+
+test('pass prewarm compiles every bloom and output program without drawing or sizing bloom targets',()=>{
+  const previous=new THREE.WebGLRenderTarget(4,4),bound:(THREE.WebGLRenderTarget|null)[]=[],disposed:THREE.WebGLRenderTarget[]=[];
+  const compiled:{material:THREE.Material;target:THREE.WebGLRenderTarget|null;defines:Record<string,unknown>}[]=[];
+  let current:THREE.WebGLRenderTarget|null=previous;
+  // No render or clear methods: any real draw throws.
+  const renderer={getPixelRatio:()=>2,getSize:(size:THREE.Vector2)=>size.set(1,1),getRenderTarget:()=>current,
+    setRenderTarget:(target:THREE.WebGLRenderTarget|null)=>{current=target;bound.push(target);target?.addEventListener('dispose',()=>disposed.push(target));},
+    compile:(object:THREE.Mesh)=>{const material=object.material as THREE.Material;compiled.push({material,target:current,defines:{...(material as THREE.ShaderMaterial).defines}});return new Set();},
+    outputColorSpace:THREE.SRGBColorSpace,toneMapping:THREE.ACESFilmicToneMapping,toneMappingExposure:1} as unknown as THREE.WebGLRenderer;
+  const post=new PoolPostprocessing(renderer,new THREE.Scene(),new THREE.PerspectiveCamera());
+  post.prewarm();
+  const passes=compiled.filter(entry=>!(entry.material as THREE.RawShaderMaterial).isRawShaderMaterial),output=compiled.filter(entry=>(entry.material as THREE.RawShaderMaterial).isRawShaderMaterial);
+  assert.equal(new Set(passes.map(entry=>entry.material)).size,8,'high pass, five blurs, composite and blend');
+  assert.ok(passes.every(entry=>entry.target?.isRenderTarget&&entry.target.width===1&&entry.target.height===1),'linear, untone-mapped variant against a 1×1 target');
+  assert.equal(output.length,1);assert.equal(output[0].target,null);
+  assert.deepEqual(output[0].defines,{SRGB_TRANSFER:'',ACES_FILMIC_TONE_MAPPING:''},'the defines OutputPass derives from the renderer');
+  assert.ok(bound.every(target=>target===null||target===previous||(target.width===1&&target.height===1)),'no full-size target is bound');
+  assert.equal(current,previous);assert.equal(disposed.length,1,'the scratch target is released');
 });
