@@ -85,6 +85,8 @@ export function batchPubStatic(root:THREE.Object3D,scope:'children'|'subtree'='c
       const geometry=object.geometry.index?object.geometry.toNonIndexed():object.geometry.clone();
       // Quantized GLB attributes are normalized integers holding only [-1,1], with the mesh offset and
       // scale on its node. Baking the world matrix into them would wrap positions around the origin.
+      // Today only the gallery prints get here (applyPoolPhotoRegion de-interleaves them): the compressed
+      // GLBs load positions and normals interleaved, and interleaved meshes are never merged (above).
       for(const [name,attribute] of Object.entries(geometry.attributes))if(attribute.normalized||!(attribute.array instanceof Float32Array)){
         const values=new Float32Array(attribute.count*attribute.itemSize);
         for(let i=0;i<values.length;i++)values[i]=attribute.getComponent(Math.floor(i/attribute.itemSize),i%attribute.itemSize);
