@@ -9,7 +9,7 @@ import { createTableSurfaces } from '../src/render/table-surfaces';
 import { TableModel } from '../src/render/table-model';
 
 /** Where every drawn surface lands once the pub has settled. The pub GLBs are meshopt-compressed and
- * quantized (scripts/meshopt-pub-assets.py): quantization moves mesh offsets onto node transforms, and
+ * quantized: quantization moves mesh offsets onto node transforms, and
  * code reusing raw geometry (the merged gallery prints in 2ccf6b8) then collapses toward the room
  * origin. Re-encoded assets must not move a single piece. Regenerate deliberately with
  * WRITE_PUB_PLACEMENT=1 npm test, only after checking the new placement in a browser. */

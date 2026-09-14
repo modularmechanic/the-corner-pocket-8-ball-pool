@@ -1,5 +1,5 @@
 """Native Blender authoring for club awards, poster boards and neon glass.
-Run via scripts/blender_mcp_client.py; creates a dedicated scene, never clears
+Run via the local Blender MCP client; creates a dedicated scene, never clears
 the current scene. Game coordinates are converted to Blender's Z-up space.
 """
 import bpy, math, json

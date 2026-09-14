@@ -1,6 +1,6 @@
 # Pub scene census
 
-Measured with `node --import tsx scripts/benchmark-pub-batching.ts` on 2026-09-14.
+Measured with a local headless census script (not part of this repository) on 2026-09-14.
 
 | Fully loaded room, every wall visible | Before | After |
 | --- | ---: | ---: |
@@ -27,10 +27,9 @@ their original meshes. No props were removed. The two optimizations account for
 32.6% fewer draws and 62.7% fewer triangles in this fixture.
 
 `pub-before.json` preserves the baseline census and `pub-after.json` preserves the
-new one. To compare another revision, run the census in a checkout of it. Rerun the current census with:
+new one. The batching behaviour is covered by the repository tests:
 
 ```sh
-node --import tsx scripts/benchmark-pub-batching.ts
 node --import tsx --test tests/pub-batching.test.ts tests/pub-models.test.ts tests/pub-entertainment.test.ts
 ```
 
