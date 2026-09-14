@@ -129,7 +129,7 @@ Blender source, reproducible authoring scripts, Cycles asset previews and glTF v
 
 The browser talks to one Match interface for shoot, place, chalk, equip, reset, rematch and advance. The local adapter owns the engine, AI seats, command authorization and time; the remote adapter owns room transport, reconnects and delayed ball/event presentation. The server runs the same local adapter behind its authenticated room seats. Game rules settle through a pure function, while Rapier applies the returned state and respots. Tests and replay callers edit detached snapshots and restore them through `arrange()` instead of manipulating physics handles.
 
-Shared table geometry keeps AI, layout generation, placement and the aiming guide consistent. The presentation model supplies status, team effect pills and scene effects from one catalog, distinguishing a power queued for the next shot from an effect already active on the current one. See [architecture review implementation and verification](docs/architecture-review-implementation.md) for the five recommendations, decisions and completed verification.
+Shared table geometry keeps AI, layout generation, placement and the aiming guide consistent. The presentation model supplies status, team effect pills and scene effects from one catalog, distinguishing a power queued for the next shot from an effect already active on the current one.
 
 Source boundaries:
 
