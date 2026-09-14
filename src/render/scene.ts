@@ -19,6 +19,7 @@ import { PracticalLightBudget } from './light-budget';
 import { TableDetails } from './table-details';
 import { advanceOrbit,clampOrbit,fitTableCamera,fitOverheadCamera,orbitDirection,orbitFromDirection,CameraTransition,TemporaryCameraView,rayFromViewport,type OrbitAngles } from './camera';
 import { ShotCameraAim, ShotCameraRig } from './shot-camera';
+import { BuffTrail } from './buff-trail';
 export type Quality = RenderQuality;
 // Table-only shadow casters keep the three practical lights from redrawing the entire pub.
 const TABLE_SHADOW_LAYER = 1;
@@ -104,8 +105,7 @@ export class PoolScene {
   private pub?: ReturnType<typeof buildPub>;
   private postprocessing?: PoolPostprocessing;
   private buffHalo: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
-  private buffTrail: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
-  private trailPoints: THREE.Vector3[] = [];
+  private buffTrail = new BuffTrail();
   private cueStroke: { x: number; z: number; angle: number; age: number; elevation:number;tipX:number;tipY:number;height:number } | null = null;
   private chalkAge = Infinity;
   private clock = 0;
@@ -166,8 +166,7 @@ export class PoolScene {
     this.effects = new TableEffects(this.scene);
     this.buffHalo = new THREE.Mesh(new THREE.RingGeometry(TABLE.radius * 1.19, TABLE.radius * 1.32, 64), new THREE.MeshBasicMaterial({ color: '#ffbc63', transparent: true, opacity: .55, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
     this.buffHalo.rotation.x = -Math.PI / 2; this.buffHalo.visible = false; this.scene.add(this.buffHalo);
-    this.buffTrail = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: '#ffbc63', transparent: true, opacity: .42, depthWrite: false, blending: THREE.AdditiveBlending }));
-    this.buffTrail.visible = false; this.scene.add(this.buffTrail);
+    this.scene.add(this.buffTrail.line);
     this.shotPaths = new ShotPaths(this.scene);
     this.placement = new THREE.Mesh(new THREE.SphereGeometry(TABLE.radius, 32, 24), new THREE.MeshStandardMaterial({ color: '#f4ebd3', transparent: true, opacity: .6 })); this.placement.visible = false; this.scene.add(this.placement);
     this.practicalLights=new PracticalLightBudget(this.scene);
@@ -692,7 +691,7 @@ export class PoolScene {
     this.updateCameras(frameDt);
     const renderKey = `${state.seed}:${state.arcade?.layout || 'table'}`;
     if (this.renderedSeed !== renderKey || state.shotCount < this.renderedShotCount) {
-      this.renderedSeed = renderKey; this.pocketDrops.clear();this.outFades.clear(); this.effects.clear(); this.trailPoints = []; this.cueStroke = null;
+      this.renderedSeed = renderKey; this.pocketDrops.clear();this.outFades.clear(); this.effects.clear(); this.buffTrail.clear(); this.cueStroke = null;
       this.buildObstacles(state);
       for (const ball of state.balls) {
         this.balls[ball.id].rotation.set(-Math.PI / 2, 0, 0);
@@ -748,7 +747,7 @@ export class PoolScene {
       const previous = this.ballPositions[ball.id];
       const teleported = (ball.teleport || 0) !== mesh.userData.teleport;
       mesh.userData.teleport = ball.teleport || 0;
-      if (teleported && ball.id === 0) this.trailPoints = [];
+      if (teleported && ball.id === 0) this.buffTrail.clear();
       // One coherent presentation snapshot owns every position. Per-ball easing creates false separations at impacts.
       const elevation = Math.max(0, ball.elevation || 0);
       mesh.position.set(ball.x, TABLE.radius + elevation, ball.z);
@@ -765,12 +764,8 @@ export class PoolScene {
     this.buffHalo.position.set(cueBall.x,.026+(cueBall.elevation||0),cueBall.z); this.buffHalo.material.color.set(buffColor);
     this.buffHalo.material.opacity = .35 + Math.sin(this.clock * 3) * .08;
     if (!cueBall.pocketed && state.phase === 'rolling' && (overdrive || frozen) && Math.hypot(cueBall.vx, cueBall.vz) > .6) {
-      const last = this.trailPoints.at(-1);
-      const trailPosition=new THREE.Vector3(cueBall.x,.027+(cueBall.elevation||0),cueBall.z);
-      if (!last || trailPosition.distanceTo(last) > .025) this.trailPoints.push(trailPosition);
-      if (this.trailPoints.length > 12) this.trailPoints.shift();
-      this.buffTrail.geometry.setFromPoints(this.trailPoints); this.buffTrail.material.color.set(buffColor); this.buffTrail.visible = this.trailPoints.length > 1;
-    } else { this.buffTrail.visible = false; this.trailPoints = []; }
+      this.buffTrail.push(cueBall.x,.027+(cueBall.elevation||0),cueBall.z); this.buffTrail.line.material.color.set(buffColor);
+    } else this.buffTrail.clear();
     const preview = this.aiPreview || this.aim;
     const aiming = (canAim || !!this.aiPreview) && state.phase === 'ready';
     this.cue.visible = aiming;
