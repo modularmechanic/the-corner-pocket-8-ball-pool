@@ -56,6 +56,7 @@ let inspectingTable = false;
 let overheadView = false;
 /** Finger or pen input shows the dial, Engage, power slider and Shoot; a mouse brings back the desktop controls. */
 let touchInput = false;
+let touchFitted = false;
 let menuMode: Mode = 'ai';
 let menuFormat: GameFormat = profile.preferences.format;
 let identity: string;
@@ -153,14 +154,15 @@ async function command(command:MatchCommand,fallback:string) {
   if(match!==current)return false;
   syncMatch();if(!result.ok)toast(result.error||fallback);updateUI();return result.ok;
 }
-function chooseCamera(overhead:boolean) {
+/** Only an explicit camera choice is remembered; the touch overhead default is not. */
+function chooseCamera(overhead:boolean,remember=true) {
   input.cameraChanged();inspectingTable=false;overheadView=overhead;
   scene.setInspection(false);scene.setOverhead(overhead);scene.resetAimPointer();
   $<HTMLSelectElement>('camera').value=overhead?'overhead':'angled';
   $('camera-toggle').setAttribute('aria-label',overhead?'Switch to cue view':'Switch to overhead view');
   $('camera-toggle').setAttribute('aria-pressed',String(overhead));
   $('fps-view').setAttribute('aria-pressed',String(!overhead));
-  profile.set('camera',overhead?'overhead':'angled');
+  if(remember)profile.set('camera',overhead?'overhead':'angled');
 }
 async function chalkCue() {
   if (!input.canAct || state.phase !== 'ready' || state.chalked[state.turn]) return;
@@ -274,7 +276,9 @@ function chooseDifficulty(difficulty: Difficulty) {
 }
 /** Touch screens fit the overhead table between their controls, measured from the live layout; a mouse restores desktop framing. */
 function fitTouchOverhead() {
-  if (!touchInput) { scene.setOverheadInsets(null); return; }
+  // Mouse mode leaves the cameras alone on every resize and scoreboard change; it only restores the desktop framing once.
+  if (!touchInput) { if (touchFitted) { touchFitted = false; scene.setOverheadInsets(null); } return; }
+  touchFitted = true;
   const box = $('scene').getBoundingClientRect(), portrait = matchMedia('(orientation: portrait)').matches;
   const rects = (...elements: (Element | null)[]) => elements.map(element => element?.getBoundingClientRect()).filter((rect): rect is DOMRect => !!rect?.width && !!rect.height);
   const tools = document.querySelector('.stage-tools'), dial = $('aim-dial'), shoot = $('touch-shoot');
@@ -332,7 +336,7 @@ function setupUI() {
   $('preview-audio').onclick = () => sound.preview();
   $<HTMLSelectElement>('quality').value = profile.preferences.quality; scene.setQuality(profile.preferences.quality);
   $('quality').onchange = () => { const q = $<HTMLSelectElement>('quality').value as Quality; scene.setQuality(q); profile.set('quality', q); resolutionNote(); };
-  chooseCamera(touchInput||profile.preferences.camera==='overhead');
+  chooseCamera(touchInput||profile.preferences.camera==='overhead',false);
   $('camera').onchange=()=>chooseCamera($<HTMLSelectElement>('camera').value==='overhead');
   $('camera-toggle').onclick=()=>chooseCamera($<HTMLSelectElement>('camera').value!=='overhead');
   $('fps-view').onclick=()=>chooseCamera(false);
@@ -417,7 +421,8 @@ function createShotInput() {
 }
 function setupInput() {
   const canvas = scene.renderer.domElement;
-  const fingerLike = (event: PointerEvent) => event.pointerType === 'touch' || event.pointerType === 'pen';
+  // A pen works like a mouse, except on touch-only devices (an iPad with a Pencil and no trackpad).
+  const fingerLike = (event: PointerEvent) => event.pointerType === 'touch' || event.pointerType === 'pen' && matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches;
   const pointer = (event: PointerEvent): PointerInput => ({ id: event.pointerId, x: event.clientX, y: event.clientY, button: event.button, buttons: event.buttons, primary: event.isPrimary, shift: event.shiftKey, dx: event.movementX, dy: event.movementY, touch: fingerLike(event) });
   window.addEventListener('pointerdown', event => setTouchInput(fingerLike(event)), true);
   new ResizeObserver(fitTouchOverhead).observe($('scene'));

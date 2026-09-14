@@ -50,7 +50,15 @@ export interface ShotInputView {
 
 /** A full finger turn of the aim dial turns the cue a quarter turn. */
 export const DIAL_GAIN = .25;
-/** The touch Shoot button needs an engaged cue with power set. */
+/** Browsers refuse a new pointer lock for about a second after one ends (Chrome after Escape); refusals this soon never count. */
+export const LOCK_COOLDOWN_MS = 1500;
+/** A counted refusal is forgotten this long after the last one. */
+export const LOCK_REFUSAL_MEMORY_MS = 5000;
+/** Chained refusals outside the cooldown (no permission, sandboxed page) that turn locking off for the session. */
+export const LOCK_REFUSAL_LIMIT = 3;
+/** Largest locked movement accepted from one event; Chrome on Windows can report spikes of thousands of pixels. */
+export const LOCKED_MOVE_LIMIT = 150;
+/** The touch Shoot button (and Space after Engage) needs an engaged cue with power set. */
 export const canTouchShoot = (setup: Readonly<ShotSetupState>, canAct: boolean, phase: GameState['phase']) =>
   canAct && phase === 'ready' && setup.stage === 'power' && setup.power > 0 && !setup.adjustment;
 const finite = (...values: number[]) => values.every(Number.isFinite);
@@ -69,8 +77,15 @@ export class ShotInputController {
   private lastPointer: Point = { x: 0, y: 0 };
   private locked = false;
   private releasingLock = false;
-  private lockErrors = 0;
-  constructor(private readonly view: ShotInputView, private readonly context: () => ShotInputContext, private readonly emit: (command: ShotInputCommand) => void) {}
+  private unlockedAt = -Infinity;
+  private refusals = 0;
+  private lastRefusalAt = -Infinity;
+  /** Pointer lock is only useful where pointer events report mouse movement (not Safari 15 and older). */
+  private movementReported = false;
+  private skipLockedMove = false;
+  private touchPointer = false;
+  constructor(private readonly view: ShotInputView, private readonly context: () => ShotInputContext, private readonly emit: (command: ShotInputCommand) => void,
+    private readonly now: () => number = () => performance.now()) {}
 
   get setup(): Readonly<ShotSetupState> { return this.setupState; }
   get orbiting() { return !!this.orbitPointer || this.keyboardOrbit; }
@@ -78,8 +93,8 @@ export class ShotInputController {
   get pointerLocked() { return this.locked; }
   /** "Click to take the cue": the cue view is waiting for a click to lock the pointer. */
   get lockHint() { const { cueView, phase } = this.context(); return this.lockAvailable && !this.locked && cueView && this.canAct && phase === 'ready'; }
-  // ponytail: two consecutive refusals (no API permission, sandboxing) mean today's unlocked controls for the session; one refusal is often Chrome's re-lock cooldown after Escape.
-  private get lockAvailable() { return this.lockErrors < 2; }
+  // ponytail: a page that refuses every lock but is clicked less often than LOCK_REFUSAL_MEMORY_MS keeps retrying, one swallowed click each time; detect the refusal reason if that shows up.
+  private get lockAvailable() { return this.movementReported && this.refusals < LOCK_REFUSAL_LIMIT; }
 
   /** Escape, blur, dialogs and turn changes: drop the setup and any look, keeping aim direction and power. */
   cancel() {
@@ -98,7 +113,7 @@ export class ShotInputController {
     const setup = this.setupState;
     if (!this.canAct || this.context().phase !== 'ready' || setup.adjustment) return;
     this.view.resetAimPointer();
-    if (setup.stage === 'power') { this.emit({ type: 'shoot', shot: this.shot() }); return; }
+    if (setup.stage === 'power') { if (canTouchShoot(setup, this.canAct, this.context().phase)) this.emit({ type: 'shoot', shot: this.shot() }); return; }
     const direction = this.view.screenDirection(setup.angle);
     if (finite(setup.angle, x, y, direction.x, direction.y)) {
       const length = Math.hypot(direction.x, direction.y) || 1;
@@ -126,6 +141,9 @@ export class ShotInputController {
     if (setup.stage === 'power') { setup.stage = 'aim'; this.publish(); return; }
     if (!this.canAct || this.context().phase !== 'ready') return;
     Object.assign(setup, { stage: 'power', adjustment: null, power: 0 });
+    // A mouse taking over mid-shot pulls back along the cue, as after a click.
+    const direction = this.view.screenDirection(setup.angle), length = Math.hypot(direction.x, direction.y);
+    if (finite(direction.x, direction.y) && length > 0) Object.assign(this.powerAnchor, { dx: direction.x / length, dy: direction.y / length });
     this.view.resetAimPointer(); this.publish();
   }
   /** Touch power slider position, 0 (bottom) to 1; the bottom 5% is no power. Only an engaged cue listens, and letting go never shoots. */
@@ -142,10 +160,16 @@ export class ShotInputController {
     const released = this.releasingLock; this.releasingLock = false;
     if (locked === this.locked) return;
     this.locked = locked; this.view.resetAimPointer();
-    if (locked) { this.lockErrors = 0; this.reanchorPower(); }
-    else if (!released) this.cancel();
+    if (locked) { this.refusals = 0; this.skipLockedMove = true; this.reanchorPower(); }
+    else { this.unlockedAt = this.now(); if (!released) this.cancel(); }
   }
-  pointerLockError() { this.lockErrors++; }
+  /** A refused lock. Refusals during the re-lock cooldown are ignored and a counted refusal expires, so a later click retries. */
+  pointerLockError() {
+    const now = this.now();
+    if (now - this.unlockedAt < LOCK_COOLDOWN_MS) return;
+    this.refusals = now - this.lastRefusalAt > LOCK_REFUSAL_MEMORY_MS ? 1 : this.refusals + 1;
+    this.lastRefusalAt = now;
+  }
   /** Dialogs, other views, turns this device does not play and window blur show the cursor again without cancelling. */
   releasePointerLock() { if (this.locked && !this.releasingLock) { this.releasingLock = true; this.view.exitPointerLock(); } }
 
@@ -156,7 +180,10 @@ export class ShotInputController {
   }
   pointerLeave() { this.view.resetAimPointer(); }
   pointerMove(input: PointerInput) {
-    const pointer = this.lockedPosition(input), dx = pointer.x - this.lastPointer.x, dy = pointer.y - this.lastPointer.y, setup = this.setupState;
+    if (!input.touch && (input.dx || input.dy) && finite(input.dx ?? 0, input.dy ?? 0)) this.movementReported = true;
+    // Switching between finger and mouse re-anchors, so a mouse never jumps the aim or the slider's power.
+    if (!this.locked && this.touchPointer !== !!input.touch) { this.touchPointer = !!input.touch; this.pointerEnter(input); }
+    const pointer = this.lockedPosition(input, true), dx = pointer.x - this.lastPointer.x, dy = pointer.y - this.lastPointer.y, setup = this.setupState;
     this.lastPointer = { x: pointer.x, y: pointer.y };
     if (pointer.buttons & 2) {
       if (!this.orbitPointer && !this.beginPointerOrbit(pointer)) return;
@@ -248,9 +275,12 @@ export class ShotInputController {
   }
 
   private shot(): Shot { const { angle, power, elevation, tipX, tipY } = this.setupState; return { angle, power, elevation, tipX, tipY }; }
-  /** A locked pointer's screen position is frozen; integrate its movement into a virtual position instead. */
-  private lockedPosition(pointer: PointerInput): PointerInput {
-    return this.locked ? { ...pointer, x: this.lastPointer.x + (pointer.dx || 0), y: this.lastPointer.y + (pointer.dy || 0) } : pointer;
+  /** A locked pointer's screen position is frozen; integrate its clamped movement into a virtual position instead. The first move after locking is dropped. */
+  private lockedPosition(pointer: PointerInput, move = false): PointerInput {
+    if (!this.locked) return pointer;
+    const skip = move && this.skipLockedMove; if (move) this.skipLockedMove = false;
+    const delta = (value?: number) => skip || !Number.isFinite(value) ? 0 : Math.max(-LOCKED_MOVE_LIMIT, Math.min(LOCKED_MOVE_LIMIT, value!));
+    return { ...pointer, x: this.lastPointer.x + delta(pointer.dx), y: this.lastPointer.y + delta(pointer.dy) };
   }
   private publish() {
     const { angle, power, elevation, tipX, tipY, stage, adjustment } = this.setupState;

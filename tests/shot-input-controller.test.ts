@@ -20,11 +20,14 @@ function rig(overrides: Partial<ShotInputContext> = {}) {
     rotateView: (yaw, pitch) => calls.push(`rotate ${yaw},${pitch}`), endOrbit: () => calls.push('end-orbit'),
     resetAimPointer: () => {}, capturePointer: (id, grab) => calls.push(`capture ${id}${grab ? ' grab' : ''}`), releasePointer: () => {},
   };
-  const input = new ShotInputController(view, () => context, command => commands.push(command));
+  const clock = { now: 10_000 };
+  const input = new ShotInputController(view, () => context, command => commands.push(command), () => clock.now);
   const pointer = (x: number, y: number, extra: Partial<PointerInput> = {}): PointerInput => ({ id: 1, x, y, button: 0, buttons: 0, primary: true, shift: false, ...extra });
   const key = (code: string, extra: Partial<KeyInput> = {}): KeyInput => ({ code, repeat: false, shift: false, target: 'other', ...extra });
   const click = (x: number, y: number) => { input.pointerDown(pointer(x, y)); input.pointerUp(pointer(x, y)); };
-  return { input, context, commands, calls, aimed, scene, pointer, key, click };
+  /** A mouse move that reports movement, as every lock-capable browser does; forgets the aim it caused. */
+  const hover = (x = 0, y = 0) => { input.pointerMove(pointer(x, y, { dx: 2, dy: 1 })); aimed.length = 0; calls.length = 0; };
+  return { input, context, commands, calls, aimed, scene, clock, pointer, key, click, hover };
 }
 
 test('first click locks direction, pullback sets power and the second click shoots', () => {
@@ -143,15 +146,15 @@ test('no shot input is accepted when the seat cannot act; placement, table contr
 });
 
 test('cue view: an unlocked click only takes the cue; locked movement aims and pulls back the two-click shot', () => {
-  const { input, commands, calls, aimed, scene, pointer, click } = rig(); scene.lockApi = true;
-  assert.equal(input.lockHint, true);
+  const { input, commands, calls, aimed, scene, pointer, click, hover } = rig(); scene.lockApi = true;
+  hover(300, 200); assert.equal(input.lockHint, true);
   input.setTip(.2, 0); click(300, 200);
   assert.deepEqual([calls, input.setup.stage, commands.length, aimed.length], [['request-lock'], 'aim', 0, 0], 'the taking click neither aims nor locks aim');
   input.pointerLockChanged(true);
   assert.deepEqual([input.pointerLocked, input.lockHint], [true, false]);
-  // A locked pointer's screen position is frozen; only its movement counts.
-  input.pointerMove(pointer(300, 200, { dx: 40 })); input.pointerMove(pointer(300, 200, { dx: 25 }));
-  assert.deepEqual(aimed.map(point => point.x), [340, 365]);
+  // A locked pointer's screen position is frozen; only its movement counts, and the first report after locking is dropped.
+  input.pointerMove(pointer(300, 200, { dx: 900 })); input.pointerMove(pointer(300, 200, { dx: 40 })); input.pointerMove(pointer(300, 200, { dx: 25 }));
+  assert.deepEqual(aimed.map(point => point.x), [300, 340, 365]);
   click(300, 200);
   assert.equal(input.setup.stage, 'power'); assert.equal(calls.some(call => call.startsWith('capture')), false, 'pointer capture throws while locked');
   input.pointerMove(pointer(300, 200, { dy: 90 }));
@@ -163,8 +166,8 @@ test('cue view: an unlocked click only takes the cue; locked movement aims and p
 });
 
 test('losing the lock to Escape cancels like Escape; releases for dialogs, overhead and other turns keep the setup', () => {
-  const { input, context, calls, scene, click } = rig(); scene.lockApi = true;
-  click(0, 0); input.pointerLockChanged(true); input.setTip(.3, 0); click(0, 0);
+  const { input, context, calls, scene, click, hover } = rig(); scene.lockApi = true;
+  hover(); click(0, 0); input.pointerLockChanged(true); input.setTip(.3, 0); click(0, 0);
   assert.equal(input.setup.stage, 'power');
   input.pointerLockChanged(false);
   assert.deepEqual([input.pointerLocked, input.setup.stage, input.setup.tipX], [false, 'aim', 0], 'a browser unlock (Escape, blur) is a cancel');
@@ -182,25 +185,71 @@ test('losing the lock to Escape cancels like Escape; releases for dialogs, overh
   input.releasePointerLock(); input.pointerLockChanged(false); assert.equal(input.setup.tipX, .3, 'window blur releases without a second cancel');
 });
 
-test('pointer lock falls back to the unlocked click flow when unavailable, refused twice or outside the cue view', () => {
-  const missing = rig(); missing.click(0, 0);
+test('refusals right after Escape never turn pointer lock off; a later click always retries', () => {
+  const { input, calls, scene, clock, click, hover } = rig(); scene.lockApi = true;
+  hover(); click(0, 0); input.pointerLockChanged(true);
+  input.pointerLockChanged(false); // Escape
+  const requests = () => calls.filter(call => call === 'request-lock').length;
+  calls.length = 0;
+  // Chrome: "The user has exited the lock before this request was completed."
+  for (let i = 0; i < 6; i++) { clock.now += 200; click(0, 0); input.pointerLockError(); }
+  assert.deepEqual([requests(), input.setup.stage, input.lockHint], [6, 'aim', true], 'quick clicks inside the cooldown keep asking and never lock aim instead');
+  clock.now += 1500; click(0, 0); input.pointerLockError();
+  clock.now += 6000; click(0, 0); input.pointerLockError();
+  clock.now += 6000; click(0, 0); input.pointerLockError();
+  assert.deepEqual([requests(), input.setup.stage, input.lockHint], [9, 'aim', true], 'occasional refusals expire before they add up');
+  clock.now += 6000; click(0, 0); input.pointerLockChanged(true);
+  assert.equal(input.pointerLocked, true, 'the cursor is captured again');
+});
+
+test('pointer lock falls back to the unlocked click flow when unavailable, refused repeatedly, without movement data or outside the cue view', () => {
+  const missing = rig(); missing.hover(); missing.click(0, 0);
   assert.equal(missing.input.setup.stage, 'power', 'no Pointer Lock API: the first click locks aim as before');
-  const refused = rig(); refused.scene.lockApi = true;
-  refused.click(0, 0); refused.input.pointerLockError(); assert.equal(refused.input.setup.stage, 'aim');
-  refused.click(0, 0); refused.input.pointerLockError();
-  assert.deepEqual([refused.input.setup.stage, refused.input.lockHint], ['aim', false], 'one refusal may be the re-lock cooldown after Escape, so the next click asks again');
-  refused.click(0, 0); assert.equal(refused.input.setup.stage, 'power');
-  const overhead = rig({ cueView: false }); overhead.scene.lockApi = true; overhead.click(0, 0);
+  const sandboxed = rig(); sandboxed.scene.lockApi = true; sandboxed.hover();
+  for (let i = 0; i < 3; i++) { sandboxed.clock.now += 400; sandboxed.click(0, 0); sandboxed.input.pointerLockError(); }
+  assert.deepEqual([sandboxed.input.setup.stage, sandboxed.input.lockHint], ['aim', false], 'three quick refusals outside any cooldown mean locking cannot work here');
+  sandboxed.click(0, 0); assert.equal(sandboxed.input.setup.stage, 'power');
+  // Safari 15 and older: pointer events without movementX would freeze aim under a lock.
+  const noMovement = rig(); noMovement.scene.lockApi = true;
+  noMovement.input.pointerMove(noMovement.pointer(10, 10)); noMovement.input.pointerMove(noMovement.pointer(20, 10, { dx: 0, dy: 0 }));
+  assert.equal(noMovement.input.lockHint, false);
+  noMovement.click(20, 10);
+  assert.deepEqual([noMovement.calls.includes('request-lock'), noMovement.input.setup.stage], [false, 'power'], 'no movement data: aim stays unlocked');
+  const finger = rig(); finger.scene.lockApi = true; finger.input.pointerMove(finger.pointer(0, 0, { dx: 30, touch: true }));
+  assert.equal(finger.input.lockHint, false, 'finger movement never enables the mouse lock');
+  const overhead = rig({ cueView: false }); overhead.scene.lockApi = true; overhead.hover(); overhead.click(0, 0);
   assert.deepEqual([overhead.calls.includes('request-lock'), overhead.input.setup.stage, overhead.input.lockHint], [false, 'power', false], 'overhead keeps a visible cursor and point-to-aim');
 });
 
+test('locked movement spikes are clamped and the first report after locking is ignored', () => {
+  const { input, aimed, scene, pointer, click, hover } = rig(); scene.lockApi = true;
+  hover(100, 100); click(100, 100); input.pointerLockChanged(true);
+  input.pointerMove(pointer(100, 100, { dx: 3000, dy: -2000 }));
+  input.pointerMove(pointer(100, 100, { dx: 4000 })); input.pointerMove(pointer(100, 100, { dx: -151, dy: 90 })); input.pointerMove(pointer(100, 100, { dx: NaN }));
+  assert.deepEqual(aimed, [{ x: 100, y: 100 }, { x: 250, y: 100 }, { x: 100, y: 190 }, { x: 100, y: 190 }]);
+  input.pointerLockChanged(false); input.pointerLockChanged(true); aimed.length = 0;
+  input.pointerMove(pointer(100, 100, { dx: 80 })); input.pointerMove(pointer(100, 100, { dx: 5 }));
+  assert.deepEqual(aimed.map(point => point.x), [100, 105], 'every new lock drops its first report');
+});
+
 test('right-drag orbit keeps working on a locked pointer from movement alone', () => {
-  const { input, calls, scene, pointer, click } = rig(); scene.lockApi = true;
-  click(50, 50); input.pointerLockChanged(true); calls.length = 0;
+  const { input, calls, scene, pointer, click, hover } = rig(); scene.lockApi = true;
+  hover(50, 50); click(50, 50); input.pointerLockChanged(true); input.pointerMove(pointer(50, 50, { dx: 1 })); calls.length = 0;
   input.pointerDown(pointer(50, 50, { button: 2 }));
   input.pointerMove(pointer(50, 50, { buttons: 2, dx: 12, dy: -4 })); input.pointerMove(pointer(50, 50, { buttons: 2, dx: 3 }));
   input.pointerUp(pointer(50, 50, { button: 2 }));
   assert.deepEqual(calls, ['begin-orbit', 'orbit 12,-4', 'orbit 3,0', 'end-orbit']);
+});
+
+test('keyboard chalk, contact and elevation keep working under the lock', () => {
+  const { input, commands, scene, pointer, key, click, hover } = rig(); scene.lockApi = true;
+  hover(); click(0, 0); input.pointerLockChanged(true); input.pointerMove(pointer(0, 0, { dx: 1 }));
+  input.keyDown(key('KeyC')); assert.deepEqual(commands, [{ type: 'chalk' }]);
+  input.keyDown(key('KeyS')); input.pointerMove(pointer(0, 0, { dx: 50 })); input.keyUp('KeyS');
+  assert.ok(Math.abs(input.setup.tipX - .3) < 1e-9, 'S with mouse movement sets contact while locked');
+  input.keyDown(key('KeyE')); input.pointerMove(pointer(0, 0, { dy: -50 })); input.keyUp('KeyE');
+  assert.ok(Math.abs(input.setup.elevation - .2) < 1e-9);
+  input.keyDown(key('KeyX')); assert.deepEqual([input.setup.tipX, input.setup.elevation, input.pointerLocked], [0, 0, true]);
 });
 
 test('a finger on the table never locks aim or shoots; ball in hand still places', () => {
@@ -249,4 +298,23 @@ test('touch engage, slider and Shoot: power only while engaged, letting go never
   assert.deepEqual([input.setup.stage, input.setup.elevation, input.setup.tipY], ['aim', .2, -.3], 'disengaging keeps contact and elevation');
   const idle = rig({ canAct: false }); idle.input.toggleEngage(); idle.input.touchShoot();
   assert.deepEqual([idle.input.setup.stage, idle.commands.length], ['aim', 0]);
+});
+
+test('Space and the shot button cannot send a zero-power shot after Engage', () => {
+  const { input, commands, key } = rig();
+  input.toggleEngage(); input.keyDown(key('Space')); input.advance();
+  assert.deepEqual([commands.length, input.setup.stage], [0, 'power']);
+  input.setSliderPower(.4); input.keyDown(key('Space'));
+  assert.deepEqual(commands, [{ type: 'shoot', shot: { angle: 0, power: .4, elevation: 0, tipX: 0, tipY: 0 } }]);
+});
+
+test('a mouse taking over from a finger mid-shot keeps the slider power and pulls back along the cue', () => {
+  const { input, pointer } = rig();
+  input.pointerMove(pointer(40, 700, { touch: true })); input.toggleEngage(); input.setSliderPower(.7);
+  input.pointerMove(pointer(520, 90));
+  assert.equal(input.setup.power, .7, 'the first mouse move re-anchors instead of wiping the power');
+  input.pointerMove(pointer(520, 120));
+  assert.ok(Math.abs(input.setup.power - (.7 + 30 / 180)) < 1e-9, 'pulling back toward the player adds power');
+  input.pointerMove(pointer(60, 650, { touch: true })); input.setSliderPower(.3); input.pointerMove(pointer(300, 300));
+  assert.equal(input.setup.power, .3);
 });
