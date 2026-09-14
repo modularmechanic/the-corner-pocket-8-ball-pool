@@ -54,6 +54,31 @@ export function fitOverheadCamera(camera:THREE.OrthographicCamera,aspect:number)
   camera.position.set(0,23,0);camera.lookAt(0,0,0);camera.updateProjectionMatrix();camera.updateMatrixWorld(true);
 }
 
+/** Canvas pixels covered by on-screen controls along each edge. */
+export interface ViewportInsets { top:number;right:number;bottom:number;left:number }
+/** Orthographic frustum (world units around the table center) and whether the long table axis runs up the screen. */
+export interface OverheadFit { rotated:boolean;left:number;right:number;top:number;bottom:number }
+/**
+ * Touch overhead framing: the largest table (the same extents as the desktop overhead view) that fits the canvas area the
+ * controls leave free, centered in that area. The long axis turns up the screen when that frames the table larger.
+ */
+export function fitOverheadView(width:number,height:number,insets:ViewportInsets,fill=.94):OverheadFit {
+  if(!(width>0&&height>0)){width=16;height=9;}
+  const edge=(value:number)=>Number.isFinite(value)?Math.max(0,value):0;
+  let top=edge(insets.top),right=edge(insets.right),bottom=edge(insets.bottom),left=edge(insets.left);
+  // Measurements that leave almost nothing (a hidden or collapsed HUD) fall back to the whole canvas.
+  if(width-left-right<width*.25||height-top-bottom<height*.25)top=right=bottom=left=0;
+  const freeWidth=width-left-right,freeHeight=height-top-bottom;
+  const flat=Math.min(freeWidth/(2*6.60),freeHeight/(2*3.72)),upright=Math.min(freeWidth/(2*3.72),freeHeight/(2*6.60));
+  const rotated=upright>flat,scale=Math.max(flat,upright)*fill,centerX=left+freeWidth/2,centerY=top+freeHeight/2;
+  return {rotated,left:-centerX/scale,right:(width-centerX)/scale,top:centerY/scale,bottom:-(height-centerY)/scale};
+}
+export function applyOverheadFit(camera:THREE.OrthographicCamera,fit:OverheadFit):void {
+  camera.left=fit.left;camera.right=fit.right;camera.top=fit.top;camera.bottom=fit.bottom;
+  camera.up.set(fit.rotated?1:0,0,fit.rotated?0:-1);
+  camera.position.set(0,23,0);camera.lookAt(0,0,0);camera.updateProjectionMatrix();camera.updateMatrixWorld(true);
+}
+
 type ViewCamera=THREE.PerspectiveCamera|THREE.OrthographicCamera;
 export interface CameraViewSelection {
   overhead:boolean;inspection:boolean;inspectionPose?:{position:THREE.Vector3;target:THREE.Vector3};
