@@ -2,23 +2,33 @@ import * as THREE from 'three';
 import { effectDefinition } from '../presentation/effects';
 import type { Ball, TableEvent } from '../simulation/types';
 
-interface Spark { mesh: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>; velocity: THREE.Vector3; age: number; life: number }
-interface Debris { mesh: THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>; velocity: THREE.Vector3; spin: THREE.Vector3; age: number; life: number }
-interface Ripple { mesh: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>; age: number; life: number; size: number }
+interface Pooled { age: number; life: number }
+interface Spark extends Pooled { position: THREE.Vector3; velocity: THREE.Vector3; color: THREE.Color }
+interface Debris extends Pooled { position: THREE.Vector3; velocity: THREE.Vector3; rotation: THREE.Euler; spin: THREE.Vector3; scale: THREE.Vector3; color: THREE.Color; steel: boolean }
+interface Ripple extends Pooled { x: number; z: number; color: THREE.Color; size: number }
 interface TrailParticle { position:THREE.Vector3;velocity:THREE.Vector3;age:number;life:number;ice:boolean }
 interface Flash { light:THREE.PointLight;mesh:THREE.Mesh<THREE.SphereGeometry,THREE.MeshBasicMaterial>;age:number;life:number;strength:number }
 interface Arc {line:THREE.LineSegments<THREE.BufferGeometry,THREE.LineBasicMaterial>;age:number;life:number;radius:number;x:number;z:number}
 interface Ribbon {mesh:THREE.Mesh<THREE.BufferGeometry,THREE.MeshBasicMaterial>;age:number;life:number;x:number;z:number}
 
+const pool = <T extends Pooled>(length: number, create: () => Omit<T, keyof Pooled>) => Array.from({ length }, () => ({ ...create(), age: 1, life: 0 }) as T);
+function nextFree(items: readonly Pooled[], from: number) { while (from < items.length && items[from].age < items[from].life) from++; return from; }
+/** One draw call per effect kind: per-instance RGBA rides in an instanced `color` attribute (vertexColors with alpha). */
+function instanced<M extends THREE.Material>(name: string, geometry: THREE.BufferGeometry, material: M, capacity: number) {
+  geometry.setAttribute('color', new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4).setUsage(THREE.DynamicDrawUsage));
+  const mesh = new THREE.InstancedMesh(geometry, material, capacity); mesh.name = name; mesh.count = 0; mesh.frustumCulled = false; mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  return mesh;
+}
+
 /** Cosmetic only: none of these transient objects participate in the simulation. */
 export class TableEffects {
   private group = new THREE.Group();
-  private sparks: Spark[] = [];
-  private debris: Debris[] = [];
-  private ripples: Ripple[] = [];
-  private sparkGeometry = new THREE.SphereGeometry(.012, 5, 4);
-  private debrisGeometry = new THREE.BoxGeometry(.075, .04, .045);
-  private rippleGeometry = new THREE.RingGeometry(.94, 1, 64);
+  private sparks = pool<Spark>(120, () => ({ position: new THREE.Vector3(), velocity: new THREE.Vector3(), color: new THREE.Color() }));
+  private debris = pool<Debris>(70, () => ({ position: new THREE.Vector3(), velocity: new THREE.Vector3(), rotation: new THREE.Euler(), spin: new THREE.Vector3(), scale: new THREE.Vector3(), color: new THREE.Color(), steel: false }));
+  private ripples = pool<Ripple>(16, () => ({ x: 0, z: 0, color: new THREE.Color(), size: 0 }));
+  private sparkMesh = instanced('effect-sparks', new THREE.SphereGeometry(.012, 5, 4), new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }), 120);
+  private debrisMeshes = [.1, .6].map((metalness, steel) => instanced(steel ? 'effect-debris-steel' : 'effect-debris', new THREE.BoxGeometry(.075, .04, .045), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .65, metalness, transparent: true }), 70));
+  private rippleMesh = instanced('effect-ripples', new THREE.RingGeometry(.94, 1, 64), new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }), 16);
   private trails:TrailParticle[]=Array.from({length:80},()=>({position:new THREE.Vector3(),velocity:new THREE.Vector3(),age:1,life:0,ice:false}));
   private nextTrail=0;
   private trailClock=0;
@@ -30,12 +40,15 @@ export class TableEffects {
   private dummy=new THREE.Object3D();
   private color=new THREE.Color();
   constructor(scene: THREE.Scene) {
+    for (const mesh of this.debrisMeshes) mesh.castShadow = true;
+    this.group.add(this.sparkMesh, ...this.debrisMeshes, this.rippleMesh);
     scene.add(this.group);this.fire.instanceMatrix.setUsage(THREE.DynamicDrawUsage);this.ice.instanceMatrix.setUsage(THREE.DynamicDrawUsage);this.fire.frustumCulled=false;this.ice.frustumCulled=false;this.fire.count=0;this.ice.count=0;this.group.add(this.fire,this.ice);
     for(let i=0;i<3;i++){
       const light=new THREE.PointLight('#ffb76a',0,3.3,2),mesh=new THREE.Mesh(new THREE.SphereGeometry(.12,12,8),new THREE.MeshBasicMaterial({color:'#ffe8c1',transparent:true,opacity:0,blending:THREE.AdditiveBlending,depthWrite:false}));light.userData.performanceFlash=true;mesh.visible=false;this.group.add(light,mesh);this.flashes.push({light,mesh,age:1,life:0,strength:0});
     }
     for(let i=0;i<4;i++){
-      const line=new THREE.LineSegments(new THREE.BufferGeometry(),new THREE.LineBasicMaterial({color:'#aeeaff',transparent:true,opacity:0,blending:THREE.AdditiveBlending,depthWrite:false}));line.visible=false;this.group.add(line);this.arcs.push({line,age:1,life:0,radius:.7,x:0,z:0});
+      const arcGeometry=new THREE.BufferGeometry();arcGeometry.setAttribute('position',new THREE.BufferAttribute(new Float32Array(56*3),3).setUsage(THREE.DynamicDrawUsage));
+      const line=new THREE.LineSegments(arcGeometry,new THREE.LineBasicMaterial({color:'#aeeaff',transparent:true,opacity:0,blending:THREE.AdditiveBlending,depthWrite:false}));line.visible=false;line.frustumCulled=false;this.group.add(line);this.arcs.push({line,age:1,life:0,radius:.7,x:0,z:0});
       const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.BufferAttribute(new Float32Array(49*6),3));const indices=[];for(let j=0;j<48;j++)indices.push(j*2,j*2+1,j*2+2,j*2+1,j*2+3,j*2+2);geometry.setIndex(indices);
       const mesh=new THREE.Mesh(geometry,new THREE.MeshBasicMaterial({color:'#caa9ff',transparent:true,opacity:0,side:THREE.DoubleSide,blending:THREE.AdditiveBlending,depthWrite:false}));mesh.visible=false;mesh.frustumCulled=false;this.group.add(mesh);this.ribbons.push({mesh,age:1,life:0,x:0,z:0});
     }
@@ -81,30 +94,34 @@ export class TableEffects {
   }
 
   private burst(x: number, z: number, color: string, count: number, speed: number) {
-    for (let i = 0; i < count && this.sparks.length < 120; i++) {
-      const mesh = new THREE.Mesh(this.sparkGeometry, new THREE.MeshBasicMaterial({ color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
-      mesh.position.set(x, .22, z); this.group.add(mesh);
-      const angle = Math.random() * Math.PI * 2;
-      this.sparks.push({ mesh, velocity: new THREE.Vector3(Math.cos(angle) * speed, .4 + Math.random() * 1.2, Math.sin(angle) * speed), age: 0, life: .22 + Math.random() * .35 });
+    for (let i = 0, slot = 0; i < count && (slot = nextFree(this.sparks, slot)) < this.sparks.length; i++) {
+      const spark = this.sparks[slot], angle = Math.random() * Math.PI * 2;
+      spark.position.set(x, .22, z); spark.color.set(color);
+      spark.velocity.set(Math.cos(angle) * speed, .4 + Math.random() * 1.2, Math.sin(angle) * speed); spark.age = 0; spark.life = .22 + Math.random() * .35;
     }
   }
 
   private fragments(x: number, z: number, material: 'wood' | 'steel' | 'hex') {
     const color = material === 'hex' ? '#80609d' : material === 'steel' ? '#778991' : '#ac7847';
-    for (let i = 0; i < 14 && this.debris.length < 70; i++) {
-      const mesh = new THREE.Mesh(this.debrisGeometry, new THREE.MeshStandardMaterial({ color, roughness: .65, metalness: material === 'steel' ? .6 : .1, transparent: true }));
-      mesh.scale.set(.5 + Math.random() * 1.5, .5 + Math.random(), .5 + Math.random() * 1.5);
-      mesh.position.set(x, .22, z); mesh.castShadow = true; this.group.add(mesh);
-      const angle = Math.random() * Math.PI * 2, speed = .7 + Math.random() * 1.5;
-      this.debris.push({ mesh, velocity: new THREE.Vector3(Math.cos(angle) * speed, 1 + Math.random() * 1.8, Math.sin(angle) * speed), spin: new THREE.Vector3(Math.random() * 7, Math.random() * 5, Math.random() * 7), age: 0, life: .7 + Math.random() * .45 });
+    for (let i = 0, slot = 0; i < 14 && (slot = nextFree(this.debris, slot)) < this.debris.length; i++) {
+      const piece = this.debris[slot], angle = Math.random() * Math.PI * 2, speed = .7 + Math.random() * 1.5;
+      piece.scale.set(.5 + Math.random() * 1.5, .5 + Math.random(), .5 + Math.random() * 1.5);
+      piece.position.set(x, .22, z); piece.rotation.set(0, 0, 0); piece.color.set(color); piece.steel = material === 'steel';
+      piece.velocity.set(Math.cos(angle) * speed, 1 + Math.random() * 1.8, Math.sin(angle) * speed); piece.spin.set(Math.random() * 7, Math.random() * 5, Math.random() * 7); piece.age = 0; piece.life = .7 + Math.random() * .45;
     }
   }
 
   private ripple(x: number, z: number, color: string, size: number, life: number) {
-    if (this.ripples.length >= 16) return;
-    const mesh = new THREE.Mesh(this.rippleGeometry, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: .55, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
-    mesh.rotation.x = -Math.PI / 2; mesh.position.set(x, .025, z); mesh.scale.setScalar(.18); this.group.add(mesh);
-    this.ripples.push({ mesh, age: 0, life, size });
+    const ripple = this.ripples[nextFree(this.ripples, 0)];
+    if (!ripple) return;
+    ripple.x = x; ripple.z = z; ripple.color.set(color); ripple.size = size; ripple.age = 0; ripple.life = life;
+  }
+
+  private write(mesh: THREE.InstancedMesh, index: number, color: THREE.Color, alpha: number) {
+    mesh.setMatrixAt(index, this.dummy.matrix); mesh.geometry.getAttribute('color').setXYZW(index, color.r, color.g, color.b, alpha);
+  }
+  private commit(mesh: THREE.InstancedMesh, count: number) {
+    mesh.count = count; mesh.instanceMatrix.needsUpdate = true; mesh.geometry.getAttribute('color').needsUpdate = true;
   }
 
   update(dt: number) {
@@ -120,17 +137,18 @@ export class TableEffects {
     for(const flash of this.flashes){flash.age+=dt;const progress=Math.min(1,flash.age/flash.life);flash.light.intensity=flash.strength*(1-progress)**2;flash.mesh.material.opacity=(1-progress)*.75;flash.mesh.scale.setScalar(.6+progress*2.2);flash.mesh.visible=progress<1;}
     for(const arc of this.arcs){
       arc.age+=dt;if(arc.age>=arc.life){arc.line.visible=false;continue;}
-      const points:THREE.Vector3[]=[];
+      const positions=arc.line.geometry.getAttribute('position') as THREE.BufferAttribute;let vertex=0;
       for(let branch=0;branch<4;branch++){
-        const angle=branch*Math.PI/2+.35;let previous=new THREE.Vector3(arc.x,.22,arc.z);
+        const angle=branch*Math.PI/2+.35;let px=arc.x,py=.22,pz=arc.z;
         for(let segment=1;segment<=6;segment++){
           const distance=segment/6*arc.radius,bend=Math.sin(segment*9.2+branch*3+Math.floor(arc.age*60))*.055;
-          const next=new THREE.Vector3(arc.x+Math.cos(angle)*distance-Math.sin(angle)*bend,.16+Math.abs(bend)*2,arc.z+Math.sin(angle)*distance+Math.cos(angle)*bend);points.push(previous,next);
-          if(segment===3){const fork=new THREE.Vector3(next.x+Math.cos(angle+.7)*.22,.23,next.z+Math.sin(angle+.7)*.22);points.push(next,fork);}
-          previous=next;
+          const nx=arc.x+Math.cos(angle)*distance-Math.sin(angle)*bend,ny=.16+Math.abs(bend)*2,nz=arc.z+Math.sin(angle)*distance+Math.cos(angle)*bend;
+          positions.setXYZ(vertex++,px,py,pz);positions.setXYZ(vertex++,nx,ny,nz);
+          if(segment===3){positions.setXYZ(vertex++,nx,ny,nz);positions.setXYZ(vertex++,nx+Math.cos(angle+.7)*.22,.23,nz+Math.sin(angle+.7)*.22);}
+          px=nx;py=ny;pz=nz;
         }
       }
-      arc.line.geometry.setFromPoints(points);arc.line.material.opacity=(1-arc.age/arc.life)*(.6+Math.sin(arc.age*100)*.25);
+      positions.needsUpdate=true;arc.line.material.opacity=(1-arc.age/arc.life)*(.6+Math.sin(arc.age*100)*.25);
     }
     for(const ribbon of this.ribbons){
       ribbon.age+=dt;if(ribbon.age>=ribbon.life){ribbon.mesh.visible=false;continue;}
@@ -141,35 +159,42 @@ export class TableEffects {
       }
       positions.needsUpdate=true;ribbon.mesh.material.opacity=Math.sin(Math.min(1,progress*2)*Math.PI/2)*(1-progress)*.85;
     }
-    for (let i = this.sparks.length - 1; i >= 0; i--) {
-      const s = this.sparks[i]; s.age += dt;
-      if (s.age >= s.life) { this.group.remove(s.mesh); s.mesh.material.dispose(); this.sparks.splice(i, 1); continue; }
-      s.velocity.y -= dt * 4; s.mesh.position.addScaledVector(s.velocity, dt); s.mesh.position.y = Math.max(.02, s.mesh.position.y);
-      s.mesh.material.opacity = (1 - s.age / s.life) * .9;
+    let sparkCount = 0;
+    this.dummy.rotation.set(0, 0, 0); this.dummy.scale.setScalar(1);
+    for (const s of this.sparks) {
+      if (s.age >= s.life) continue; s.age += dt; if (s.age >= s.life) continue;
+      s.velocity.y -= dt * 4; s.position.addScaledVector(s.velocity, dt); s.position.y = Math.max(.02, s.position.y);
+      this.dummy.position.copy(s.position); this.dummy.updateMatrix(); this.write(this.sparkMesh, sparkCount++, s.color, (1 - s.age / s.life) * .9);
     }
-    for (let i = this.debris.length - 1; i >= 0; i--) {
-      const d = this.debris[i]; d.age += dt;
-      if (d.age >= d.life) { this.group.remove(d.mesh); d.mesh.material.dispose(); this.debris.splice(i, 1); continue; }
-      d.velocity.y -= dt * 7; d.mesh.position.addScaledVector(d.velocity, dt);
-      if (d.mesh.position.y < .025) { d.mesh.position.y = .025; d.velocity.y = Math.abs(d.velocity.y) * .22; d.velocity.x *= .92; d.velocity.z *= .92; }
-      d.mesh.rotation.x += d.spin.x * dt; d.mesh.rotation.y += d.spin.y * dt; d.mesh.rotation.z += d.spin.z * dt;
-      d.mesh.material.opacity = Math.min(1, (d.life - d.age) * 4);
+    this.commit(this.sparkMesh, sparkCount);
+    const debrisCounts = [0, 0];
+    for (const d of this.debris) {
+      if (d.age >= d.life) continue; d.age += dt; if (d.age >= d.life) continue;
+      d.velocity.y -= dt * 7; d.position.addScaledVector(d.velocity, dt);
+      if (d.position.y < .025) { d.position.y = .025; d.velocity.y = Math.abs(d.velocity.y) * .22; d.velocity.x *= .92; d.velocity.z *= .92; }
+      d.rotation.x += d.spin.x * dt; d.rotation.y += d.spin.y * dt; d.rotation.z += d.spin.z * dt;
+      this.dummy.position.copy(d.position); this.dummy.rotation.copy(d.rotation); this.dummy.scale.copy(d.scale); this.dummy.updateMatrix();
+      const kind = +d.steel; this.write(this.debrisMeshes[kind], debrisCounts[kind]++, d.color, Math.min(1, (d.life - d.age) * 4));
     }
-    for (let i = this.ripples.length - 1; i >= 0; i--) {
-      const r = this.ripples[i]; r.age += dt;
-      if (r.age >= r.life) { this.group.remove(r.mesh); r.mesh.material.dispose(); this.ripples.splice(i, 1); continue; }
-      const progress = r.age / r.life; r.mesh.scale.setScalar(.15 + progress * r.size); r.mesh.material.opacity = .4 * (1 - progress) ** 2;
+    this.debrisMeshes.forEach((mesh, kind) => this.commit(mesh, debrisCounts[kind]));
+    let rippleCount = 0;
+    this.dummy.rotation.set(-Math.PI / 2, 0, 0);
+    for (const r of this.ripples) {
+      if (r.age >= r.life) continue; r.age += dt; if (r.age >= r.life) continue;
+      const progress = r.age / r.life; this.dummy.position.set(r.x, .025, r.z); this.dummy.scale.setScalar(.15 + progress * r.size); this.dummy.updateMatrix();
+      this.write(this.rippleMesh, rippleCount++, r.color, .4 * (1 - progress) ** 2);
     }
+    this.commit(this.rippleMesh, rippleCount);
   }
 
   clear() {
-    for (const item of [...this.sparks, ...this.debris, ...this.ripples]) { this.group.remove(item.mesh); item.mesh.material.dispose(); }
-    this.sparks = []; this.debris = []; this.ripples = [];
+    for (const items of [this.sparks, this.debris, this.ripples]) for (const item of items) item.age = item.life;
+    this.sparkMesh.count = 0; this.rippleMesh.count = 0; for (const mesh of this.debrisMeshes) mesh.count = 0;
     for(const particle of this.trails)particle.age=particle.life;this.fire.count=0;this.ice.count=0;this.trailClock=0;
     for(const flash of this.flashes){flash.age=1;flash.life=0;flash.light.intensity=0;flash.mesh.visible=false;}
     for(const arc of this.arcs){arc.age=1;arc.life=0;arc.line.visible=false;}
     for(const ribbon of this.ribbons){ribbon.age=1;ribbon.life=0;ribbon.mesh.visible=false;}
   }
 
-  dispose() { this.clear(); this.sparkGeometry.dispose(); this.debrisGeometry.dispose(); this.rippleGeometry.dispose();this.fire.geometry.dispose();this.fire.material.dispose();this.ice.geometry.dispose();this.ice.material.dispose();for(const flash of this.flashes){flash.mesh.geometry.dispose();flash.mesh.material.dispose();}for(const arc of this.arcs){arc.line.geometry.dispose();arc.line.material.dispose();}for(const ribbon of this.ribbons){ribbon.mesh.geometry.dispose();ribbon.mesh.material.dispose();} this.group.removeFromParent(); }
+  dispose() { this.clear(); for (const mesh of [this.sparkMesh, ...this.debrisMeshes, this.rippleMesh]) { mesh.geometry.dispose(); mesh.material.dispose(); mesh.dispose(); }this.fire.geometry.dispose();this.fire.material.dispose();this.ice.geometry.dispose();this.ice.material.dispose();for(const flash of this.flashes){flash.mesh.geometry.dispose();flash.mesh.material.dispose();}for(const arc of this.arcs){arc.line.geometry.dispose();arc.line.material.dispose();}for(const ribbon of this.ribbons){ribbon.mesh.geometry.dispose();ribbon.mesh.material.dispose();} this.group.removeFromParent(); }
 }
