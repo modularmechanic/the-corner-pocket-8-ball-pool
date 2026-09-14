@@ -100,7 +100,7 @@ html,body{overscroll-behavior:none}.club{touch-action:none}.club-dialog,.main-me
 .touch-engage[aria-pressed=true]{background:#3b2a1ce8;border-color:#e39b6b;color:#ffd6a6}
 [data-input=touch] .touch-shoot{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;position:absolute;right:var(--safe-r);bottom:var(--row);width:var(--shoot);height:var(--shoot);border-radius:50%;background:#c9ad78;border:1px solid #f0d9a2;color:#1c291d;font-size:13px;font-weight:700;box-shadow:0 6px 22px #0009;touch-action:manipulation}
 [data-input=touch] .touch-shoot:disabled{opacity:.35}
-[data-input=touch] .touch-power{display:flex;flex-direction:column;align-items:center;gap:6px;position:absolute;right:calc(var(--safe-r) + (var(--shoot) - var(--slider-w)) / 2);bottom:calc(var(--row) + var(--shoot) + 12px);width:var(--slider-w);height:clamp(170px,55svh,calc(100svh - var(--row) - var(--shoot) - 190px));touch-action:none;transition:opacity .2s}
+[data-input=touch] .touch-power{display:flex;flex-direction:column;align-items:center;gap:6px;position:absolute;right:calc(var(--safe-r) + (var(--shoot) - var(--slider-w)) / 2);bottom:calc(var(--row) + var(--shoot) + 12px);width:var(--slider-w);height:clamp(170px,55svh,calc(100svh - var(--row) - var(--shoot) - 160px));touch-action:none;transition:opacity .2s}
 .touch-power[aria-disabled=true]{opacity:.5}
 .touch-power strong{font-size:17px;font-weight:600;color:#f0dca6;font-variant-numeric:tabular-nums;text-shadow:0 1px 6px #000}
 .touch-power-track{position:relative;flex:1;width:100%;overflow:hidden;border-radius:16px;background:#0f1c16de;border:1px solid #d6c08a66;box-shadow:0 6px 22px #0009}
@@ -111,11 +111,11 @@ html,body{overscroll-behavior:none}.club{touch-action:none}.club-dialog,.main-me
 [data-input=touch] .stage-tools .icon-button{width:var(--tool);height:var(--tool);touch-action:manipulation}
 [data-input=touch] .shot-status{left:var(--safe-l);bottom:calc(var(--row) + var(--dial) + 104px);transform:none}
 [data-input=touch] .cue-setup{left:var(--safe-l);bottom:calc(var(--row) + var(--dial) + 136px)}
-@media(max-height:700px){[data-input=touch]{--dial:118px;--shoot:72px;--tool:34px}}
+@media(max-height:700px){[data-input=touch]{--dial:120px;--shoot:72px;--tool:34px}}
 @media(min-width:700px) and (min-height:700px){[data-input=touch]{--dial:150px;--shoot:92px;--slider-w:84px;--tool:40px}}
 /* Landscape: tools and dial share a left column; Shoot sits beside the slider; the mode tabs move right of Engage. */
 @media(orientation:landscape){
-  [data-input=touch]{--dial:112px;--shoot:76px;--slider-w:72px;--tool:34px;--row:var(--safe-b)}
+  [data-input=touch]{--dial:120px;--shoot:76px;--slider-w:72px;--tool:34px;--row:var(--safe-b)}
   [data-input=touch] .touch-engage{right:auto;width:128px;margin:0}
   [data-input=touch] .touch-shoot{right:calc(var(--safe-r) + var(--slider-w) + 10px)}
   [data-input=touch] .touch-power{right:var(--safe-r);bottom:var(--safe-b);height:clamp(150px,60svh,calc(100svh - 130px))}
