@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { TABLE } from '../simulation/types';
-import { TABLE_RAILS, TABLE_NOSES } from '../simulation/table-geometry';
+import { HEAD_STRING_X, TABLE_RAILS, TABLE_NOSES } from '../simulation/table-geometry';
 import { canvasTexture } from './materials';
 import { buildPocketDetails, createPocketedSlabGeometry, createPocketedPanelGeometry, createPocketedClothGeometry } from './pocket-details';
 import { TableDetails, drawTableDetailTextures, type TableDetailTextures } from './table-details';
@@ -16,7 +16,6 @@ export function enableTableShadows(object: THREE.Object3D) {
 export const CLOTH_HALF_WIDTH = TABLE.halfWidth + TABLE.radius, CLOTH_HALF_DEPTH = TABLE.halfDepth + TABLE.radius;
 // Wooden rail caps begin just beyond the cloth and cover the cushion backs.
 const SIDE_CAP_Z = CLOTH_HALF_DEPTH + .26, END_CAP_X = CLOTH_HALF_WIDTH + .23;
-const HEAD_STRING_X = -TABLE.halfWidth / 2;
 
 export type TableModelSurfaces = Pick<TableSurfaces, 'walnut' | 'sideWood' | 'darkWood' | 'brass' | 'cloth' | 'cushion' | 'leather' | 'rubber' | 'pocketVoid'>;
 export interface TableTextures extends TableDetailTextures { plaque: THREE.Texture }

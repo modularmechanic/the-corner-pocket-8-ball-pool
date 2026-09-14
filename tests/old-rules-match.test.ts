@@ -79,6 +79,25 @@ test('the AI places a scratched cue ball in the kitchen and plays both of its Ol
   } finally { match.dispose(); }
 });
 
+test('a hazard-covered kitchen still gets a kitchen placement; a fully blocked kitchen opens the table instead of stalling', () => {
+  const electric = [-5, -4, -3].flatMap(x => [-2, 0, 2].map(z => ({ x, z }))).map((point, id) => ({ id, kind: 'electric' as const, radius: .9, angle: 0, ...point }));
+  const wall = { id: 0, x: -4.3, z: 0, width: 3.2, depth: 6, hp: 4, maxHp: 4, material: 'steel' as const };
+  for (const [label, edit, inKitchen] of [['hazards', (state: GameState) => { state.arcade!.hazards = electric; }, true], ['blocks', (state: GameState) => { state.arcade!.obstacles = [wall]; }, false]] as const) {
+    const match = new LocalMatch({ seed: `blocked-kitchen-${label}`, mode: 'ai', difficulty: 'expert', options: { rules: 'old' }, random: () => .5 });
+    try {
+      const state = inHand(match.snapshot()); edit(state); match.arrange(state);
+      for (let i = 0; i < 40 && match.state.phase === 'ball-in-hand'; i++) match.update(.1);
+      assert.equal(match.state.phase === 'ball-in-hand', false, `${label}: the AI places the cue ball`);
+      assert.equal(match.state.balls[0].x <= HEAD_STRING_X + 1e-9, inKitchen, label);
+    } finally { match.dispose(); }
+  }
+  const human = new LocalMatch({ seed: 'blocked-kitchen-human', mode: 'local', options: { rules: 'old' } });
+  try {
+    const state = inHand(human.snapshot()); state.arcade!.obstacles = [wall]; human.arrange(state);
+    assert.equal(human.dispatch({ type: 'place', x: 1, z: 0 }).ok, true, 'a human is not stuck either');
+  } finally { human.dispose(); }
+});
+
 const sockets: Socket[] = [];
 after(() => { for (const socket of sockets) socket.disconnect(); });
 async function client() {

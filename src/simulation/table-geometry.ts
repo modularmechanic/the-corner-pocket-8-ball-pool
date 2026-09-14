@@ -128,10 +128,21 @@ const BALL_CLEARANCE = {
 } as const;
 /** The head string crosses the break spot; the kitchen lies behind it, towards the head rail. */
 export const HEAD_STRING_X = -TABLE.halfWidth / 2;
-/** Old Rules restrict ball in hand (only given after a cue-ball scratch) to the kitchen; New Rules allow the whole table. */
-export function kitchenPlacement(state: Pick<GameState, 'rules'>): boolean { return state.rules === 'old'; }
-export function inPlacementZone(state: Pick<GameState, 'rules'>, point: Point): boolean {
-  return !kitchenPlacement(state) || point.x <= HEAD_STRING_X + 1e-9;
+/** Old Rules restrict ball in hand (only given after a cue-ball scratch) to the kitchen; New Rules allow the whole table.
+ * A kitchen with no clear spot opens the whole table rather than leaving the turn unplayable.
+ * ponytail: "no clear spot" is judged on a 0.1 grid, so a narrower free sliver still counts as full. */
+export function kitchenPlacement(state: GameState): boolean { return state.rules === 'old' && firstPlacementSpot(state, true) !== null; }
+export function inPlacementZone(state: GameState, point: Point, kitchen = kitchenPlacement(state)): boolean {
+  return !kitchen || point.x <= HEAD_STRING_X + 1e-9;
+}
+/** First spot a human could place the cue ball, scanning away from the head string: into the kitchen, or across the rest of the table. */
+export function firstPlacementSpot(state: GameState, kitchen: boolean): Point | null {
+  for (let column = 0; column <= 85; column++) {
+    const x = kitchen ? HEAD_STRING_X - column * .1 : HEAD_STRING_X + (column + 1) * .1;
+    if (Math.abs(x) > TABLE.halfWidth) break;
+    for (let row = -26; row <= 26; row++) if (isClearBallSpot(state, { x, z: row * .1 }, 0, 'placement')) return { x, z: row * .1 };
+  }
+  return null;
 }
 export function isClearBallSpot(state: GameState, point: Point, ignoreBall: number, policy: BallClearancePolicy): boolean {
   const rule = BALL_CLEARANCE[policy];
