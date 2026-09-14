@@ -15,6 +15,7 @@ import {
   type ArenaLayout,
   type Difficulty,
   type GameState,
+  type Group,
   type Mode,
   type RuleSet,
   type Shot,
@@ -426,10 +427,17 @@ async function shoot(shot: Shot) {
   input.cancel();
   await command({ type: 'shoot', shot }, 'That shot could not be played.');
 }
+/** Optional placement: a click outside the kitchen plays the cue ball from where it lies. */
 async function place(point: { x: number; z: number }) {
   if (!input.canAct || state.phase !== 'ball-in-hand') return;
   void sound.unlock();
-  await command({ type: 'place', ...point }, 'Place the cue ball on clear felt.');
+  const cue = state.balls[0],
+    target = !cue.pocketed && !inPlacementZone(state, point) ? { x: cue.x, z: cue.z } : point;
+  await command({ type: 'place', ...target }, 'Place the cue ball on clear felt.');
+}
+async function chooseGroup(group: Group) {
+  if (!input.canAct || state.phase !== 'choose-group') return;
+  await command({ type: 'group', group }, 'Choose solids or stripes.');
 }
 async function enterRoom(create: boolean) {
   if (isConnecting || !roomServer) return;
@@ -710,6 +718,8 @@ function setupUI() {
   $('touch-engage').onclick = () => input.toggleEngage();
   $('touch-shoot').onclick = () => input.touchShoot();
   $('chalk-button').onclick = () => void chalkCue();
+  $('choose-solids').onclick = () => void chooseGroup('solids');
+  $('choose-stripes').onclick = () => void chooseGroup('stripes');
   $('coin-button').onclick = () => void insertCoin();
   $('table-view').onclick = () => {
     input.cancel();

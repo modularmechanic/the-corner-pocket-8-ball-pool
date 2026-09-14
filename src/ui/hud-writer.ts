@@ -72,6 +72,7 @@ export class HudWriter {
     this.text('status-text', table.status.text);
     this.toggle('shot-status', 'foul', table.status.foul);
     this.toggle('shot-status', 'waiting', table.status.waiting);
+    this.hidden('group-choice', !canAct || state.phase !== 'choose-group');
     const chalked = !!state.chalked[state.turn];
     this.disabled('chalk-button', !canAct || !ready || chalked);
     this.attr('chalk-button', 'aria-pressed', String(chalked));

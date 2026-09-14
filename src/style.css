@@ -761,6 +761,8 @@ body {
   background: #142018b8;
   color: #d1d8c5;
   font-size: 10px;
+  max-width: calc(100vw - 32px);
+  text-align: center;
   pointer-events: none;
   backdrop-filter: blur(8px);
 }
@@ -772,6 +774,14 @@ body {
 }
 .shot-status.foul {
   color: #edb087;
+}
+.group-choice {
+  position: absolute;
+  bottom: 124px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
 }
 .shot-status.waiting .status-dot {
   animation: breathe 1.6s infinite;
@@ -3111,6 +3121,9 @@ dialog summary {
   left: var(--safe-l);
   bottom: calc(var(--row) + var(--dial) + 104px);
   transform: none;
+}
+[data-input='touch'] .group-choice {
+  bottom: calc(var(--row) + var(--dial) + 140px);
 }
 [data-input='touch'] .cue-setup {
   left: var(--safe-l);

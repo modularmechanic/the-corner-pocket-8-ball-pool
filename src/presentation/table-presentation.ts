@@ -1,6 +1,7 @@
 import { kitchenPlacement } from '../simulation/table-geometry';
 import {
   activeSeat,
+  isBreakShot,
   legalTargets,
   seatCount,
   type Difficulty,
@@ -39,6 +40,16 @@ export const AI_NAMES: Readonly<Record<Difficulty, string>> = {
   expert: 'The Hustler',
 };
 export const RULE_NAMES: Readonly<Record<RuleSet, string>> = { old: 'Old Rules', new: 'New Rules' };
+/** Status wording for the rule states, shared with anything that explains the rules. */
+export const RULE_TERMS = {
+  twoVisits: '2 visits',
+  oneVisitLeft: '1 visit left',
+  freeShot: 'Free shot — any ball may be hit first',
+  freeBall: 'Free ball (snookered)',
+  placeInKitchen: 'Place behind the head string',
+  optionalPlacement: 'Optional: place behind the head string or play from here',
+  chooseGroup: 'Choose your group',
+} as const;
 export function seatLabel(
   state: GameState,
   viewer: Pick<TableViewer, 'mode' | 'difficulty' | 'room'>,
@@ -129,12 +140,16 @@ export function deriveTablePresentation(state: GameState, viewer: TableViewer) {
   else if (state.phase === 'over')
     text = `${teamLabel(state, viewer, state.winner!)} ${viewer.mode === 'ai' && state.winner === 0 && state.format === 'singles' ? 'win' : 'wins'}`;
   else if (viewer.aiThinking) text = `${actor} · Aiming`;
+  else if (state.phase === 'choose-group')
+    text = viewer.controlsTurn ? RULE_TERMS.chooseGroup : `${actor} · Choosing a group`;
   else if (state.phase === 'ball-in-hand')
     text = !viewer.controlsTurn
       ? `${actor} · Ball in hand`
-      : kitchenPlacement(state)
-        ? 'Place the cue ball behind the head string'
-        : 'Ball in hand';
+      : !state.balls[0].pocketed
+        ? RULE_TERMS.optionalPlacement
+        : kitchenPlacement(state)
+          ? RULE_TERMS.placeInKitchen
+          : 'Ball in hand';
   else if (viewer.canInteract)
     text =
       viewer.adjustment === 'spin'
@@ -144,12 +159,13 @@ export function deriveTablePresentation(state: GameState, viewer: TableViewer) {
           : viewer.shotStage === 'power'
             ? '2 · Pull back & shoot'
             : '1 · Aim';
-  else if (state.shotCount === 0) text = viewer.controlsTurn ? 'Your break' : `${actor} · Break`;
+  else if (isBreakShot(state)) text = viewer.controlsTurn ? 'Your break' : `${actor} · Break`;
   else if (!viewer.controlsTurn) text = `${actor}’s shot`;
   else if (state.groups[state.turn] && legalTargets(state).every((ball) => ball.id === 8)) text = 'Eight ball';
-  const allowance =
-    !viewer.resetting && !waiting && state.shotsLeft > 0 && (state.phase === 'ready' || state.phase === 'ball-in-hand');
-  if (allowance) text += state.shotsLeft === 2 ? ' · 2 shots' : ' · 1 shot left';
+  const between = !viewer.resetting && !waiting && (state.phase === 'ready' || state.phase === 'ball-in-hand');
+  const allowance = between && state.shotsLeft > 0;
+  if (allowance) text += ` · ${state.shotsLeft === 2 ? RULE_TERMS.twoVisits : RULE_TERMS.oneVisitLeft}`;
+  if (between && state.freeShot) text += ` · ${state.rules === 'old' ? RULE_TERMS.freeShot : RULE_TERMS.freeBall}`;
   if (
     !viewer.resetting &&
     !waiting &&

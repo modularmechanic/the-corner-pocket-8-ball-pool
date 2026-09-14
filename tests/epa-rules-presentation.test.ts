@@ -4,7 +4,7 @@ import { createArcade } from '../src/simulation/arcade';
 import { initialState, type GameState, type RuleSet } from '../src/simulation/types';
 import { LocalMatch } from '../src/match/local';
 import { initPhysics } from '../src/simulation/game';
-import { deriveTablePresentation, type TableViewer } from '../src/presentation/table-presentation';
+import { deriveTablePresentation, RULE_TERMS, type TableViewer } from '../src/presentation/table-presentation';
 import { HudWriter, type HudElement } from '../src/ui/hud-writer';
 import { PlayerProfile, rackOptions, RULE_OPTIONS, type ProfileStorage } from '../src/ui/player-profile';
 
@@ -19,29 +19,57 @@ const table = (rules: RuleSet, changes: Partial<GameState> = {}) => {
 const status = (state: GameState, changes: Partial<TableViewer> = {}) =>
   deriveTablePresentation(state, { ...viewer, ...changes }).status;
 
-test('the HUD names the active rule set, the two-shot allowance and the kitchen placement hint', () => {
+test('the HUD names the rule set and explains visits, free shots, free balls, placement and group choice', () => {
   assert.equal(deriveTablePresentation(table('old'), viewer).rules, 'Old Rules');
   assert.equal(deriveTablePresentation(table('new'), viewer).rules, 'New Rules');
-  assert.deepEqual(status(table('old', { phase: 'ball-in-hand', shotsLeft: 2 })), {
-    text: 'Place the cue ball behind the head string · 2 shots',
+  const lost = (rules: RuleSet, changes: Partial<GameState>) => {
+    const state = table(rules, { phase: 'ball-in-hand', ...changes });
+    state.balls[0] = { ...state.balls[0], pocketed: true };
+    return state;
+  };
+  assert.deepEqual(status(lost('old', { shotsLeft: 2, freeShot: true })), {
+    text: 'Place behind the head string · 2 visits · Free shot — any ball may be hit first',
     waiting: false,
     foul: true,
   });
-  assert.equal(status(table('new', { phase: 'ball-in-hand' })).text, 'Ball in hand');
-  assert.deepEqual(status(table('old', { shotsLeft: 2 })), { text: 'Your shot · 2 shots', waiting: false, foul: true });
+  assert.equal(status(lost('new', { shotsLeft: 0 })).text, 'Place behind the head string');
+  assert.equal(
+    status(table('old', { phase: 'ball-in-hand', shotsLeft: 2, freeShot: true })).text,
+    'Optional: place behind the head string or play from here · 2 visits · Free shot — any ball may be hit first',
+  );
+  assert.equal(
+    status(table('new', { phase: 'ball-in-hand', shotsLeft: 2, freeShot: true })).text,
+    'Optional: place behind the head string or play from here · 2 visits · Free ball (snookered)',
+  );
+  assert.deepEqual(status(table('new', { shotsLeft: 2 })), {
+    text: 'Your shot · 2 visits',
+    waiting: false,
+    foul: true,
+  });
   assert.equal(
     status(table('old', { shotsLeft: 1 }), { canInteract: true, shotStage: 'aim' }).text,
-    '1 · Aim · 1 shot left',
+    '1 · Aim · 1 visit left',
   );
   assert.equal(
     status(table('old', { shotsLeft: 2, turn: 1 }), { mode: 'ai', controlsTurn: false }).text,
-    'The Regular’s shot · 2 shots',
+    'The Regular’s shot · 2 visits',
   );
   assert.equal(
-    status(table('old', { shotsLeft: 2, phase: 'rolling' })).text,
+    status(table('old', { shotsLeft: 2, freeShot: true, phase: 'rolling' })).text,
     'Rolling',
-    'a rolling shot shows no allowance',
+    'a rolling shot shows neither visits nor a free shot',
   );
+  assert.deepEqual(status(table('new', { phase: 'choose-group' })), {
+    text: 'Choose your group',
+    waiting: false,
+    foul: false,
+  });
+  assert.equal(
+    status(table('old', { phase: 'choose-group', turn: 1 }), { mode: 'ai', controlsTurn: false }).text,
+    'The Regular · Choosing a group',
+  );
+  assert.equal(status(table('old', { shotCount: 3, rebreak: true })).text, 'Your break', 'a re-rack breaks again');
+  assert.equal(RULE_TERMS.freeBall, 'Free ball (snookered)');
 
   const writes = new Map<string, string>();
   const element = (id: string) =>
@@ -73,7 +101,7 @@ test('the HUD names the active rule set, the two-shot allowance and the kitchen 
     setup: { stage: 'aim', adjustment: null, angle: 0, power: 0.65, elevation: 0, tipX: 0, tipY: 0 },
   });
   assert.equal(writes.get('rules-badge'), 'Old Rules');
-  assert.equal(writes.get('status-text'), 'Your shot · 1 shot left');
+  assert.equal(writes.get('status-text'), 'Your shot · 1 visit left');
   const room = {
     code: 'ABC123',
     format: 'singles' as const,
@@ -100,6 +128,43 @@ test('the HUD names the active rule set, the two-shot allowance and the kitchen 
     'Rule set · Old Rules (chosen by the host)',
     'joiners see the host’s rule set read-only',
   );
+});
+
+test('the group choice buttons show only to the seat that must choose', () => {
+  const hidden = new Map<string, boolean>();
+  const element = (id: string) =>
+    ({
+      textContent: '',
+      innerHTML: '',
+      set hidden(value: boolean) {
+        hidden.set(id, value);
+      },
+      setAttribute() {},
+      toggleAttribute: () => true,
+      classList: { toggle: () => true },
+      style: { setProperty() {} },
+    }) as unknown as HudElement;
+  const write = (hud: HudWriter, state: GameState, canAct: boolean) =>
+    hud.write({
+      state,
+      table: deriveTablePresentation(state, viewer),
+      mode: 'local',
+      seat: 0,
+      room: null,
+      ready: true,
+      canAct,
+      canAdvance: false,
+      inspecting: false,
+      layout: 'crossfire',
+      setup: { stage: 'aim', adjustment: null, angle: 0, power: 0.65, elevation: 0, tipX: 0, tipY: 0 },
+    });
+  const hud = new HudWriter(element);
+  write(hud, table('new', { phase: 'choose-group' }), true);
+  assert.equal(hidden.get('group-choice'), false);
+  write(hud, table('new', { phase: 'choose-group' }), false);
+  assert.equal(hidden.get('group-choice'), true, 'a watching seat waits');
+  write(hud, table('new', { phase: 'ready' }), true);
+  assert.equal(hidden.get('group-choice'), true);
 });
 
 test('the profile defaults to Old Rules and remembers the last chosen rule set', () => {
