@@ -93,9 +93,10 @@ export class HudWriter {
       element.innerHTML = pills.map(pill => `<span class="buff-pill ${pill.className}" style="--effect-color:${pill.color}" title="${pill.title}" data-active="${pill.active}" data-queued="${pill.queued}">${icon(pill.icon, 10)}</span>`).join('');
     });
   }
-  private writeInvite({ state, room, seat, ready }: HudView) {
+  private writeInvite({ state, table, room, seat, ready }: HudView) {
     this.hidden('invite-roster', !room);
     if (!room) { this.patch('invite-roster.html', '', element => { element.innerHTML = ''; }); return; }
+    this.text('invite-rules', `Rule set · ${table.rules} (chosen by the host)`);
     const capacity = seatCount(state.format), doubles = state.format === 'doubles', filled = room.players.filter(player => player.connected).length;
     this.text('invite-status', ready ? `All ${capacity} players are ready.` : `${filled}/${capacity} connected · Waiting for ${capacity === 4 ? 'the teams' : 'your friend'}…`);
     this.patch('invite-roster.html', `${state.format}:${seat}:${room.players.map(player => `${player.name}:${player.connected}`).join('|')}`, element => {

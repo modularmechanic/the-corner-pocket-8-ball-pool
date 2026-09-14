@@ -1,7 +1,7 @@
 import { LAYOUTS } from '../simulation/arcade';
 import { DEFAULT_CUE, getCue, type CueId } from '../simulation/cues';
 import { MAX_LEVEL, normalizeLevel } from '../simulation/level-policy';
-import type { ArenaLayout, Difficulty, GameFormat, GameState, Mode, RuleSet } from '../simulation/types';
+import type { ArenaLayout, Difficulty, GameFormat, GameOptions, GameState, Mode, RuleSet } from '../simulation/types';
 import { canAdvance, resultTeams } from '../match/policy';
 import { AI_NAMES, RULE_NAMES } from '../presentation/table-presentation';
 import type { RenderQuality } from '../render/performance';
@@ -25,6 +25,11 @@ const RULE_DETAILS = { old: 'Two shots after a foul', new: 'Ball in hand anywher
 export const RULE_OPTIONS: MenuOption<RuleSet>[] = entries(RULE_DETAILS).map(([value, detail]) => ({ value, label: `${RULE_NAMES[value]} · ${detail}` }));
 export const QUALITY_OPTIONS: MenuOption<RenderQuality>[] = entries(QUALITY_LABELS).map(([value, label]) => ({ value, label }));
 export const levelName = (level: unknown) => LEVEL_NAMES[normalizeLevel(level) - 1];
+
+/** A new local rack's options. A running session keeps its rule set; only starting a session (no `session`) applies the chosen one. */
+export function rackOptions(preferences: Readonly<Preferences>, format: GameFormat, session: Pick<GameState, 'rules'> | null): GameOptions {
+  return { layout: preferences.layout, level: preferences.level, format, rules: session ? session.rules : preferences.rules };
+}
 
 const PREFIX = 'corner-pocket:', MAX_RECORDS = 8;
 const oneOf = <T extends string>(record: Record<T, unknown>, value: string | null, fallback: T): T =>

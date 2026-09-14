@@ -15,7 +15,7 @@ import { shell, icon } from './ui/shell';
 import { TableAudio } from './ui/audio';
 import { createIdentity } from './ui/identity';
 import { ShotInputController, type PointerInput, type ShotInputView } from './ui/shot-input-controller';
-import { PlayerProfile } from './ui/player-profile';
+import { PlayerProfile, rackOptions } from './ui/player-profile';
 import { HudWriter, type HudElement } from './ui/hud-writer';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -95,8 +95,9 @@ function showMainMenu() {
   stopAI(); renderRecords(); renderLevels();
   $<HTMLButtonElement>('menu-resume').hidden = !hasStarted || state.phase === 'over';
   $<HTMLSelectElement>('menu-difficulty').value = profile.preferences.difficulty;
-  $<HTMLSelectElement>('menu-rules').value = profile.preferences.rules;
-  $('menu-session-note').textContent = match.mode === 'online' && match.room ? `Room ${match.room.code} keeps playing while this menu is open.` : 'Singles or doubles · Up to four players';
+  // Mid-session the selector shows the rules in play; a different choice applies from the next Start Session.
+  $<HTMLSelectElement>('menu-rules').value = hasStarted ? state.rules : profile.preferences.rules;
+  $('menu-session-note').textContent = match.mode === 'online' && match.room ? `Room ${match.room.code} keeps playing while this menu is open · ${RULE_NAMES[state.rules]}.` : hasStarted ? `${RULE_NAMES[state.rules]} in play · A new rule set applies from Start Session.` : 'Singles or doubles · Up to four players';
   openDialog('main-menu');
 }
 function toast(message: string) { $('toast').textContent = message; $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = window.setTimeout(() => $('toast').classList.remove('show'), 3000); }
@@ -210,11 +211,11 @@ function updateUI() {
   }
 }
 const selectedRules = (id: string): RuleSet => $<HTMLSelectElement>(id).value === 'new' ? 'new' : 'old';
-/** A new session takes the player's last chosen rules; they stay fixed until the next session. */
-function newGame(nextMode:Mode=match.mode,nextFormat:GameFormat=state?.format??menuFormat) {
+/** New racks keep the running session's rules; Start Session passes `session: null` to apply the chosen rules. */
+function newGame(nextMode:Mode=match.mode,nextFormat:GameFormat=state?.format??menuFormat,session:GameState|null=state??null) {
   if(nextMode==='online')return;
   sessionIntent++;
-  installMatch(new LocalMatch({seed:createIdentity().slice(0,8),mode:nextMode,difficulty:profile.preferences.difficulty,options:{layout:profile.preferences.layout,level:profile.preferences.level,format:nextFormat,rules:profile.preferences.rules}}));
+  installMatch(new LocalMatch({seed:createIdentity().slice(0,8),mode:nextMode,difficulty:profile.preferences.difficulty,options:rackOptions(profile.preferences,nextFormat,session)}));
   initialized=true;stopAI();resultKey='';
   input.newRack(.65);updateUI();equipPreferredCue();
 }
@@ -278,18 +279,19 @@ function setupUI() {
   $('play-nav').onclick = showMainMenu;
   $<HTMLDialogElement>('main-menu').addEventListener('cancel', event => { if (!hasStarted) event.preventDefault(); });
   $('menu-resume').onclick = () => closeDialog('main-menu');
-  const startFromMenu = (nextMode: Mode) => { hasStarted = true; newGame(nextMode, menuFormat); closeDialog('main-menu'); };
+  const chooseMenuRules = () => profile.set('rules', selectedRules('menu-rules'));
+  const startFromMenu = (nextMode: Mode) => { hasStarted = true; chooseMenuRules(); newGame(nextMode, menuFormat, null); closeDialog('main-menu'); };
   renderLevels(); refreshMenuFormat();
   $('menu-format').onchange = () => { menuFormat = $<HTMLSelectElement>('menu-format').value === 'doubles' ? 'doubles' : 'singles'; profile.set('format', menuFormat); refreshMenuFormat(); };
   $('menu-level').onchange = () => profile.set('level', normalizeLevel($<HTMLSelectElement>('menu-level').value));
-  $('menu-rules').onchange = () => profile.set('rules', selectedRules('menu-rules'));
+  $('menu-rules').onchange = chooseMenuRules;
   $('menu-begin').onclick = () => { setMenuPanel(true); selectMenuMode(menuMode); $('menu-session-start').focus(); };
   $('menu-back').onclick = () => { setMenuPanel(false); $('menu-begin').focus(); };
   $('menu-start').onclick = () => selectMenuMode('ai');
   $('menu-local').onclick = () => selectMenuMode('local');
   $('menu-online').onclick = () => selectMenuMode('online');
-  $('menu-lobby').onclick = () => openLobby(menuFormat);
-  $('menu-session-start').onclick = () => { if (menuMode === 'online') openLobby(menuFormat); else startFromMenu(menuMode); };
+  $('menu-lobby').onclick = () => { chooseMenuRules(); openLobby(menuFormat); };
+  $('menu-session-start').onclick = () => { if (menuMode === 'online') { chooseMenuRules(); openLobby(menuFormat); } else startFromMenu(menuMode); };
   $('menu-difficulty').onchange = () => chooseDifficulty($<HTMLSelectElement>('menu-difficulty').value as Difficulty);
   const resolutionNote = () => { const perf=scene.getPerformance();$('resolution-note').textContent = `${Math.round(perf.fps)} FPS · ${perf.width} × ${perf.height} · ${perf.tier}. ${perf.gpuMs!==null?`GPU ${perf.gpuMs.toFixed(1)} ms · `:''}${perf.drawCalls} draws. Auto adjusts effects and resolution for smooth play.`; };
   window.setInterval(()=>{if($<HTMLDialogElement>('settings-dialog').open)resolutionNote();},1000);
