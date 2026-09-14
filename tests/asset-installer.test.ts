@@ -152,6 +152,36 @@ test('a throwing use restores placeholder visibility and reports the path only a
   assert.deepEqual(await props.settled(), { loaded: [], failed: ['models/pub/slot-cabinet.glb'] });
 });
 
+test('settling releases parsed sources without freeing what is drawn, and a later request parses again', async () => {
+  const fake = fakeLoader(), props = createPropInstaller(fake.loader), room = new THREE.Group(), cloth = new THREE.MeshStandardMaterial();
+  const freed: string[] = [];
+  props.model('models/pub/booth-bench.glb', { parent: room, placements: [{ x: 0, y: 0, z: 0 }] });
+  props.texture('textures/table/baize-color.png', { use: texture => { cloth.map = texture; } });
+  let atlas: THREE.Texture | undefined;
+  props.texture('textures/pub/pool-1980s-atlas.webp', { use: texture => { atlas = texture; texture.dispose(); } });
+  const bench = prop(), color = new THREE.Texture(), drawnAtlas = new THREE.Texture();
+  bench.geometry.addEventListener('dispose', () => freed.push('bench geometry'));
+  bench.material.addEventListener('dispose', () => freed.push('bench material'));
+  color.addEventListener('dispose', () => freed.push('baize color'));
+  await fake.arrive('/models/pub/booth-bench.glb', bench.scene);
+  await fake.arrive('/textures/table/baize-color.png', color);
+  await fake.arrive('/textures/pub/pool-1980s-atlas.webp', drawnAtlas);
+  await props.settled();
+  assert.equal(atlas, drawnAtlas); assert.deepEqual(freed, [], 'settling frees nothing; the atlas was disposed by its own use');
+  assert.equal(cloth.map, color); assert.equal(room.children.length, 1);
+
+  const later = new THREE.MeshStandardMaterial();
+  props.texture('textures/table/baize-color.png', { use: texture => { later.map = texture; } });
+  props.model('models/pub/booth-bench.glb', { parent: room, placements: [{ x: 1, y: 0, z: 0 }] });
+  assert.equal(fake.parses.get('/textures/table/baize-color.png'), 2, 'the released source is parsed again');
+  assert.equal(fake.parses.get('/models/pub/booth-bench.glb'), 2);
+  const recolor = new THREE.Texture();
+  await fake.arrive('/textures/table/baize-color.png', recolor); await fake.arrive('/models/pub/booth-bench.glb', prop().scene);
+  assert.equal(later.map, recolor); assert.equal(recolor.anisotropy, 8); assert.equal(cloth.map, color);
+  assert.equal(room.children.length, 2); assert.equal(props.revision, 5); assert.deepEqual(freed, []);
+  assert.deepEqual((await props.settled()).failed, []);
+});
+
 test('a texture placeholder the scene still draws stays allocated', async () => {
   const fake = fakeLoader(), props = createPropInstaller(fake.loader), room = new THREE.Group(), grain = new THREE.Texture();
   new THREE.Scene().add(room); room.add(new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial({ map: grain })));

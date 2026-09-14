@@ -19,7 +19,8 @@ type Placeholder = THREE.Object3D | THREE.Texture;
 interface PropRequest<Source> {
   /** Stays visible until the prop arrives, then is removed and freed. Kept if the prop fails. */
   placeholder?: Placeholder | readonly Placeholder[];
-  /** Runs once per path on the shared parsed source. The first request's callback wins. */
+  /** Runs once per path on the shared parsed source. The first request's callback wins.
+   * Sources are shared until the next settle, then released. */
   prepare?: (source: Source) => void;
 }
 /** Instance `placements` (or add one clone) under `parent`, or attach it yourself with `use`. */
@@ -126,6 +127,10 @@ export function createPropInstaller(loader: PropLoader = browserPropLoader()): P
       loaded.delete(path); failed.add(path);
     }).finally(() => {
       if (--pending) return;
+      // Settled: every parse has attached or failed, so drop the parsed sources. Attached props
+      // keep their own references; an atlas a `use` drew and disposed can now be collected.
+      // A later request for the same path parses it again.
+      models.clear(); textures.clear();
       const result = { loaded: [...loaded], failed: [...failed] }, resolved = waiters;
       waiters = [];
       for (const resolve of resolved) resolve(result);
