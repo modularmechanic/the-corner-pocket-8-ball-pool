@@ -2,7 +2,8 @@ import { before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { initPhysics } from '../src/simulation/game';
 import { LocalMatch, MATCH_STEP } from '../src/match/local';
-import { canAdvance, MAX_LEVEL, normalizeLevel } from '../src/match/policy';
+import { canAdvance } from '../src/match/policy';
+import { MAX_LEVEL, normalizeLevel } from '../src/simulation/level-policy';
 import { activeSeat, type GameState } from '../src/simulation/types';
 import { SnapshotTimeline, NETWORK_DELAY } from '../src/match/timeline';
 before(initPhysics);
@@ -45,6 +46,40 @@ test('menu-paused AI leaves the match pickup clock running; incomplete online ro
     const clock = hosted.state.arcade!.clock;
     hosted.update(10); assert.equal(hosted.state.arcade!.clock, clock);
   } finally { local.dispose(); hosted.dispose(); }
+});
+
+test('an idle match shares one frozen state view across frames until a command or shot changes the table', () => {
+  const match = new LocalMatch({ seed: 'idle-view', mode: 'local' });
+  try {
+    const idle = match.state;
+    // Four seconds of 60 Hz frames: the clock runs but the first timed spawn is at least five seconds away.
+    for (let i = 0; i < 240; i++) match.update(1 / 60);
+    const current = match.state;
+    assert.equal(current.balls, idle.balls, 'idle frames must not re-snapshot the table');
+    assert.equal(current.arcade!.pickups, idle.arcade!.pickups);
+    assert.ok(current.arcade!.clock! > 3.99, 'the pickup clock stays current in the shared view');
+    assert.ok(Object.isFrozen(current) && Object.isFrozen(current.arcade) && Object.isFrozen(current.balls[0]));
+    assert.equal('simulation' in current, false, 'engine continuation metadata stays out of the presentation view');
+    assert.ok(match.snapshot().simulation, 'restore snapshots keep continuation metadata');
+    assert.equal(match.dispatch({ type: 'chalk' }).ok, true);
+    assert.notEqual(match.state.balls, idle.balls); assert.equal(match.state.chalked[0], true);
+    assert.equal(match.dispatch({ type: 'shoot', shot: { angle: 0, power: .6 } }).ok, true);
+    const launched = match.state;
+    assert.equal(launched.phase, 'rolling'); assert.ok(launched.balls[0].vx > 0);
+    match.update(1 / 60);
+    assert.ok(match.state.balls[0].x > launched.balls[0].x, 'rolling steps publish moving balls');
+  } finally { match.dispose(); }
+});
+
+test('a warm cached view picks up idle pickup spawns and expiries', () => {
+  const match = new LocalMatch({ seed: 'warm-cache', mode: 'local' });
+  try {
+    assert.ok(match.state.arcade);
+    for (const seconds of [10, 15]) {
+      match.update(seconds);
+      assert.deepEqual(match.state.arcade!.pickups, match.snapshot().arcade!.pickups);
+    }
+  } finally { match.dispose(); }
 });
 
 test('all three AI seats use authorized commands; humans cannot take over a doubles AI partner', () => {

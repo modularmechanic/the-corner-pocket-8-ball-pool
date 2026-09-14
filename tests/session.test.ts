@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { initialState } from '../src/simulation/types';
-import { humanControls, resultTeams } from '../src/ui/session';
+import { humanControls, resultTeams } from '../src/match/policy';
 
 test('solo doubles gives the human only their own seat and leaves their partner to the AI', () => {
   const state=initialState('team-control');state.format='doubles';

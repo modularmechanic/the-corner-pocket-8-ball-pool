@@ -1,6 +1,5 @@
 import { activeSeat, teamOfSeat, type GameState, type Mode } from '../simulation/types';
 import { MAX_LEVEL, normalizeLevel } from '../simulation/level-policy';
-export { MAX_LEVEL, normalizeLevel } from '../simulation/level-policy';
 export function canAdvance(state: GameState, mode: Mode): boolean {
   return state.phase === 'over' && normalizeLevel(state.arcade?.level) < MAX_LEVEL && (mode !== 'ai' || state.winner === 0);
 }

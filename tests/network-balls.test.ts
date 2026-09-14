@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { interpolateBalls } from '../src/ui/network-balls';
+import { interpolateBalls } from '../src/match/interpolate';
 import type { Ball } from '../src/simulation/types';
 const ball = (overrides: Partial<Ball> = {}): Ball => ({ id: 0, x: 0, z: 0, vx: 0, vz: 0, pocketed: false, ...overrides });
 

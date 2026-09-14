@@ -11,7 +11,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The same process serves the game and the multiplayer room server. Set `PORT` to change the port.
+Open [http://localhost:3000](http://localhost:3000). The same process serves the game and the multiplayer room server, and the page connects to it (`VITE_ROOM_SERVER_URL=same-origin`). Set `PORT` to change the port.
 
 ## Play
 
@@ -28,11 +28,11 @@ Open [http://localhost:3000](http://localhost:3000). The same process serves the
 - **Ball in hand:** click a clear spot on the felt after a foul.
 - **Solo:** choose Casual, Regular, or Expert. The AI evaluates clear potting paths and cut angles, with different aim error and shot selection by difficulty. Select Doubles for you and an AI partner against two AI opponents.
 - **Pass & play:** select the gamepad button and share the mouse.
-- **Friends:** select the friends button, open a table, and share the six-character room code or invitation link. Friends join through the same server address. Choose Singles for two players or Doubles for four.
+- **Friends:** select the friends button, open a table, and share the six-character room code or invitation link. Friends join through the same room server. Builds without a room server hide the friends entries, and invitation links show that online play is unavailable. Choose Singles for two players or Doubles for four.
 
 Room codes seed the rack. The server owns online physics, legality, turns and the result, and targets 60 rolling-state broadcasts per second. Singles has two seats; doubles has four, with seats 1 + 3 against 2 + 4. Everyone must be connected before shooting. A temporary network disconnect preserves the seat and game; the open tab reconnects automatically. Rooms are held in memory and expire after ten minutes with all players disconnected. A server restart clears rooms.
 
-For friends on the same network, use the host computer's LAN address in place of `localhost`. Friends over the internet need a publicly reachable deployment of the complete Node server. A static Vite build alone does not provide multiplayer.
+For friends on the same network, use the host computer's LAN address in place of `localhost`. Friends over the internet need a publicly reachable deployment of the complete Node server. A static build provides multiplayer only when `VITE_ROOM_SERVER_URL` names a reachable room server (see Production).
 
 ## House rules
 
@@ -95,9 +95,11 @@ WebGL 2 and hardware acceleration are required. Mouse and touch shot setup are s
 ## Production
 
 ```sh
-npm run build
+VITE_ROOM_SERVER_URL=same-origin npm run build
 npm start
 ```
+
+`VITE_ROOM_SERVER_URL` is read at build time: `same-origin` uses the serving Node process, an `https://` URL uses a separate room server, and unset or empty hides online play (plain `npm run build` for static hosting). A room server accepts cross-origin browsers only from the comma-separated `CORS_ORIGIN` list; unset allows same-origin pages only. See `.env.example`.
 
 Deploy the application to a Node host with WebSocket support, or use the included Dockerfile:
 

@@ -372,6 +372,8 @@ export class PoolGame {
     arcade.pickups=arcade.pickups.filter(p=>p.available);arcade.pickups.push(pickup);
     this.emit({kind:'spawn',x,z,pickup:pickup.id,power:pickup.power,strength:.45});
   }
+  // LocalMatch reuses its frozen state view on a quiet table and refreshes only the clock.
+  // Every other visible idle change here (spawn, expiry) must emit an event to invalidate that view.
   private advancePickups(dt:number) {
     const arcade=this.current.arcade;if(!arcade)return;
     arcade.clock=(arcade.clock||0)+dt;
@@ -444,10 +446,12 @@ export class PoolGame {
     }
     this.zoneOccupants.set(ball.id,occupied);
   }
+  /** Detached table data without the continuation metadata that only arrange() needs. */
+  detachedState(): GameState { return structuredClone(this.current); }
   snapshot(): GameState {
-    return structuredClone({...this.current,simulation:{shotResult:this.shotResult,legalBefore:this.legalBefore,stillTime:this.stillTime,rollTime:this.rollTime,
+    return {...this.detachedState(),simulation:structuredClone({shotResult:this.shotResult,legalBefore:this.legalBefore,stillTime:this.stillTime,rollTime:this.rollTime,
       portalRewardPending:this.portalRewardPending,pickupDraws:this.pickupDraws,nextPickupAt:this.nextPickupAt,nextPickupId:this.nextPickupId,
-      obstacleCooldown:[...this.obstacleCooldown],portalCooldown:[...this.portalCooldown],zoneOccupants:[...this.zoneOccupants].map(([id,zones])=>[id,[...zones]]),hazardRewards:[...this.hazardRewards],activeContacts:[...this.activeContacts],cueSpin:this.cueSpin,pendingSpin:this.pendingSpin}});
+      obstacleCooldown:[...this.obstacleCooldown],portalCooldown:[...this.portalCooldown],zoneOccupants:[...this.zoneOccupants].map(([id,zones])=>[id,[...zones]]),hazardRewards:[...this.hazardRewards],activeContacts:[...this.activeContacts],cueSpin:this.cueSpin,pendingSpin:this.pendingSpin})};
   }
   dispose() { this.events.free(); this.world.free(); }
 }
