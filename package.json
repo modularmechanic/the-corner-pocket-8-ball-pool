@@ -10,7 +10,8 @@
     "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
-    "@dimforge/rapier3d-compat": "^0.19.3",
+    "@dimforge/rapier3d": "0.19.3",
+    "@dimforge/rapier3d-compat": "0.19.3",
     "express": "^5.1.0",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
@@ -22,6 +23,7 @@
     "@types/three": "^0.180.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.2",
-    "vite": "^7.1.5"
+    "vite": "^7.1.5",
+    "vite-plugin-wasm": "3.6.0"
   }
 }
