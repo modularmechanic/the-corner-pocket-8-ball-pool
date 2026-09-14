@@ -127,14 +127,14 @@ export class LocalMatch implements Match {
     this.accumulator += dt;
     // Each authority consumes the same fixed steps; hidden tabs catch up on resume.
     // No menu flag is accepted here: only AI planning can pause independently.
-    // Rolling time older than one update's steps is past: it runs silently, a bounded
-    // number of steps per update, and the rest waits in the accumulator.
-    this.muted ||= this.accumulator > CATCH_UP_STEPS * MATCH_STEP + 1e-10;
+    // A rolling update with more steps than its budget is catching up: it runs at most
+    // CATCH_UP_STEPS, silently through any settle and idle remainder, and the rest waits
+    // in the accumulator. The last budget's worth of a backlog plays as normal.
+    if (initialPhase === 'rolling' && Math.floor((this.accumulator + 1e-10) / MATCH_STEP) > CATCH_UP_STEPS) this.muted = true;
     for (let steps = 0; this.accumulator + 1e-10 >= MATCH_STEP; steps++) {
       const phase = this.game.state.phase;
       if (phase === 'over' || !this.available && phase !== 'rolling') { this.accumulator = 0; break; }
       if (phase !== 'rolling') {
-        this.muted = !!options.muted;
         const idle = Math.floor((this.accumulator + 1e-10) / MATCH_STEP) * MATCH_STEP;
         this.game.advanceIdle(idle); this.accumulator = Math.max(0, this.accumulator - idle); break;
       }
