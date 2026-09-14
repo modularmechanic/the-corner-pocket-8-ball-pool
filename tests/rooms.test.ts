@@ -6,7 +6,8 @@ import { io, type Socket } from 'socket.io-client';
 import { initPhysics } from '../src/simulation/game';
 import { LocalMatch } from '../src/match/local';
 import type { RoomSnapshot, ClientToServerEvents, ServerToClientEvents } from '../src/match/protocol';
-import { attachRooms } from '../server/rooms';
+import { allowedOrigins, attachRooms } from '../server/rooms';
+import { resolveRoomServer } from '../src/match/room-server';
 import { activeSeat, type GameState, type TableEvent } from '../src/simulation/types';
 let server: ReturnType<typeof attachRooms>;
 let url: string;
@@ -38,7 +39,7 @@ test('two friends share an authoritative seeded table; other turns, extra player
   const hostId=randomUUID(),guestId=randomUUID();
   const created=await request(host,'room:create',{name:'Host',token:hostId});
   assert.equal(created.ok,true); assert.equal(created.seat,0); assert.match(created.code,/^[A-F0-9]{6}$/);
-  assert.equal(created.format,'singles');assert.equal(created.capacity,2);assert.equal(created.activeSeat,0);
+  assert.equal(created.format,'singles');assert.equal(created.capacity,2);assert.equal(activeSeat(created.state),0);
   const solo=await request(host,'game:shot',{angle:0,power:.8}); assert.equal(solo.ok,false);
   const joined=await request(guest,'room:join',{name:'Guest',token:guestId,code:created.code});
   assert.equal(joined.ok,true); assert.equal(joined.seat,1); assert.deepEqual(created.state.balls,joined.state.balls);
@@ -54,7 +55,7 @@ test('two friends share an authoritative seeded table; other turns, extra player
   const room=server.rooms.get(created.code)!;
   for(let i=0;room.match.state.phase==='rolling'&&i<4000;i++)room.match.update(1/120);
   assert.equal(room.match.state.shotCount,1);
-  const snapshot=JSON.parse(JSON.stringify(room.match.snapshot())); guest.disconnect(); await delay(50);
+  const snapshot=JSON.parse(JSON.stringify(room.match.state)); guest.disconnect(); await delay(50);
   const returning=await client();
   const rejoined=await request(returning,'room:join',{name:'Guest',token:guestId,code:created.code});
   assert.equal(rejoined.seat,1); assert.deepEqual(rejoined.state,{...snapshot,arcade:{...snapshot.arcade,clock:rejoined.state.arcade.clock}}); assert.equal(rejoined.players.length,2);
@@ -138,7 +139,7 @@ test('a disconnected doubles seat pauses readiness and rejoins its original team
     assert.equal((await request(outsider,'room:join',{name:'Replacement',token:randomUUID(),code:created.code})).ok,false,'the fourth seat remains reserved for its token');
     returning=await client();
     const rejoined=await request(returning,'room:join',{name:'Seat 1 returned',token:tokens[1],code:created.code});
-    assert.equal(rejoined.seat,1);assert.equal(rejoined.players[1].team,1);assert.equal(rejoined.activeSeat,1);
+    assert.equal(rejoined.seat,1);assert.equal(rejoined.players[1].team,1);assert.equal(activeSeat(rejoined.state),1);
     assert.equal(rejoined.format,'doubles');assert.equal(rejoined.capacity,4);
     assert.deepEqual(rejoined.state.teamOrder,saved.teamOrder);assert.deepEqual(rejoined.state.balls,saved.balls);
     assert.equal(rejoined.state.shotCount,saved.shotCount);assert.equal(rejoined.players.length,4);
@@ -158,7 +159,7 @@ test('all four clients receive partner rotation and a rematch preserves doubles 
       assert.equal((await request(clients[next],'game:place',{x:-2.85,z:0})).ok,true);
       await until(()=>packets.every(list=>list.some(packet=>packet.state.shotCount===shooter+1&&packet.state.phase==='ready')),'every seat receives the completed shot and next active teammate');
       const expected=room.match.snapshot();
-      for(const list of packets){const packet=list.filter(p=>p.state.shotCount===shooter+1&&p.state.phase==='ready').at(-1)!;assert.equal(packet.activeSeat,next);assert.deepEqual(packet.state.teamOrder,expected.teamOrder);}
+      for(const list of packets){const packet=list.filter(p=>p.state.shotCount===shooter+1&&p.state.phase==='ready').at(-1)!;assert.equal(activeSeat(packet.state),next);assert.deepEqual(packet.state.teamOrder,expected.teamOrder);}
     }
     assert.equal(activeSeat(room.match.state),2);assert.deepEqual(room.match.state.teamOrder,[1,1]);
     assert.equal((await request(clients[0],'game:shot',{angle:0,power:.03})).ok,false,'the previous team shooter cannot steal the next partner’s shot');
@@ -169,7 +170,7 @@ test('all four clients receive partner rotation and a rematch preserves doubles 
     for(const list of packets){
       const packet=list.filter(p=>p.state.seed!==oldSeed).at(-1)!;
       assert.equal(packet.code,created.code);assert.equal(packet.format,'doubles');assert.equal(packet.capacity,4);
-      assert.equal(packet.state.format,'doubles');assert.deepEqual(packet.state.teamOrder,[0,0]);assert.equal(packet.activeSeat,0);
+      assert.equal(packet.state.format,'doubles');assert.deepEqual(packet.state.teamOrder,[0,0]);assert.equal(activeSeat(packet.state),0);
       assert.equal(packet.state.shotCount,0);assert.equal(packet.state.arcade!.level,2);
       assert.deepEqual(packet.players.map(p=>[p.seat,p.team,p.connected]),[[0,0,true],[1,1,true],[2,0,true],[3,1,true]]);
       assert.deepEqual(packet.events,[]);
@@ -192,21 +193,14 @@ test('friends share seeded layouts, collect visible powers and receive each effe
   const created = await request(host, 'room:create', { name: 'Arcade host', token: randomUUID(), layout: 'gauntlet' });
   assert.equal(created.ok, true);
   assert.equal(created.state.arcade.layout, 'gauntlet');
-  assert.equal((await request(host, 'game:power', { power: 'overdrive' })).ok, false, 'manual power selection is unavailable');
   const joined = await request(guest, 'room:join', { name: 'Arcade guest', token: randomUUID(), code: created.code, layout: 'fortress' });
   assert.equal(joined.state.arcade.layout, 'gauntlet', 'joining uses the host’s selected layout');
   assert.deepEqual(joined.state.arcade.obstacles, created.state.arcade.obstacles);
-  assert.equal((await request(guest, 'game:power', { power: 'frost' })).ok, false, 'an opponent cannot activate a power on someone else’s turn');
-  for (const power of ['invalid', '__proto__', 'constructor']) {
-    assert.equal((await request(host, 'game:power', { power })).ok, false);
-  }
-  assert.equal((await request(host, 'game:power', { power: 'overdrive' })).ok, false, 'powers must be collected from the felt');
   const room = server.rooms.get(created.code)!;
   const arrangement = room.match.snapshot(), pickup = arrangement.arcade!.pickups[0];
   pickup.x = -2.1; pickup.z = 0; room.match.arrange(arrangement);
   assert.ok(pickup.power, 'the pickup snapshot identifies its visible power');
   assert.equal((await request(host, 'game:shot', { angle: 0, power: 1 })).ok, true);
-  assert.equal((await request(host, 'game:power', { power: 'frost' })).ok, false, 'rolling shots cannot be modified');
   await until(() => guestPackets.some(packet => packet.events.some(event => event.kind === 'ball')), 'the guest receives real collision events from the authoritative table');
   await delay(100);
   for (const packets of [hostPackets, guestPackets]) {
@@ -421,4 +415,24 @@ test('cue choices are seat-owned, level-validated and synchronized through shots
     assert.equal(room.match.state.arcade!.level, 4);
     assert.equal((await request(returning, 'game:equip', { cue: 'ebony-finesse' })).ok, true, 'advancing unlocks the next cue on the authority');
   } finally { host.disconnect(); guest.disconnect(); returning?.disconnect(); }
+});
+
+test('the build-time room server setting disables, targets same-origin or names a server', () => {
+  for (const setting of [undefined, '', '  ', 'not a url', 'ftp://rooms.example']) assert.equal(resolveRoomServer(setting), null, String(setting));
+  assert.deepEqual(resolveRoomServer('same-origin'), {});
+  assert.deepEqual(resolveRoomServer(' https://rooms.example:8443 '), { url: 'https://rooms.example:8443/' });
+  assert.deepEqual(allowedOrigins(' https://a.example, ,http://b.example:5173 '), ['https://a.example', 'http://b.example:5173']);
+  assert.deepEqual(allowedOrigins(undefined), []);
+});
+
+test('room transport answers cross-origin browsers only for configured origins', async () => {
+  const handshake = async (address: string, origin: string) => (await fetch(`${address}/socket.io/?EIO=4&transport=polling`, { headers: { Origin: origin } })).headers.get('access-control-allow-origin');
+  assert.equal(await handshake(url, 'https://friends.example'), null, 'the default server is same-origin only');
+  const http = createServer(), rooms = attachRooms(http, ['https://friends.example']);
+  await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = `http://127.0.0.1:${(http.address() as { port: number }).port}`;
+    assert.equal(await handshake(address, 'https://friends.example'), 'https://friends.example');
+    assert.equal(await handshake(address, 'https://elsewhere.example'), null);
+  } finally { await rooms.close(); }
 });

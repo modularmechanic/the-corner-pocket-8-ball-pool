@@ -18,9 +18,9 @@ export interface EffectPill {
   id: EffectId; title:string; icon:string; color:string; className:string;
   active:boolean; queued:boolean;
 }
-const aiNames:Record<Difficulty,string> = {casual:'The Newcomer',regular:'The Regular',expert:'The Hustler'};
+export const AI_NAMES:Readonly<Record<Difficulty,string>> = {casual:'The Newcomer',regular:'The Regular',expert:'The Hustler'};
 export function seatLabel(state:GameState,viewer:Pick<TableViewer,'mode'|'difficulty'|'room'>,seat:number):string {
-  if(viewer.mode==='ai')return seat===0?'You':seat===2?'AI Partner':state.format==='doubles'?`${aiNames[viewer.difficulty]} ${seat===1?'A':'B'}`:aiNames[viewer.difficulty];
+  if(viewer.mode==='ai')return seat===0?'You':seat===2?'AI Partner':state.format==='doubles'?`${AI_NAMES[viewer.difficulty]} ${seat===1?'A':'B'}`:AI_NAMES[viewer.difficulty];
   return viewer.mode==='local'?`Player ${seat+1}`:viewer.room?.players[seat]?.name || 'Seat open';
 }
 export function teamLabel(state:GameState,viewer:Pick<TableViewer,'mode'|'difficulty'|'room'>,team:number):string {
@@ -75,5 +75,6 @@ export function deriveTablePresentation(state:GameState,viewer:TableViewer) {
     status:{text,waiting:waiting||state.phase==='rolling'||!!viewer.aiThinking,foul:state.phase==='ball-in-hand'},
     effects,
     teams:([0,1] as const).map(team=>({name:teamLabel(state,viewer,team),pills:effects.teams[team].pills})),
+    seats:Array.from({length:seatCount(state.format)},(_,seat)=>seatLabel(state,viewer,seat)),
   };
 }

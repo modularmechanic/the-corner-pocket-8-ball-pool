@@ -22,7 +22,7 @@ export class RemoteMatch implements Match {
   private recovering = false;
   private muted = false;
   private now: () => number;
-  private identity: Identity;
+  private readonly identity: Identity;
   constructor(config: RemoteMatchOptions) {
     this.identity = { ...config.identity }; this.now = config.now || (() => performance.now());
     const options = { autoConnect: false, reconnection: true, reconnectionDelay: 700, reconnectionDelayMax: 4000 };
@@ -51,13 +51,12 @@ export class RemoteMatch implements Match {
   get ready() { return this.connected && !this.recovering && !!this.roomInfo && this.roomInfo.players.length === this.roomInfo.capacity && this.roomInfo.players.every(player => player.connected); }
   get capabilities() { return matchCapabilities(this.state, this.mode, this.ready, this.pending, this.connected); }
   get actor(): MatchActor {
-    const state = this.state, shown = this.presentation();
+    const state = this.state, shown = this.timeline.shown(this.now()) || state;
     return { seat: activeSeat(state), team: state.turn, controller: 'human', canAct: this.ready && !this.pending && humanControls(state, 'online', this.ownSeat)
       && (state.phase === 'ready' || state.phase === 'ball-in-hand') && shown.phase === state.phase && shown.shotCount === state.shotCount && activeSeat(shown) === activeSeat(state) };
   }
   subscribe(listener: (change: MatchChange) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   private notify(change: MatchChange) { for (const listener of this.listeners) listener(change); }
-  setIdentity(identity: Identity) { this.identity = { ...identity }; }
   setDifficulty(_difficulty: Difficulty) {}
   pauseAI() {}
   update(_dt: number, options: MatchUpdate = {}) { this.muted = !!options.muted; if (this.muted) this.timeline.mute(); }

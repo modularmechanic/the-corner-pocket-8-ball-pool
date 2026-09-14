@@ -3,8 +3,11 @@ import { batchPubStatic } from './pub-batching';
 import { canvasTexture } from './materials';
 import { seededRandom } from '../simulation/types';
 import { PUB_LAYOUT, pubBackZ, pubFrontZ, pubSideX } from './pub-layout';
+import type { PropInstaller } from './asset-installer';
 
 export const PUB_BOUNDS = PUB_LAYOUT.bounds;
+/** Prop paths relative to public/. */
+export const PUB_BRICK_MAPS = [['map','textures/pub/brick-color.webp'],['normalMap','textures/pub/brick-normal.webp'],['roughnessMap','textures/pub/brick-roughness.webp']] as const;
 export function pubCutaway(camera:{x:number;y:number;z:number}) {
   return {left:camera.x>PUB_BOUNDS.left+.45,right:camera.x<PUB_BOUNDS.right-.45,
     back:camera.z>PUB_BOUNDS.back+.45,front:camera.z<PUB_BOUNDS.front-.45,ceiling:camera.y<PUB_BOUNDS.ceiling-.65};
@@ -44,7 +47,7 @@ export function stoneTexture() {
 }
 
 /** A complete interior, with separate walls so exterior game cameras can cut away the nearest face. */
-export function buildPubInterior(room:THREE.Group,materials:{wood:THREE.Material;brass:THREE.Material;wall:THREE.Material;metal:THREE.Material}) {
+export function buildPubInterior(room:THREE.Group,installer:PropInstaller,materials:{wood:THREE.Material;brass:THREE.Material;wall:THREE.Material;metal:THREE.Material}) {
   const walls={left:new THREE.Group(),right:new THREE.Group(),back:new THREE.Group(),front:new THREE.Group(),ceiling:new THREE.Group()};
   for(const [name,group]of Object.entries(walls)){group.name=`pub-room-${name}`;room.add(group);}
   const props=new THREE.Group();props.name='pub-room-details';room.add(props);
@@ -69,10 +72,11 @@ export function buildPubInterior(room:THREE.Group,materials:{wood:THREE.Material
   });
   const glazing=new THREE.MeshPhysicalMaterial({map:windowTex,color:'#60717d',roughness:.24,metalness:.05,clearcoat:.7,emissiveMap:windowTex,emissive:'#8194a6',emissiveIntensity:.035});
   // Two inward-facing masonry bays replace the central right windows, like the reference pub gallery.
-  const brickLoader=new THREE.TextureLoader(),brickColor=brickLoader.load('/textures/pub/brick-color.webp'),brickNormal=brickLoader.load('/textures/pub/brick-normal.webp'),brickRoughness=brickLoader.load('/textures/pub/brick-roughness.webp');
-  brickColor.colorSpace=THREE.SRGBColorSpace;
-  for(const texture of [brickColor,brickNormal,brickRoughness]){texture.wrapS=texture.wrapT=THREE.RepeatWrapping;texture.repeat.set(4.55/7.5,4.65/7.5);texture.anisotropy=8;}
-  const brick=new THREE.MeshStandardMaterial({map:brickColor,normalMap:brickNormal,normalScale:new THREE.Vector2(.55,.55),roughnessMap:brickRoughness,color:'#d8c6ad',roughness:.95});
+  const brick=new THREE.MeshStandardMaterial({normalScale:new THREE.Vector2(.55,.55),color:'#d8c6ad',roughness:.95});
+  for(const [slot,path] of PUB_BRICK_MAPS)installer.texture(path,{
+    prepare:texture=>{if(slot==='map')texture.colorSpace=THREE.SRGBColorSpace;texture.wrapS=texture.wrapT=THREE.RepeatWrapping;texture.repeat.set(4.55/7.5,4.65/7.5);},
+    use:texture=>{brick[slot]=texture;brick.needsUpdate=true;},
+  });
   // Window and brick openings keep their original dimensions; new masonry piers fill the wider spacing.
   const bays=[-8.4,-2.6,3.2,9].map(z=>z*PUB_LAYOUT.expansion);
   for(const side of [-1,1]){

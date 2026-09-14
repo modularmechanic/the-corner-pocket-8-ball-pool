@@ -13,11 +13,16 @@ export class SnapshotTimeline {
     if (this.snapshots.length > 24) this.snapshots.shift();
     for (const event of events) this.events.push({ at: now + NETWORK_DELAY, event });
   }
-  sample(now: number): GameState | null {
+  /** The authoritative snapshot on screen now; `sample` only interpolates its ball positions. */
+  shown(now: number): GameState | null {
     const target = now - NETWORK_DELAY;
     while (this.snapshots.length > 1 && this.snapshots[1].at <= target) this.snapshots.shift();
+    return this.snapshots[0]?.state ?? this.latest;
+  }
+  sample(now: number): GameState | null {
+    const target = now - NETWORK_DELAY, shown = this.shown(now);
     const before = this.snapshots[0], after = this.snapshots[1];
-    if (!before) return this.latest;
+    if (!before) return shown;
     if (!after || target <= before.at || before.state.seed !== after.state.seed) return before.state;
     if (before.state.phase !== 'rolling' || after.state.shotCount !== before.state.shotCount) return before.state;
     const alpha = Math.max(0, Math.min(1, (target - before.at) / Math.max(.01, after.at - before.at)));

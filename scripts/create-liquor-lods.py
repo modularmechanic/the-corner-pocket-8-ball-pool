@@ -70,11 +70,15 @@ def glb_bounds(path):
             [max(p[axis] for p in points) for axis in range(3)]]
 
 report = {}
+# The four non-LOD liquor-* hero bottles are unused at runtime and live in art/models/pub/,
+# not public/models/pub/ (see ASSET_CREDITS.md); bottle-* heroes are still loaded in-game.
+liquor_heroes = {'liquor-amber', 'liquor-green', 'liquor-square', 'liquor-decanter'}
 for name in ['liquor-amber', 'liquor-green', 'liquor-square', 'liquor-decanter',
              'bottle-copperfin', 'bottle-northstar', 'bottle-juniper', 'bottle-redharbor', 'bottle-orchard']:
-    original = glb_stats(OUT / f'{name}.glb')
+    hero_dir = (ROOT / 'art/models/pub') if name in liquor_heroes else OUT
+    original = glb_stats(hero_dir / f'{name}.glb')
     lod = glb_stats(OUT / f'{name}-lod.glb')
-    original['boundsBlenderXYZ'] = glb_bounds(OUT / f'{name}.glb')
+    original['boundsBlenderXYZ'] = glb_bounds(hero_dir / f'{name}.glb')
     lod['boundsBlenderXYZ'] = glb_bounds(OUT / f'{name}-lod.glb')
     bound_error = max(abs(a - b) for left, right in zip(original['boundsBlenderXYZ'], lod['boundsBlenderXYZ'])
                       for a, b in zip(left, right))

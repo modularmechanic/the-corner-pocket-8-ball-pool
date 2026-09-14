@@ -5,7 +5,7 @@ export interface CommandResult { ok: boolean; error?: string }
 export interface Identity { token: string; name: string }
 export interface RoomPlayer { name: string; connected: boolean; seat: number; team: 0 | 1 }
 export interface RoomSnapshot {
-  code: string; format: GameFormat; capacity: 2 | 4; activeSeat: number;
+  code: string; format: GameFormat; capacity: 2 | 4;
   players: RoomPlayer[]; state: GameState; events: TableEvent[];
 }
 export type RoomReply = CommandResult & Partial<RoomSnapshot> & { seat?: number };
@@ -20,7 +20,6 @@ export interface ClientToServerEvents {
   'game:equip': (data: { cue: CueId }, ack: Ack) => void;
   'game:chalk': (data: Record<string, never>, ack: Ack) => void;
   'game:rematch': (data: { advance?: boolean }, ack: Ack) => void;
-  'game:power': (data: unknown, ack: Ack) => void;
 }
 export interface ServerToClientEvents {
   'room:state': (room: RoomSnapshot) => void;

@@ -42,14 +42,16 @@
       "kind": "browser",
       "map": "color",
       "colorSpace": "sRGB",
-      "bytes": 1138594,
-      "sha256": "90d0f5b554e594908e18305965ec70c704f012304a0e64c1eb9b4a337aacd5f4",
+      "bytes": 278536,
+      "sha256": "538b076ab10739fb25a1ae2f7a1cdfc7a2728e509de3552b0fb49be9b0b0ee67",
       "derivedFrom": "art/blender/textures/brick-color.jpg",
       "conversion": {
         "tool": "cwebp",
-        "quality": 90,
+        "quality": 88,
         "method": 6,
-        "sharpYuv": true
+        "sharpYuv": true,
+        "resize": [1024, 1024],
+        "note": "Downsampled from 2K; savings exceed 300KB with no visible loss at in-game tiling."
       }
     },
     {
@@ -69,14 +71,15 @@
       "kind": "browser",
       "map": "normal",
       "colorSpace": "linear",
-      "bytes": 2357330,
-      "sha256": "1e356ec64cfef8ada25777c5c439276eee7c7ac6b330136839a60c113bb79bbc",
+      "bytes": 616324,
+      "sha256": "cf9b423fffa5822562c5bc96755982d39b6e73578bb2fdd05d708378d53139e8",
       "derivedFrom": "art/blender/textures/brick-normal.jpg",
       "conversion": {
         "tool": "cwebp",
         "quality": 95,
         "method": 6,
-        "sharpYuv": true
+        "sharpYuv": true,
+        "resize": [1024, 1024]
       }
     },
     {

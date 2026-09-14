@@ -2,7 +2,7 @@
 
 Twenty-six original fictional club photographs for the pub walls. **Mode: built-in image generation.** The people, events and implied dates are invented; the decade styling recreates the feel of club snapshots.
 
-Each decade atlas contains four square photographs, read top-left, top-right, bottom-left, bottom-right. The event atlas contains six, read left to right across the top row and then the bottom row. Original PNGs remain alongside the smaller runtime WebPs.
+Each decade atlas contains four square photographs, read top-left, top-right, bottom-left, bottom-right. The event atlas contains six, read left to right across the top row and then the bottom row. Original PNGs are kept in `art/textures/pub/` for provenance; only the smaller runtime WebPs ship in `public/`.
 
 Exact prompts: [five decade atlases](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/prompts/pool-club-decades.md) · [six-photo event atlas](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/prompts/pool-club-photo-atlas.txt). [Decade file manifest and hashes](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/prompts/pool-club-decades-manifest.json).
 
@@ -24,7 +24,7 @@ Decade originals are 1254 × 1254; runtime versions use WebP quality 87. The eve
 
 ![Four fictional 1980s pool club photographs](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-1980s-atlas.webp)
 
-[Original PNG](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-1980s-atlas.png) · [Runtime WebP](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-1980s-atlas.webp) · [Exact prompt](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/prompts/pool-club-decades.md#1980s)
+[Original PNG](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/textures/pub/pool-1980s-atlas.png) · [Runtime WebP](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-1980s-atlas.webp) · [Exact prompt](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/prompts/pool-club-decades.md#1980s)
 
 ## 1990s
 
@@ -32,7 +32,7 @@ Decade originals are 1254 × 1254; runtime versions use WebP quality 87. The eve
 
 ![Four fictional 1990s pool club photographs](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-1990s-atlas.webp)
 
-[Original PNG](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-1990s-atlas.png) · [Runtime WebP](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-1990s-atlas.webp) · [Exact prompt](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/prompts/pool-club-decades.md#1990s)
+[Original PNG](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/textures/pub/pool-1990s-atlas.png) · [Runtime WebP](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-1990s-atlas.webp) · [Exact prompt](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/prompts/pool-club-decades.md#1990s)
 
 ## 2000s
 
@@ -40,7 +40,7 @@ Decade originals are 1254 × 1254; runtime versions use WebP quality 87. The eve
 
 ![Four fictional 2000s pool club photographs](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-2000s-atlas.webp)
 
-[Original PNG](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-2000s-atlas.png) · [Runtime WebP](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-2000s-atlas.webp) · [Exact prompt](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/prompts/pool-club-decades.md#2000s)
+[Original PNG](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/textures/pub/pool-2000s-atlas.png) · [Runtime WebP](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-2000s-atlas.webp) · [Exact prompt](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/prompts/pool-club-decades.md#2000s)
 
 ## 2010s
 
@@ -48,7 +48,7 @@ Decade originals are 1254 × 1254; runtime versions use WebP quality 87. The eve
 
 ![Four fictional 2010s pool club photographs](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-2010s-atlas.webp)
 
-[Original PNG](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-2010s-atlas.png) · [Runtime WebP](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-2010s-atlas.webp) · [Exact prompt](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/prompts/pool-club-decades.md#2010s)
+[Original PNG](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/textures/pub/pool-2010s-atlas.png) · [Runtime WebP](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-2010s-atlas.webp) · [Exact prompt](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/prompts/pool-club-decades.md#2010s)
 
 ## 2020s
 
@@ -56,7 +56,7 @@ Decade originals are 1254 × 1254; runtime versions use WebP quality 87. The eve
 
 ![Four fictional 2020s pool club photographs](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-2020s-atlas.webp)
 
-[Original PNG](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-2020s-atlas.png) · [Runtime WebP](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-2020s-atlas.webp) · [Exact prompt](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/prompts/pool-club-decades.md#2020s)
+[Original PNG](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/textures/pub/pool-2020s-atlas.png) · [Runtime WebP](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-2020s-atlas.webp) · [Exact prompt](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/prompts/pool-club-decades.md#2020s)
 
 ## Club events
 
@@ -64,4 +64,4 @@ Decade originals are 1254 × 1254; runtime versions use WebP quality 87. The eve
 
 ![Six fictional pool club event photographs](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-events-atlas.webp)
 
-[Original PNG](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-events-atlas.png) · [Runtime WebP](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-events-atlas.webp) · [Exact prompt](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/prompts/pool-club-photo-atlas.txt)
+[Original PNG](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/textures/pub/pool-events-atlas.png) · [Runtime WebP](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/public/textures/pub/pool-events-atlas.webp) · [Exact prompt](/Users/clemensvanderwalt/Documents/ChatGPT/coolpool/art/prompts/pool-club-photo-atlas.txt)

@@ -36,20 +36,30 @@ export function instancePubModel(source:THREE.Object3D,placements:readonly PubPl
   return result;
 }
 
-/** Shared geometry, materials and textures are released exactly once per room. */
-export function disposePubObject(object:THREE.Object3D):void {
+/** Every geometry, material and texture drawn by meshes under root. */
+export function pubResources(root:THREE.Object3D):Set<THREE.BufferGeometry|THREE.Material|THREE.Texture> {
+  const resources=new Set<THREE.BufferGeometry|THREE.Material|THREE.Texture>();
+  root.traverse(item=>{
+    if(!(item instanceof THREE.Mesh))return;
+    resources.add(item.geometry);
+    for(const material of Array.isArray(item.material)?item.material:[item.material]){
+      resources.add(material);
+      for(const value of Object.values(material))if(value instanceof THREE.Texture)resources.add(value);
+    }
+  });
+  return resources;
+}
+
+/** Shared geometry, materials and textures are released exactly once per room.
+ * Resources in `retained` are still drawn elsewhere and stay allocated. */
+export function disposePubObject(object:THREE.Object3D,retained:ReadonlySet<object>=new Set()):void {
   const geometries=new Set<THREE.BufferGeometry>(),materials=new Set<THREE.Material>(),textures=new Set<THREE.Texture>();
   collectRetiredPubGeometry(object,geometries);
-  object.traverse(item=>{
-    if(!(item instanceof THREE.Mesh))return;
-    geometries.add(item.geometry);
-    for(const material of Array.isArray(item.material)?item.material:[item.material]){
-      materials.add(material);
-      for(const value of Object.values(material))if(value instanceof THREE.Texture)textures.add(value);
-    }
-    if(item instanceof THREE.InstancedMesh)item.dispose();
-  });
-  for(const geometry of geometries)geometry.dispose();
-  for(const material of materials)material.dispose();
-  for(const texture of textures)texture.dispose();
+  for(const resource of pubResources(object)){
+    if(resource instanceof THREE.BufferGeometry)geometries.add(resource);
+    else if(resource instanceof THREE.Material)materials.add(resource);
+    else textures.add(resource);
+  }
+  object.traverse(item=>{if(item instanceof THREE.InstancedMesh)item.dispose();});
+  for(const resources of [geometries,materials,textures])for(const resource of resources)if(!retained.has(resource))resource.dispose();
 }

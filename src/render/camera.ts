@@ -1,10 +1,12 @@
 import * as THREE from 'three';
+import { TABLE } from '../simulation/types';
 
 export interface OrbitAngles { yaw:number;pitch:number }
 const DEG=Math.PI/180;
 const bounds:THREE.Vector3[]=[];
-for(const x of [-6.55,6.55])for(const z of [-3.68,3.68])for(const y of [-1.45,.55])bounds.push(new THREE.Vector3(x,y,z));
-for(const x of [-5.2,5.2])for(const z of [-2.85,2.85])bounds.push(new THREE.Vector3(x,-3.6,z));
+// The cabinet reaches beyond the playing surface; the legs stand inside it.
+for(const x of [-1,1])for(const z of [-1,1])for(const y of [-1.45,.55])bounds.push(new THREE.Vector3(x*(TABLE.halfWidth+.85),y,z*(TABLE.halfDepth+.83)));
+for(const x of [-1,1])for(const z of [-1,1])bounds.push(new THREE.Vector3(x*(TABLE.halfWidth-.5),-3.6,z*TABLE.halfDepth));
 
 export function clampOrbit({yaw,pitch}:OrbitAngles):OrbitAngles {
   yaw=THREE.MathUtils.euclideanModulo(yaw+Math.PI,Math.PI*2)-Math.PI;
