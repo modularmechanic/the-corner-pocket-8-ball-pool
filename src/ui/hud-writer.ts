@@ -44,6 +44,7 @@ export class HudWriter {
     for (const option of MODES) { this.toggle(`mode-${option}`, 'selected', mode === option); this.attr(`mode-${option}`, 'aria-pressed', String(mode === option)); }
     this.disabled('difficulty', mode !== 'ai'); this.disabled('layout', mode === 'online');
     this.value('layout', arcade?.layout || view.layout);
+    this.text('rules-badge', table.rules);
     this.text('level-badge', `LV ${arcade?.level || 1}`); this.attr('level-badge', 'title', levelName(arcade?.level));
     this.hidden('portal-badge', !arcade?.portalTurns); this.text('portal-badge', `◎ ${arcade?.portalTurns || 0}`);
     this.text('status-text', table.status.text);

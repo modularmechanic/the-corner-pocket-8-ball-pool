@@ -7,8 +7,9 @@ import { LAYOUTS } from './simulation/arcade';
 import { normalizeLevel } from './simulation/level-policy';
 import { CUE_CATALOG, canEquipCue, equippedCue } from './simulation/cues';
 import { POWER_UPS, STATUS_EFFECTS } from './presentation/effects';
-import { deriveTablePresentation, seatLabel, teamLabel } from './presentation/table-presentation';
-import { activeSeat, type GameFormat, type ArenaLayout, type Difficulty, type GameState, type Mode, type Shot, type TableEvent } from './simulation/types';
+import { deriveTablePresentation, RULE_NAMES, seatLabel, teamLabel } from './presentation/table-presentation';
+import { inPlacementZone } from './simulation/table-geometry';
+import { activeSeat, type GameFormat, type ArenaLayout, type Difficulty, type GameState, type Mode, type RuleSet, type Shot, type TableEvent } from './simulation/types';
 import { PoolScene, type Quality } from './render/scene';
 import { shell, icon } from './ui/shell';
 import { TableAudio } from './ui/audio';
@@ -94,6 +95,7 @@ function showMainMenu() {
   stopAI(); renderRecords(); renderLevels();
   $<HTMLButtonElement>('menu-resume').hidden = !hasStarted || state.phase === 'over';
   $<HTMLSelectElement>('menu-difficulty').value = profile.preferences.difficulty;
+  $<HTMLSelectElement>('menu-rules').value = profile.preferences.rules;
   $('menu-session-note').textContent = match.mode === 'online' && match.room ? `Room ${match.room.code} keeps playing while this menu is open.` : 'Singles or doubles · Up to four players';
   openDialog('main-menu');
 }
@@ -207,10 +209,12 @@ function updateUI() {
     if (key !== resultKey && !$<HTMLDialogElement>('main-menu').open) { resultKey = key; openDialog('result-dialog'); }
   }
 }
+const selectedRules = (id: string): RuleSet => $<HTMLSelectElement>(id).value === 'new' ? 'new' : 'old';
+/** A new session takes the player's last chosen rules; they stay fixed until the next session. */
 function newGame(nextMode:Mode=match.mode,nextFormat:GameFormat=state?.format??menuFormat) {
   if(nextMode==='online')return;
   sessionIntent++;
-  installMatch(new LocalMatch({seed:createIdentity().slice(0,8),mode:nextMode,difficulty:profile.preferences.difficulty,options:{layout:profile.preferences.layout,level:profile.preferences.level,format:nextFormat}}));
+  installMatch(new LocalMatch({seed:createIdentity().slice(0,8),mode:nextMode,difficulty:profile.preferences.difficulty,options:{layout:profile.preferences.layout,level:profile.preferences.level,format:nextFormat,rules:profile.preferences.rules}}));
   initialized=true;stopAI();resultKey='';
   input.newRack(.65);updateUI();equipPreferredCue();
 }
@@ -237,12 +241,13 @@ async function enterRoom(create:boolean) {
     const { RemoteMatch } = await import('./match/remote').catch(()=>{throw new Error('Online play could not load. Check your connection and try again.');});
     if(intent!==sessionIntent)return;
     candidate=new RemoteMatch({identity:{token:identity,name},url:roomServer.url});
-    const result=create?await candidate.create({layout:profile.preferences.layout,level:profile.preferences.level,format:$<HTMLSelectElement>('room-format').value==='doubles'?'doubles':'singles'}):await candidate.join(code);
+    const rules=selectedRules('room-rules');
+    const result=create?await candidate.create({layout:profile.preferences.layout,level:profile.preferences.level,format:$<HTMLSelectElement>('room-format').value==='doubles'?'doubles':'singles',rules}):await candidate.join(code);
     if(intent!==sessionIntent){candidate.dispose();return;}
     if(!result.ok)throw new Error(result.error||'Could not open the table.');
-    profile.set('name',name);hasStarted=true;installMatch(candidate);resultKey='';input.newRack();
+    profile.set('name',name);if(create)profile.set('rules',rules);hasStarted=true;installMatch(candidate);resultKey='';input.newRack();
     closeDialog('main-menu');closeDialog('room-dialog');$('invite-code').textContent=match.room!.code;void sound.unlock();
-    if(create||!match.ready)openDialog('invite-dialog');else toast('You’re in.');
+    if(create||!match.ready)openDialog('invite-dialog');else toast(`You’re in · ${RULE_NAMES[state.rules]}.`);
     if(state.cues[match.seat]==='ash-house')equipPreferredCue();
     updateUI();
   }catch(error){candidate?.dispose();if(intent===sessionIntent)$('room-error').textContent=error instanceof Error?error.message:'Could not open the table.';}
@@ -257,7 +262,7 @@ async function copy(text: string, message: string) {
 /** A matching open room shows its invitation; otherwise open a table in the menu's format. */
 function openLobby(format: GameFormat) {
   if (match.mode === 'online' && match.room && format === state.format) { $('invite-code').textContent = match.room.code; openDialog('invite-dialog'); }
-  else { $<HTMLSelectElement>('room-format').value = menuFormat; openDialog('room-dialog'); }
+  else { $<HTMLSelectElement>('room-format').value = menuFormat; $<HTMLSelectElement>('room-rules').value = profile.preferences.rules; openDialog('room-dialog'); }
 }
 function chooseDifficulty(difficulty: Difficulty) {
   $<HTMLSelectElement>('menu-difficulty').value = difficulty; $<HTMLSelectElement>('difficulty').value = difficulty;
@@ -277,6 +282,7 @@ function setupUI() {
   renderLevels(); refreshMenuFormat();
   $('menu-format').onchange = () => { menuFormat = $<HTMLSelectElement>('menu-format').value === 'doubles' ? 'doubles' : 'singles'; profile.set('format', menuFormat); refreshMenuFormat(); };
   $('menu-level').onchange = () => profile.set('level', normalizeLevel($<HTMLSelectElement>('menu-level').value));
+  $('menu-rules').onchange = () => profile.set('rules', selectedRules('menu-rules'));
   $('menu-begin').onclick = () => { setMenuPanel(true); selectMenuMode(menuMode); $('menu-session-start').focus(); };
   $('menu-back').onclick = () => { setMenuPanel(false); $('menu-begin').focus(); };
   $('menu-start').onclick = () => selectMenuMode('ai');
@@ -350,7 +356,7 @@ function createShotInput() {
     },
     tableAt: (x, y) => scene.screenToTable(x, y),
     tableControlAt: (x, y) => scene.hitTableControl(x, y),
-    showPlacement: point => scene.showPlacement(point),
+    showPlacement: point => scene.showPlacement(point && inPlacementZone(state, point) ? point : null),
     showAim: ({ contactEditing, ...aim }) => { Object.assign(scene.aim, aim); scene.contactEditing = contactEditing; },
     beginOrbit: () => scene.beginOrbit(), orbitBy: (dx, dy) => scene.orbitBy(dx, dy), rotateView: (yaw, pitch) => scene.rotateView(yaw, pitch), endOrbit: () => scene.endOrbit(),
     resetAimPointer: () => scene.resetAimPointer(),

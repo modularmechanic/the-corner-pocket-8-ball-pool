@@ -1,4 +1,5 @@
-import { activeSeat, legalTargets, seatCount, type Difficulty, type GameState, type Mode, type StatusEffect } from '../simulation/types';
+import { kitchenPlacement } from '../simulation/table-geometry';
+import { activeSeat, legalTargets, seatCount, type Difficulty, type GameState, type Mode, type RuleSet, type StatusEffect } from '../simulation/types';
 import { EFFECTS, STATUS_IDS, type EffectId } from './effects';
 
 export interface TableViewer {
@@ -19,6 +20,7 @@ export interface EffectPill {
   active:boolean; queued:boolean;
 }
 export const AI_NAMES:Readonly<Record<Difficulty,string>> = {casual:'The Newcomer',regular:'The Regular',expert:'The Hustler'};
+export const RULE_NAMES:Readonly<Record<RuleSet,string>> = {old:'Old Rules',new:'New Rules'};
 export function seatLabel(state:GameState,viewer:Pick<TableViewer,'mode'|'difficulty'|'room'>,seat:number):string {
   if(viewer.mode==='ai')return seat===0?'You':seat===2?'AI Partner':state.format==='doubles'?`${AI_NAMES[viewer.difficulty]} ${seat===1?'A':'B'}`:AI_NAMES[viewer.difficulty];
   return viewer.mode==='local'?`Player ${seat+1}`:viewer.room?.players[seat]?.name || 'Seat open';
@@ -65,14 +67,17 @@ export function deriveTablePresentation(state:GameState,viewer:TableViewer) {
   else if(state.phase==='rolling')text='Rolling';
   else if(state.phase==='over')text=`${teamLabel(state,viewer,state.winner!)} ${viewer.mode==='ai'&&state.winner===0&&state.format==='singles'?'win':'wins'}`;
   else if(viewer.aiThinking)text=`${actor} · Aiming`;
-  else if(state.phase==='ball-in-hand')text=viewer.controlsTurn?'Ball in hand':`${actor} · Ball in hand`;
+  else if(state.phase==='ball-in-hand')text=!viewer.controlsTurn?`${actor} · Ball in hand`:kitchenPlacement(state)?'Place the cue ball behind the head string':'Ball in hand';
   else if(viewer.canInteract)text=viewer.adjustment==='spin'?'Cue contact':viewer.adjustment==='elevation'?'Cue elevation':viewer.shotStage==='power'?'2 · Pull back & shoot':'1 · Aim';
   else if(state.shotCount===0)text=viewer.controlsTurn?'Your break':`${actor} · Break`;
   else if(!viewer.controlsTurn)text=`${actor}’s shot`;
   else if(state.groups[state.turn]&&legalTargets(state).every(ball=>ball.id===8))text='Eight ball';
+  const allowance=!viewer.resetting&&!waiting&&state.shotsLeft>0&&(state.phase==='ready'||state.phase==='ball-in-hand');
+  if(allowance)text+=state.shotsLeft===2?' · 2 shots':' · 1 shot left';
   if(!viewer.resetting&&!waiting&&state.format==='doubles'&&viewer.mode==='local'&&state.phase!=='over'&&state.phase!=='rolling')text=`${actor} · ${text}`;
   return {
-    status:{text,waiting:waiting||state.phase==='rolling'||!!viewer.aiThinking,foul:state.phase==='ball-in-hand'},
+    status:{text,waiting:waiting||state.phase==='rolling'||!!viewer.aiThinking,foul:state.phase==='ball-in-hand'||allowance},
+    rules:RULE_NAMES[state.rules],
     effects,
     teams:([0,1] as const).map(team=>({name:teamLabel(state,viewer,team),pills:effects.teams[team].pills})),
     seats:Array.from({length:seatCount(state.format)},(_,seat)=>seatLabel(state,viewer,seat)),
