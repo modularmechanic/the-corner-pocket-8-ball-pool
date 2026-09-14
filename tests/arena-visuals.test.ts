@@ -73,6 +73,36 @@ test('arena visuals add, update and remove obstacles, hazards and pickups by id 
   for (const resource of tracked) assert.ok(disposed.has(resource), `${resource.type} disposed`);
 });
 
+test('arena visuals rebuild an id whose kind, power or material changes', () => {
+  const { arena, textures, disposed, resources, update } = harness();
+  const arcade = { obstacles: [obstacle(1, 'wood')], hazards: [hazard(2, 'water')], pickups: [pickup(3, 'frost')] };
+  update(arcade);
+  const before = [arena.obstacles.get(1)!, arena.hazards.get(2)!, arena.pickups.get(3)!].map(visual => ({ group: visual.group, owned: resources(visual.group) }));
+  arcade.obstacles[0].material = 'steel'; arcade.hazards[0].kind = 'electric'; arcade.pickups[0].power = 'ward';
+  update(arcade, 1);
+  const after = [arena.obstacles.get(1)!, arena.hazards.get(2)!, arena.pickups.get(3)!];
+  for (const [index, { group, owned }] of before.entries()) {
+    assert.notEqual(after[index].group, group);
+    for (const resource of owned) assert.ok(disposed.has(resource), `${resource.type} disposed`);
+  }
+  assert.ok(disposed.has(textures[0]), 'the wood grain leaves with the wooden obstacle');
+  assert.equal(textures.length, 1, 'steel needs no wood texture');
+  assert.ok(after[1].group.children.some(child => child instanceof THREE.LineSegments), 'the electric hazard has arcs');
+  const bodies = after[0].group.children.filter((child): child is THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial> => child instanceof THREE.Mesh && child.material instanceof THREE.MeshPhysicalMaterial);
+  assert.equal(bodies.length, 1); assert.equal(bodies[0].material.map, null);
+});
+
+test('obstacle hit flashes fade and clear for a fresh rack', () => {
+  const { arena, update } = harness(), arcade = { obstacles: [obstacle(1, 'hex')], hazards: [], pickups: [] };
+  update(arcade);
+  const body = arena.obstacles.get(1)!.group.children.find((child): child is THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial> => child instanceof THREE.Mesh && child.material instanceof THREE.MeshPhysicalMaterial)!;
+  assert.equal(arena.strikeObstacle(1)?.material, 'hex'); assert.equal(arena.strikeObstacle(99), undefined);
+  update(arcade);
+  assert.ok(body.material.emissiveIntensity > .5);
+  arena.clearFlashes(); update(arcade);
+  assert.equal(body.material.emissiveIntensity, 0);
+});
+
 test('electric arcs animate within one preallocated buffer', () => {
   const { arena, update } = harness();
   const warn = console.warn, warnings: unknown[] = [];

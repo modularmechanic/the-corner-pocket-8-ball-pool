@@ -1,18 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { TABLE } from '../src/simulation/types';
+import { TABLE, initialState } from '../src/simulation/types';
 import { TABLE_RAILS } from '../src/simulation/table-geometry';
 import { TableModel, TABLE_SHADOW_LAYER, type TableModelSurfaces } from '../src/render/table-model';
+import { ORIGINAL_TABLE_OCCLUDERS } from './table-model-snapshot';
 
-function buildTable(scene: THREE.Scene) {
+function buildTable(scene: THREE.Scene, balls = Array.from({ length: 16 }, () => new THREE.Texture())) {
   const surfaces: TableModelSurfaces = {
     walnut: new THREE.MeshPhysicalMaterial(), sideWood: new THREE.MeshPhysicalMaterial(), darkWood: new THREE.MeshPhysicalMaterial(),
     brass: new THREE.MeshPhysicalMaterial(), cloth: new THREE.MeshPhysicalMaterial(), cushion: new THREE.MeshPhysicalMaterial(),
     leather: new THREE.MeshPhysicalMaterial(), rubber: new THREE.MeshStandardMaterial(), pocketVoid: new THREE.MeshBasicMaterial(),
   };
-  const texture = new THREE.Texture();
-  return new TableModel(scene, surfaces, { plaque: texture, brushedSteel: texture, coinFace: texture, balls: Array.from({ length: 16 }, () => texture) });
+  return new TableModel(scene, surfaces, { plaque: new THREE.Texture(), brushedSteel: new THREE.Texture(), coinFace: new THREE.Texture(), balls });
 }
 const named = (model: TableModel, name: string) => model.occluders.filter(object => object.name === name);
 const near = (actual: number, expected: number, message: string) => assert.ok(Math.abs(actual - expected) < 1e-6, `${message}: ${actual} != ${expected}`);
@@ -56,4 +56,32 @@ test('table occluders are exactly the objects the table model added to the scene
     if (child.userData.tableControl) controls.push(child);
   });
   assert.deepEqual(new Set(controls), new Set([...model.chalkControls, model.details.coinControl]));
+});
+
+test('table model reproduces every occluder of the original PoolScene table', () => {
+  const model = buildTable(new THREE.Scene());
+  assert.equal(model.occluders.length, ORIGINAL_TABLE_OCCLUDERS.length);
+  for (const [index, [type, ...expected]] of ORIGINAL_TABLE_OCCLUDERS.entries()) {
+    const object = model.occluders[index], box = new THREE.Box3().setFromObject(object);
+    assert.equal(object.type, type, `occluder ${index} type`);
+    const actual = [...object.position.toArray(), ...box.min.toArray(), ...box.max.toArray()];
+    for (const [axis, value] of actual.entries()) assert.ok(Math.abs(value - expected[axis]) < 1e-9, `occluder ${index} value ${axis}: ${value} != ${expected[axis]}`);
+  }
+});
+
+test('coin return waits for fading balls and leaves shared ball maps to their owner', () => {
+  const balls = Array.from({ length: 16 }, () => new THREE.Texture()), details = buildTable(new THREE.Scene(), balls).details;
+  const returned = (id: number) => details.group.children.find((child): child is THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial> => child instanceof THREE.Mesh && child.material.map === balls[id])!;
+  const state = initialState('coin-return'); state.balls[3].pocketed = true;
+  details.update(state, .3, new Map([[3, {}]]));
+  details.update(state, .3, new Map([[3, {}]]));
+  assert.equal(returned(3).visible, false, 'a ball still fading on the table has not reached the return');
+  details.update(state, .3, new Map());
+  assert.equal(returned(3).visible, false, 'the arrival delay starts once the ball leaves the table');
+  details.update(state, .3, new Map());
+  assert.equal(returned(3).visible, true);
+  const disposed = new Set<THREE.Texture>();
+  for (const texture of balls) texture.addEventListener('dispose', () => disposed.add(texture));
+  details.dispose();
+  assert.equal(disposed.size, 0);
 });
