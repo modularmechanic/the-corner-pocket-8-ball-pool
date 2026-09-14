@@ -12,7 +12,7 @@ import { BALL_COLORS } from './render/materials';
 import { shell, icon } from './ui/shell';
 import { TableAudio } from './ui/audio';
 import { createIdentity } from './ui/identity';
-import { ShotSetup } from './ui/shot-setup';
+import { ShotInputController, type PointerInput, type ShotInputView } from './ui/shot-input-controller';
 import { PlayerProfile, levelName } from './ui/player-profile';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -45,14 +45,7 @@ let hasStarted = false;
 let lastUI = '';
 let toastTimer = 0;
 let resultKey = '';
-let aimAngle = 0;
-let power = .65;
-const shotSetup = new ShotSetup();
-let activePointer: number | null = null;
-let orbitPointer: { id: number; x: number; y: number } | null = null;
-let keyboardOrbit = false;
-const heldKeys = new Set<string>();
-let lastPointer = { x: 0, y: 0 };
+let input: ShotInputController;
 let cueFocusRestore='';
 let coinResetting = false;
 let inspectingTable = false;
@@ -105,8 +98,8 @@ function showMainMenu() {
 function toast(message: string) { $('toast').textContent = message; $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = window.setTimeout(() => $('toast').classList.remove('show'), 3000); }
 function anyDialog() { return !!document.querySelector('dialog[open]'); }
 function closeDialog(id: string) { $<HTMLDialogElement>(id).close(); }
-function openDialog(id: string) { cancelDrag(); if (!$<HTMLDialogElement>(id).open) $<HTMLDialogElement>(id).showModal(); }
-function canAct() { return initialized && match.actor.canAct && !anyDialog() && !match.pending && !coinResetting && !orbitPointer && !keyboardOrbit && !document.hidden; }
+function openDialog(id: string) { input.cancel(); if (!$<HTMLDialogElement>(id).open) $<HTMLDialogElement>(id).showModal(); }
+function canAct() { return input.canAct; }
 function seatName(player: number) {
   return seatLabel(state,{mode,difficulty:profile.preferences.difficulty,room},player);
 }
@@ -147,9 +140,9 @@ function syncMatch() {
   const changedRack=!!previousState&&previousState.seed!==state.seed;
   if(changedRack){
     if(mode==='online'&&!coinResetting&&hasStarted)sound.playMechanism('coin');
-    resultKey='';aimAngle=0;if(scene)scene.aim.angle=0;cancelDrag();closeDialog('result-dialog');
+    resultKey='';input.newRack();closeDialog('result-dialog');
     profile.set('level',normalizeLevel(state.arcade?.level));
-  }else if(previousState&&(previousState.shotCount!==state.shotCount||activeSeat(previousState)!==activeSeat(state)))cancelDrag();
+  }else if(previousState&&(previousState.shotCount!==state.shotCount||activeSeat(previousState)!==activeSeat(state)))input.cancel();
   if(room&&room.players.length>previousPlayers)toast(`${room.players.at(-1)!.name} joined.`);
   if(room&&!wasReady&&match.ready)closeDialog('invite-dialog');
   if(state.phase==='over'&&(changedRack||previousState?.phase!=='over')){profile.recordResult(state,mode,seat,playerName);renderRecords();}
@@ -160,7 +153,7 @@ function installMatch(next:Match) {
     if(match!==next)return;
     if(change.type==='replaced'){toast('Your seat was opened in another tab.');newGame('ai');return;}
     if(change.type==='error'){toast(change.error);if(!next.room){newGame('ai');return;}}
-    syncMatch();if(change.type==='connection'&&!next.connected)cancelDrag();updateUI(true);
+    syncMatch();if(change.type==='connection'&&!next.connected)input.cancel();updateUI(true);
   });
 }
 async function command(command:MatchCommand,fallback:string) {
@@ -168,45 +161,18 @@ async function command(command:MatchCommand,fallback:string) {
   if(match!==current)return false;
   syncMatch();if(!result.ok)toast(result.error||fallback);updateUI(true);return result.ok;
 }
-function setPower(value: number) {
-  power = Math.max(.05, Math.min(1, value));
-  $<HTMLInputElement>('power').value = String(Math.round(power * 100));
-  $('power-fill').style.height = `${power * 100}%`; $('power-value').innerHTML = `${Math.round(power * 100)}<span>%</span>`;
-  shotSetup.power = power;
-  if (scene) scene.aim.power = power;
-}
 function refreshShotSetup() {
-  if (!scene) return;
-  Object.assign(scene.aim, { elevation: shotSetup.elevation, tipX: shotSetup.tipX, tipY: shotSetup.tipY, power, pullback: shotSetup.stage === 'power' ? power : .02 });
-  scene.contactEditing = !!shotSetup.adjustment;
-  $('cue-setup').hidden = !shotSetup.adjustment || !canAct() || state.phase !== 'ready';
-  $('spin-button').setAttribute('aria-pressed', String(shotSetup.adjustment === 'spin'));
-  $('elevation-button').setAttribute('aria-pressed', String(shotSetup.adjustment === 'elevation'));
-  $('tip-marker').style.left = `${50 + shotSetup.tipX * 50}%`; $('tip-marker').style.top = `${50 - shotSetup.tipY * 50}%`;
-  $<HTMLInputElement>('cue-angle').value = String(Math.round(shotSetup.elevation * 180 / Math.PI));
-  $('cue-angle-value').textContent = `${Math.round(shotSetup.elevation * 180 / Math.PI)}°`;
-}
-function endOrbit() {
-  const pointer = orbitPointer; orbitPointer = null;
-  if (scene) {
-    const canvas = scene.renderer.domElement; canvas.style.cursor = '';
-    if (pointer && canvas.hasPointerCapture(pointer.id)) canvas.releasePointerCapture(pointer.id);
-    if(!keyboardOrbit)scene.endOrbit();
-    scene.resetAimPointer();shotSetup.reanchorPower(lastPointer.x,lastPointer.y);
-    if(!keyboardOrbit&&!orbitPointer){const adjustment=heldKeys.has('KeyS')?'spin':heldKeys.has('KeyE')?'elevation':null;if(adjustment)shotSetup.beginAdjustment(adjustment,lastPointer.x,lastPointer.y);}
-  }
-}
-function cancelDrag() {
-  keyboardOrbit=false;heldKeys.clear();
-  endOrbit();
-  scene?.resetAimPointer();
-  if (activePointer !== null && scene?.renderer.domElement.hasPointerCapture(activePointer)) scene.renderer.domElement.releasePointerCapture(activePointer);
-  activePointer = null; shotSetup.reset(); if (scene) refreshShotSetup();
+  const setup = input.setup, percent = Math.round(setup.power * 100), degrees = Math.round(setup.elevation * 180 / Math.PI);
+  $('cue-setup').hidden = !setup.adjustment || !canAct() || state.phase !== 'ready';
+  $('spin-button').setAttribute('aria-pressed', String(setup.adjustment === 'spin'));
+  $('elevation-button').setAttribute('aria-pressed', String(setup.adjustment === 'elevation'));
+  $('tip-marker').style.left = `${50 + setup.tipX * 50}%`; $('tip-marker').style.top = `${50 - setup.tipY * 50}%`;
+  $<HTMLInputElement>('cue-angle').value = String(degrees); $('cue-angle-value').textContent = `${degrees}°`;
+  $<HTMLInputElement>('power').value = String(percent);
+  $('power-fill').style.height = `${setup.power * 100}%`; $('power-value').innerHTML = `${percent}<span>%</span>`;
 }
 function chooseCamera(overhead:boolean) {
-  // A new projection changes the pullback axis; require a fresh aim lock.
-  shotSetup.stage='aim';
-  keyboardOrbit=false;endOrbit();inspectingTable=false;
+  input.cameraChanged();inspectingTable=false;
   scene.setInspection(false);scene.setOverhead(overhead);scene.resetAimPointer();
   $<HTMLSelectElement>('camera').value=overhead?'overhead':'angled';
   $('camera-toggle').setAttribute('aria-label',overhead?'Switch to cue view':'Switch to overhead view');
@@ -214,21 +180,6 @@ function chooseCamera(overhead:boolean) {
   $('fps-view').setAttribute('aria-pressed',String(!overhead));
   $('table-view').setAttribute('aria-pressed','false');
   profile.set('camera',overhead?'overhead':'angled');updateUI(true);
-}
-function setAdjustment(mode:'spin'|'elevation'|null) {
-  if(mode&&(!canAct()||state.phase!=='ready'))return;
-  if(mode)shotSetup.beginAdjustment(mode,lastPointer.x,lastPointer.y);
-  else shotSetup.endAdjustment(lastPointer.x,lastPointer.y);
-  scene.resetAimPointer();refreshShotSetup();updateUI(true);
-}
-function advanceShotSetup(x = lastPointer.x, y = lastPointer.y) {
-  if (!canAct() || state.phase !== 'ready' || shotSetup.adjustment) return;
-  scene.resetAimPointer();
-  if (shotSetup.stage === 'aim') {
-    const cue = state.balls[0], from = scene.tableToScreen(cue.x, cue.z), to = scene.tableToScreen(cue.x + Math.cos(aimAngle), cue.z + Math.sin(aimAngle));
-    shotSetup.lockAim(aimAngle,x,y,to.x-from.x,to.y-from.y); setPower(shotSetup.power);
-  } else { void shoot(shotSetup.shot()); return; }
-  refreshShotSetup(); updateUI(true);
 }
 async function chalkCue() {
   if (!canAct() || state.phase !== 'ready' || state.chalked[state.turn]) return;
@@ -240,7 +191,7 @@ async function insertCoin() {
   if (state.phase === 'rolling') return toast('Let the balls settle first.');
   if (!match.capabilities.canReset) return toast('Finish this rack with everyone connected to reset the table.');
   const current=match,seed=state.seed;
-  cancelDrag();stopAI();coinResetting=true;inspectingTable=true;scene.setInspection(true);
+  input.cancel();stopAI();coinResetting=true;inspectingTable=true;scene.setInspection(true);
   await sound.unlock().catch(()=>undefined);const duration=scene.animateCoinReset();sound.playMechanism('coin');updateUI(true);
   window.setTimeout(async()=>{
     try{if(match===current&&state.seed===seed)await command({type:'reset'},'The table cannot be reset yet.');}
@@ -271,9 +222,9 @@ function equipPreferredCue() {
 function updateUI(force = false) {
   if (!state) return;
   const arcadeUI = state.arcade ? { ...state.arcade, clock: undefined } : undefined;
-  const key = JSON.stringify([!!orbitPointer,keyboardOrbit,shotSetup.adjustment,shotSetup.stage,state.cues,state.chalked, coinResetting, state.phase, presentation?.phase, presentation?.shotCount, presentation ? activeSeat(presentation) : null, state.turn, state.format, state.teamOrder, state.groups, state.shotCount, state.message, state.balls.filter(b => b.pocketed).map(b => b.id), state.winner, arcadeUI, profile.preferences.difficulty, mode, room?.players, connected, aiMessage, anyDialog(), match.pending, document.hidden]);
+  const key = JSON.stringify([input.orbiting,input.setup.adjustment,input.setup.stage,state.cues,state.chalked, coinResetting, state.phase, presentation?.phase, presentation?.shotCount, presentation ? activeSeat(presentation) : null, state.turn, state.format, state.teamOrder, state.groups, state.shotCount, state.message, state.balls.filter(b => b.pocketed).map(b => b.id), state.winner, arcadeUI, profile.preferences.difficulty, mode, room?.players, connected, aiMessage, anyDialog(), match.pending, document.hidden]);
   if (!force && key === lastUI) return; lastUI = key;
-  const viewModel=deriveTablePresentation(state,{mode,difficulty:profile.preferences.difficulty,room,connected,ready:match.ready,controlsTurn:match.actor.canAct,canInteract:canAct(),aiThinking:aiMessage,shotStage:shotSetup.stage,adjustment:shotSetup.adjustment,resetting:coinResetting});
+  const viewModel=deriveTablePresentation(state,{mode,difficulty:profile.preferences.difficulty,room,connected,ready:match.ready,controlsTurn:match.actor.canAct,canInteract:canAct(),aiThinking:aiMessage,shotStage:input.setup.stage,adjustment:input.setup.adjustment,resetting:coinResetting});
   for (const player of [0, 1]) {
     $(`name-${player}`).textContent = playerName(player);
     const roster = $(`roster-${player}`); roster.hidden = state.format !== 'doubles'; roster.replaceChildren();
@@ -309,12 +260,12 @@ function updateUI(force = false) {
   $<HTMLButtonElement>('chalk-button').disabled = !canAct() || state.phase !== 'ready' || !!state.chalked?.[state.turn];
   $('chalk-button').setAttribute('aria-pressed', String(!!state.chalked?.[state.turn]));
   $('table-view').setAttribute('aria-pressed', String(inspectingTable));
-  $('shoot-button').setAttribute('aria-label', shotSetup.stage === 'aim' ? 'Lock aim' : 'Take shot');
+  $('shoot-button').setAttribute('aria-label', input.setup.stage === 'aim' ? 'Lock aim' : 'Take shot');
   refreshShotSetup();
   $('shot-status').classList.toggle('foul', viewModel.status.foul);
   $('shot-status').classList.toggle('waiting', viewModel.status.waiting);
-  $<HTMLButtonElement>('shoot-button').disabled = state.phase !== 'ready' || !canAct() || !!shotSetup.adjustment;
-  $<HTMLInputElement>('power').disabled = state.phase !== 'ready' || !canAct() || shotSetup.stage !== 'power';
+  $<HTMLButtonElement>('shoot-button').disabled = state.phase !== 'ready' || !canAct() || !!input.setup.adjustment;
+  $<HTMLInputElement>('power').disabled = state.phase !== 'ready' || !canAct() || input.setup.stage !== 'power';
   if (state.phase === 'over' && presentation.phase === 'over') {
     const key = `${state.seed}:${state.shotCount}:${state.winner}`;
     if (key !== resultKey && !$<HTMLDialogElement>('main-menu').open) {
@@ -332,14 +283,14 @@ function newGame(nextMode:Mode=mode,nextFormat:GameFormat=state?.format??menuFor
   if(nextMode==='online')return;
   sessionIntent++;
   installMatch(new LocalMatch({seed:createIdentity().slice(0,8),mode:nextMode,difficulty:profile.preferences.difficulty,options:{layout:profile.preferences.layout,level:profile.preferences.level,format:nextFormat}}));
-  initialized=true;stopAI();aimAngle=0;scene.aim.angle=0;resultKey='';
-  cancelDrag();setPower(.65);updateUI(true);equipPreferredCue();
+  initialized=true;stopAI();resultKey='';
+  input.newRack(.65);updateUI(true);equipPreferredCue();
 }
-async function shoot(shot:Shot=shotSetup.shot()) {
+async function shoot(shot:Shot) {
   if(!canAct()||state.phase!=='ready')return;
   await sound.unlock().catch(()=>undefined);
   if(!canAct()||state.phase!=='ready')return;
-  cancelDrag();await command({type:'shoot',shot},'That shot could not be played.');
+  input.cancel();await command({type:'shoot',shot},'That shot could not be played.');
 }
 async function place(point:{x:number;z:number}) {
   if(!canAct()||state.phase!=='ball-in-hand')return;
@@ -358,7 +309,7 @@ async function enterRoom(create:boolean) {
     const result=create?await candidate.create({layout:profile.preferences.layout,level:profile.preferences.level,format:$<HTMLSelectElement>('room-format').value==='doubles'?'doubles':'singles'}):await candidate.join(code);
     if(intent!==sessionIntent){candidate.dispose();return;}
     if(!result.ok)throw new Error(result.error||'Could not open the table.');
-    profile.set('name',name);hasStarted=true;installMatch(candidate);resultKey='';aimAngle=0;scene.aim.angle=0;cancelDrag();
+    profile.set('name',name);hasStarted=true;installMatch(candidate);resultKey='';input.newRack();
     closeDialog('main-menu');closeDialog('room-dialog');$('invite-code').textContent=room!.code;void sound.unlock();
     if(create||!match.ready)openDialog('invite-dialog');else toast('You’re in.');
     if(state.cues[seat]==='ash-house')equipPreferredCue();
@@ -414,21 +365,21 @@ function setupUI() {
   $('camera-toggle').onclick=()=>chooseCamera($<HTMLSelectElement>('camera').value!=='overhead');
   $('fps-view').onclick=()=>chooseCamera(false);
   $('reset-view').onclick=()=>{scene.setFPSView();chooseCamera(false);};
-  $('spin-button').onclick=()=>setAdjustment(shotSetup.adjustment==='spin'?null:'spin');
-  $('elevation-button').onclick=()=>setAdjustment(shotSetup.adjustment==='elevation'?null:'elevation');
+  $('spin-button').onclick=()=>{input.toggleAdjustment('spin');refreshShotSetup();};
+  $('elevation-button').onclick=()=>{input.toggleAdjustment('elevation');refreshShotSetup();};
   $('cue-locker-button').onclick=openCueLocker;
   $('aim-guide').onchange = () => { scene.aim.visible = $<HTMLInputElement>('aim-guide').checked; };
   $('layout').onchange = () => {
     if (mode === 'online') return;
     const layout = $<HTMLSelectElement>('layout').value as ArenaLayout; profile.set('layout', layout); newGame(); closeDialog('settings-dialog'); toast(LAYOUTS[layout].name);
   };
-  $('power').oninput = () => setPower(Number($<HTMLInputElement>('power').value) / 100);
-  $('shoot-button').onclick = () => advanceShotSetup();
+  $('power').oninput = () => { input.setPower(Number($<HTMLInputElement>('power').value) / 100); refreshShotSetup(); };
+  $('shoot-button').onclick = () => { input.advance(); refreshShotSetup(); };
   $('chalk-button').onclick = () => void chalkCue();
   $('coin-button').onclick = () => void insertCoin();
-  $('table-view').onclick = () => { cancelDrag(); inspectingTable = !inspectingTable; scene.setInspection(inspectingTable); updateUI(true); };
-  $('cue-angle').oninput = () => { shotSetup.setElevation(Number($<HTMLInputElement>('cue-angle').value) * Math.PI / 180); refreshShotSetup(); };
-  $('tip-center').onclick = () => { shotSetup.setTip(0, 0); refreshShotSetup(); };
+  $('table-view').onclick = () => { input.cancel(); inspectingTable = !inspectingTable; scene.setInspection(inspectingTable); updateUI(true); };
+  $('cue-angle').oninput = () => { input.setElevation(Number($<HTMLInputElement>('cue-angle').value) * Math.PI / 180); refreshShotSetup(); };
+  $('tip-center').onclick = () => { input.setTip(0, 0); refreshShotSetup(); };
   $('reset-button').onclick = () => { if (!match.capabilities.canReset) return toast('Finish this rack with everyone connected to reset the table.'); if (match.capabilities.canRematch) return openDialog('result-dialog'); openDialog('reset-dialog'); };
   $('confirm-reset').onclick = async () => { if(await command({type:'reset'},'The table cannot be reset yet.')){closeDialog('reset-dialog');toast('Fresh rack.');} };
   $('next-level-button').onclick = async () => {
@@ -450,77 +401,54 @@ function setupUI() {
   $('copy-code').onclick = () => { if (room) void copy(room.code, 'Room code copied.'); };
   $('copy-link').onclick = () => { if (room) { const url = new URL(location.href); url.search = ''; url.searchParams.set('room', room.code); void copy(url.href, 'Invitation link copied.'); } };
 }
+function createShotInput() {
+  const canvas = scene.renderer.domElement;
+  const view: ShotInputView = {
+    aimAt: (x, y) => scene.aimAtScreen(x, y, state.balls[0]),
+    screenDirection: angle => {
+      const cue = state.balls[0], from = scene.tableToScreen(cue.x, cue.z), to = scene.tableToScreen(cue.x + Math.cos(angle), cue.z + Math.sin(angle));
+      return { x: to.x - from.x, y: to.y - from.y };
+    },
+    tableAt: (x, y) => scene.screenToTable(x, y),
+    tableControlAt: (x, y) => scene.hitTableControl(x, y),
+    showPlacement: point => scene.showPlacement(point),
+    showAim: ({ contactEditing, ...aim }) => { Object.assign(scene.aim, aim); scene.contactEditing = contactEditing; },
+    beginOrbit: () => scene.beginOrbit(), orbitBy: (dx, dy) => scene.orbitBy(dx, dy), rotateView: (yaw, pitch) => scene.rotateView(yaw, pitch), endOrbit: () => scene.endOrbit(),
+    resetAimPointer: () => scene.resetAimPointer(),
+    capturePointer: (id, grab) => { canvas.setPointerCapture(id); if (grab) canvas.style.cursor = 'grabbing'; },
+    releasePointer: id => { canvas.style.cursor = ''; if (id !== null && canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id); },
+  };
+  const context = () => ({
+    canAct: initialized && match.actor.canAct && !anyDialog() && !match.pending && !coinResetting && !document.hidden,
+    blocked: !initialized || anyDialog() || coinResetting, phase: state.phase, width: canvas.clientWidth,
+  });
+  return new ShotInputController(view, context, command => {
+    if (command.type === 'shoot') void shoot(command.shot);
+    else if (command.type === 'place') void place({ x: command.x, z: command.z });
+    else if (command.type === 'chalk') void chalkCue();
+    else if (command.type === 'coin') void insertCoin();
+    else if (command.type === 'cue-locker') openCueLocker();
+    else chooseCamera(command.toggleOverhead && $<HTMLSelectElement>('camera').value !== 'overhead');
+  });
+}
 function setupInput() {
   const canvas = scene.renderer.domElement;
-  const releaseShotPointer = () => {
-    const pointer=activePointer; activePointer=null;
-    if(pointer!==null&&canvas.hasPointerCapture(pointer))canvas.releasePointerCapture(pointer);
-  };
-  const beginLook = () => {
-    releaseShotPointer(); shotSetup.endAdjustment(lastPointer.x,lastPointer.y);
-    scene.beginOrbit(); scene.resetAimPointer();
-  };
-  const beginPointerOrbit = (event:PointerEvent) => {
-    if(!initialized||anyDialog()||coinResetting||!event.isPrimary)return false;
-    beginLook(); orbitPointer={id:event.pointerId,x:event.clientX,y:event.clientY};
-    canvas.setPointerCapture(event.pointerId);canvas.style.cursor='grabbing';updateUI(true);return true;
-  };
-  const moveAim = (x:number,y:number,fine=false) => {
-    const angle=scene.aimAtScreen(x,y,state.balls[0]);
-    if(angle!==null){const delta=Math.atan2(Math.sin(angle-aimAngle),Math.cos(angle-aimAngle));aimAngle+=delta*(fine?.2:1);}
-    scene.aim.angle=aimAngle;
-  };
-  canvas.addEventListener('pointerenter',event=>{
-    lastPointer={x:event.clientX,y:event.clientY};scene.resetAimPointer();
-    if(shotSetup.adjustment)shotSetup.beginAdjustment(shotSetup.adjustment,event.clientX,event.clientY);
-    else shotSetup.reanchorPower(event.clientX,event.clientY);
+  const pointer = (event: PointerEvent): PointerInput => ({ id: event.pointerId, x: event.clientX, y: event.clientY, button: event.button, buttons: event.buttons, primary: event.isPrimary, shift: event.shiftKey });
+  const forward = (handle: (input: PointerInput) => void) => (event: PointerEvent) => { handle(pointer(event)); refreshShotSetup(); };
+  canvas.addEventListener('pointerenter', forward(event => input.pointerEnter(event)));
+  canvas.addEventListener('pointerleave', () => input.pointerLeave());
+  canvas.addEventListener('pointermove', forward(event => input.pointerMove(event)));
+  canvas.addEventListener('pointerdown', event => {
+    if (event.button === 2) event.preventDefault(); else if (event.button === 0) void sound.unlock();
+    input.pointerDown(pointer(event)); refreshShotSetup();
   });
-  canvas.addEventListener('pointerleave',()=>scene.resetAimPointer());
-  canvas.addEventListener('pointermove',event=>{
-    const dx=event.clientX-lastPointer.x,dy=event.clientY-lastPointer.y;
-    lastPointer={x:event.clientX,y:event.clientY};
-    if(event.buttons&2){
-      if(!orbitPointer&&!beginPointerOrbit(event))return;
-      if(orbitPointer?.id===event.pointerId){scene.orbitBy(event.clientX-orbitPointer.x,event.clientY-orbitPointer.y);orbitPointer.x=event.clientX;orbitPointer.y=event.clientY;}
-      return;
-    }
-    if(orbitPointer){endOrbit();updateUI(true);return;}
-    if(keyboardOrbit){scene.orbitBy(dx,dy);return;}
-    if(!canAct()||activePointer!==null&&activePointer!==event.pointerId)return;
-    if(state.phase==='ball-in-hand'){scene.showPlacement(scene.screenToTable(event.clientX,event.clientY));return;}
-    if(state.phase!=='ready')return;
-    if(shotSetup.adjustment)shotSetup.moveAdjustment(event.clientX,event.clientY,event.shiftKey);
-    else if(shotSetup.stage==='aim')moveAim(event.clientX,event.clientY,event.shiftKey);
-    else{shotSetup.pull(event.clientX,event.clientY,Math.min(180,canvas.clientWidth*.3));setPower(shotSetup.power);}
-    refreshShotSetup();
-  });
-  canvas.addEventListener('pointerdown',event=>{
-    if(event.button===2){event.preventDefault();beginPointerOrbit(event);return;}
-    if(orbitPointer||keyboardOrbit||shotSetup.adjustment)return;
-    if(event.button!==0||activePointer!==null||!event.isPrimary||anyDialog())return;
-    const control=scene.hitTableControl(event.clientX,event.clientY);
-    if(control){if(control==='coin')void insertCoin();else void chalkCue();return;}
-    if(!canAct())return;
-    void sound.unlock();lastPointer={x:event.clientX,y:event.clientY};
-    if(state.phase==='ball-in-hand'){const point=scene.screenToTable(event.clientX,event.clientY);if(point)void place(point);return;}
-    if(state.phase!=='ready')return;
-    if(shotSetup.stage==='aim')moveAim(event.clientX,event.clientY,event.shiftKey);
-    activePointer=event.pointerId;canvas.setPointerCapture(event.pointerId);
-  });
-  canvas.addEventListener('pointerup',event=>{
-    if(orbitPointer?.id===event.pointerId&&event.button===2){endOrbit();updateUI(true);return;}
-    if(event.button!==0||activePointer!==event.pointerId)return;
-    releaseShotPointer();advanceShotSetup(event.clientX,event.clientY);
-  });
-  canvas.addEventListener('pointercancel',cancelDrag);
-  canvas.addEventListener('lostpointercapture',event=>{
-    if(activePointer===event.pointerId)activePointer=null;
-    if(orbitPointer?.id===event.pointerId){endOrbit();updateUI(true);}
-  });
-  canvas.addEventListener('contextmenu',event=>event.preventDefault());
+  canvas.addEventListener('pointerup', forward(event => input.pointerUp(event)));
+  canvas.addEventListener('pointercancel', () => { input.cancel(); refreshShotSetup(); });
+  canvas.addEventListener('lostpointercapture', event => { input.pointerLost(event.pointerId); refreshShotSetup(); });
+  canvas.addEventListener('contextmenu', event => event.preventDefault());
   const tip=$('tip-control');let tipPointer:number|null=null;
   const chooseTip=(event:PointerEvent)=>{
-    const rect=tip.getBoundingClientRect();shotSetup.setTip((event.clientX-rect.left)/rect.width*2-1,1-(event.clientY-rect.top)/rect.height*2);refreshShotSetup();
+    const rect=tip.getBoundingClientRect();input.setTip((event.clientX-rect.left)/rect.width*2-1,1-(event.clientY-rect.top)/rect.height*2);refreshShotSetup();
   };
   tip.onpointerdown=event=>{if(!canAct()||event.button!==0)return;tipPointer=event.pointerId;tip.setPointerCapture(event.pointerId);chooseTip(event);};
   tip.onpointermove=event=>{if(tipPointer===event.pointerId)chooseTip(event);};
@@ -529,49 +457,20 @@ function setupInput() {
   tip.onkeydown=event=>{
     const deltas:Record<string,[number,number]>={ArrowLeft:[-.08,0],ArrowRight:[.08,0],ArrowUp:[0,.08],ArrowDown:[0,-.08]};
     if(!deltas[event.key]||!canAct())return;event.preventDefault();event.stopPropagation();
-    const[x,y]=deltas[event.key];shotSetup.setTip(shotSetup.tipX+x,shotSetup.tipY+y);refreshShotSetup();
+    const[x,y]=deltas[event.key];input.setTip(input.setup.tipX+x,input.setup.tipY+y);refreshShotSetup();
   };
-  window.addEventListener('blur',()=>{cancelDrag();stopAI();});
+  window.addEventListener('blur',()=>{input.cancel();stopAI();});
   document.addEventListener('visibilitychange',()=>{
-    if(document.hidden){cancelDrag();stopAI();sound.updateRolling([]);}
+    if(document.hidden){input.cancel();stopAI();sound.updateRolling([]);}
     match.update(0,{aiPaused:document.hidden,muted:document.hidden});updateUI(true);
   });
   const typing=(target:EventTarget|null)=>target instanceof HTMLElement&&(target.isContentEditable||/^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName));
   window.addEventListener('keydown',event=>{
-    if(event.key==='Escape'){cancelDrag();updateUI(true);return;}
-    if(!initialized||typing(event.target)||anyDialog()||coinResetting)return;
-    const code=event.code;
-    if(code==='KeyF'||code==='KeyV'){event.preventDefault();if(!event.repeat)chooseCamera(code==='KeyV'&&$<HTMLSelectElement>('camera').value!=='overhead');return;}
-    if(code==='KeyB'){event.preventDefault();if(!event.repeat)openCueLocker();return;}
-    if(code==='KeyR'){
-      event.preventDefault();if(!keyboardOrbit){beginLook();keyboardOrbit=true;heldKeys.add(code);updateUI(true);}return;
-    }
-    if(keyboardOrbit){if(code.startsWith('Arrow')){event.preventDefault();heldKeys.add(code);}return;}
-    if(!canAct()||state.phase!=='ready')return;
-    if(code==='KeyS'||code==='KeyE'){
-      event.preventDefault();if(!event.repeat){heldKeys.add(code);setAdjustment(code==='KeyS'?'spin':'elevation');}return;
-    }
-    if(code==='KeyC'){event.preventDefault();if(!event.repeat)void chalkCue();return;}
-    if(code==='KeyX'){event.preventDefault();shotSetup.resetStrike();if(shotSetup.adjustment)shotSetup.beginAdjustment(shotSetup.adjustment,lastPointer.x,lastPointer.y);refreshShotSetup();return;}
-    if(code==='Space'){
-      if(event.target instanceof HTMLButtonElement)return;
-      event.preventDefault();if(!event.repeat)advanceShotSetup();return;
-    }
-    if(!code.startsWith('Arrow'))return;event.preventDefault();
-    const direction=code==='ArrowUp'||code==='ArrowRight'?1:-1,fine=event.shiftKey?.2:1;
-    if(shotSetup.adjustment==='spin'){
-      shotSetup.setTip(shotSetup.tipX+(code==='ArrowLeft'||code==='ArrowRight'?direction*.06*fine:0),shotSetup.tipY+(code==='ArrowUp'||code==='ArrowDown'?direction*.06*fine:0));
-    }else if(shotSetup.adjustment==='elevation')shotSetup.setElevation(shotSetup.elevation+direction*Math.PI/180*fine);
-    else if(shotSetup.stage==='aim'&&(code==='ArrowLeft'||code==='ArrowRight')){aimAngle+=direction*.012*fine;scene.aim.angle=aimAngle;}
-    else if(shotSetup.stage==='power'&&(code==='ArrowUp'||code==='ArrowDown')){setPower(power+direction*.03*fine);shotSetup.reanchorPower(lastPointer.x,lastPointer.y);}
-    if(shotSetup.adjustment)shotSetup.beginAdjustment(shotSetup.adjustment,lastPointer.x,lastPointer.y);
+    const target=typing(event.target)?'text':event.target instanceof HTMLButtonElement?'button':'other';
+    if(input.keyDown({code:event.key==='Escape'?'Escape':event.code,repeat:event.repeat,shift:event.shiftKey,target}))event.preventDefault();
     refreshShotSetup();
   });
-  window.addEventListener('keyup',event=>{
-    heldKeys.delete(event.code);
-    if(event.code==='KeyR'&&keyboardOrbit){keyboardOrbit=false;if(!orbitPointer)endOrbit();updateUI(true);}
-    if(event.code==='KeyS'&&shotSetup.adjustment==='spin'||event.code==='KeyE'&&shotSetup.adjustment==='elevation')setAdjustment(heldKeys.has('KeyS')?'spin':heldKeys.has('KeyE')?'elevation':null);
-  });
+  window.addEventListener('keyup',event=>{input.keyUp(event.code);refreshShotSetup();});
 }
 let previous=performance.now();
 function frame(now:number) {
@@ -579,7 +478,7 @@ function frame(now:number) {
   match.update(elapsed,{aiPaused:coinResetting||anyDialog()||document.hidden,muted:document.hidden||elapsed>.5,aiCameraReady:scene.isAIViewReady()});
   syncMatch();
   const events=match.drainEvents();if(!document.hidden&&elapsed<=.5)for(const event of events)playEvent(event);
-  if(keyboardOrbit)scene.rotateView(((heldKeys.has('ArrowRight')?1:0)-(heldKeys.has('ArrowLeft')?1:0))*dt,((heldKeys.has('ArrowUp')?1:0)-(heldKeys.has('ArrowDown')?1:0))*dt*.65);
+  input.frame(dt);
   scene.update(presentation,dt,canAct(),false);
   sound.updateRolling(document.hidden?[]:presentation.balls);updateUI();requestAnimationFrame(frame);
 }
@@ -588,10 +487,10 @@ async function boot() {
     void sound.prepare().catch(error => console.warn('Audio is unavailable:', error));
     await initPhysics();
     scene = new PoolScene($('scene'), lost => {
-      if (lost) { cancelDrag(); $('loading').classList.remove('done'); $('loading').querySelector('h2')!.textContent = 'Restoring the table.'; $('loading').querySelector('p')!.textContent = 'Graphics were interrupted. Your game is still here.'; }
+      if (lost) { input?.cancel(); $('loading').classList.remove('done'); $('loading').querySelector('h2')!.textContent = 'Restoring the table.'; $('loading').querySelector('p')!.textContent = 'Graphics were interrupted. Your game is still here.'; }
       else $('loading').classList.add('done');
     });
-    newGame('ai'); setupUI(); setupInput();
+    input = createShotInput(); newGame('ai'); setupUI(); setupInput();
     $('loading').classList.add('done'); showMainMenu(); previous = performance.now(); requestAnimationFrame(frame);
     const invitation = new URL(location.href).searchParams.get('room');
     if (invitation) { $<HTMLInputElement>('room-code').value = invitation.slice(0,6).toUpperCase(); openDialog('room-dialog'); }
