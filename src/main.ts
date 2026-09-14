@@ -53,6 +53,7 @@ let input: ShotInputController;
 let cueFocusRestore='';
 let coinResetting = false;
 let inspectingTable = false;
+let overheadView = false;
 let menuMode: Mode = 'ai';
 let menuFormat: GameFormat = profile.preferences.format;
 let identity: string;
@@ -151,7 +152,7 @@ async function command(command:MatchCommand,fallback:string) {
   syncMatch();if(!result.ok)toast(result.error||fallback);updateUI();return result.ok;
 }
 function chooseCamera(overhead:boolean) {
-  input.cameraChanged();inspectingTable=false;
+  input.cameraChanged();inspectingTable=false;overheadView=overhead;
   scene.setInspection(false);scene.setOverhead(overhead);scene.resetAimPointer();
   $<HTMLSelectElement>('camera').value=overhead?'overhead':'angled';
   $('camera-toggle').setAttribute('aria-label',overhead?'Switch to cue view':'Switch to overhead view');
@@ -203,7 +204,7 @@ function updateUI() {
   if (!state) return;
   const room = match.room, ready = match.ready, interactive = input.canAct;
   const table = deriveTablePresentation(state, { mode: match.mode, difficulty: profile.preferences.difficulty, room, connected: match.connected, ready, controlsTurn: match.actor.canAct, canInteract: interactive, aiThinking: match.thinking, shotStage: input.setup.stage, adjustment: input.setup.adjustment, resetting: coinResetting });
-  hud.write({ state, table, mode: match.mode, seat: match.seat, room, ready, canAct: interactive, canAdvance: match.capabilities.canAdvance, inspecting: inspectingTable, setup: input.setup, layout: profile.preferences.layout });
+  hud.write({ state, table, mode: match.mode, seat: match.seat, room, ready, canAct: interactive, canAdvance: match.capabilities.canAdvance, inspecting: inspectingTable, setup: input.setup, layout: profile.preferences.layout, lockHint: input.lockHint });
   if ($<HTMLDialogElement>('cue-dialog').open) renderCueLocker();
   if (state.phase === 'over' && presentation?.phase === 'over') {
     const key = `${state.seed}:${state.shotCount}:${state.winner}`;
@@ -364,10 +365,20 @@ function createShotInput() {
     resetAimPointer: () => scene.resetAimPointer(),
     capturePointer: (id, grab) => { canvas.setPointerCapture(id); if (grab) canvas.style.cursor = 'grabbing'; },
     releasePointer: id => { canvas.style.cursor = ''; if (id !== null && canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id); },
+    requestPointerLock: () => {
+      if (!('requestPointerLock' in canvas)) return false;
+      // Refusals also arrive as pointerlockerror; older engines return no promise.
+      try { Promise.resolve(canvas.requestPointerLock()).catch(() => undefined); } catch { return false; }
+      return true;
+    },
+    // A lock that already ended reports its release at once, so the controller never keeps integrating movement.
+    exitPointerLock: () => { if (document.pointerLockElement === canvas) document.exitPointerLock(); else input.pointerLockChanged(false); },
   };
   const context = () => ({
     canAct: initialized && match.actor.canAct && !anyDialog() && !match.pending && !coinResetting && !document.hidden,
     blocked: !initialized || anyDialog() || coinResetting, phase: state.phase, width: canvas.clientWidth,
+    cueView: !overheadView && !inspectingTable,
+    ownTurn: match.actor.controller === 'human' && (match.mode !== 'online' || match.actor.seat === match.seat),
   });
   return new ShotInputController(view, context, command => {
     if (command.type === 'shoot') void shoot(command.shot);
@@ -380,7 +391,9 @@ function createShotInput() {
 }
 function setupInput() {
   const canvas = scene.renderer.domElement;
-  const pointer = (event: PointerEvent): PointerInput => ({ id: event.pointerId, x: event.clientX, y: event.clientY, button: event.button, buttons: event.buttons, primary: event.isPrimary, shift: event.shiftKey });
+  const pointer = (event: PointerEvent): PointerInput => ({ id: event.pointerId, x: event.clientX, y: event.clientY, button: event.button, buttons: event.buttons, primary: event.isPrimary, shift: event.shiftKey, dx: event.movementX, dy: event.movementY });
+  document.addEventListener('pointerlockchange', () => input.pointerLockChanged(document.pointerLockElement === canvas));
+  document.addEventListener('pointerlockerror', () => input.pointerLockError());
   canvas.addEventListener('pointerenter', event => input.pointerEnter(pointer(event)));
   canvas.addEventListener('pointerleave', () => input.pointerLeave());
   canvas.addEventListener('pointermove', event => input.pointerMove(pointer(event)));
@@ -405,7 +418,7 @@ function setupInput() {
     if(!deltas[event.key]||!input.canAct)return;event.preventDefault();event.stopPropagation();
     const[x,y]=deltas[event.key];input.setTip(input.setup.tipX+x,input.setup.tipY+y);
   };
-  window.addEventListener('blur',()=>{input.cancel();stopAI();});
+  window.addEventListener('blur',()=>{input.releasePointerLock();input.cancel();stopAI();});
   document.addEventListener('visibilitychange',()=>{
     if(document.hidden){input.cancel();stopAI();sound.updateRolling([]);}
     match.update(0,{aiPaused:document.hidden,muted:document.hidden});syncMatch();updateUI();

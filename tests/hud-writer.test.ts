@@ -61,6 +61,12 @@ test('next-level visibility follows every update, not only the first result fram
   assert.equal(element('next-level-button').textContent, 'Level 2 →');
 });
 
+test('the pointer-lock hint shows only while the cue view waits for a click', () => {
+  const { element } = fakeDocument(), hud = new HudWriter(element), state = table();
+  hud.write(view(state, { lockHint: true })); assert.equal(element('lock-hint').hidden, false);
+  hud.write(view(state)); assert.equal(element('lock-hint').hidden, true);
+});
+
 test('room names are escaped in the roster and invitation', () => {
   const { element } = fakeDocument(), hud = new HudWriter(element), state = table(); state.format = 'doubles';
   const room: RoomSnapshot = { code: 'ABC123', format: 'doubles', capacity: 4, state, events: [], players: [{ name: '<img src=x>', connected: true, seat: 0, team: 0 }, { name: 'Guest', connected: false, seat: 1, team: 1 }] };

@@ -22,6 +22,8 @@ export interface HudView {
   setup: Readonly<ShotSetupState>;
   /** Shown in Settings before a rack has a layout. */
   layout: ArenaLayout;
+  /** The cue view waits for a click to lock the pointer. */
+  lockHint?: boolean;
 }
 
 const GROUPS = { solids: [1, 2, 3, 4, 5, 6, 7], stripes: [9, 10, 11, 12, 13, 14, 15] };
@@ -56,6 +58,7 @@ export class HudWriter {
     this.disabled('shoot-button', !ready || !canAct || !!setup.adjustment);
     this.disabled('power', !ready || !canAct || setup.stage !== 'power');
     this.writeShotSetup(view);
+    this.hidden('lock-hint', !view.lockHint);
     if (state.phase === 'over') {
       const level = arcade?.level || 1;
       this.text('result-title', mode === 'ai' ? state.winner === 0 ? 'The table is yours.' : 'The house takes this one.' : `${table.teams[state.winner ?? 0].name} takes the rack.`);

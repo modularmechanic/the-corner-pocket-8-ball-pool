@@ -2,7 +2,11 @@ import type { GameState, Shot } from '../simulation/types';
 
 type Adjustment = 'spin' | 'elevation';
 type Point = { x: number; y: number };
-export interface PointerInput { id: number; x: number; y: number; button: number; buttons: number; primary: boolean; shift: boolean }
+export interface PointerInput {
+  id: number; x: number; y: number; button: number; buttons: number; primary: boolean; shift: boolean;
+  /** Movement since the previous event; a locked pointer reports only this. */
+  dx?: number; dy?: number;
+}
 export interface KeyInput { code: string; repeat: boolean; shift: boolean; target: 'text' | 'button' | 'other' }
 export interface ShotInputContext {
   /** The seat may act now: controls its turn, no dialog, request or reset in progress. Orbit is tracked here. */
@@ -12,6 +16,10 @@ export interface ShotInputContext {
   phase: GameState['phase'];
   /** Canvas width in CSS pixels; a full pullback is 30% of it, at most 180 px. */
   width: number;
+  /** The behind-the-cue view is selected (not overhead or table inspection): the only view that locks the pointer. */
+  cueView: boolean;
+  /** A person at this device controls the current turn, including while that shot rolls. */
+  ownTurn: boolean;
 }
 export interface ShotSetupState { stage: 'aim' | 'power'; adjustment: Adjustment | null; angle: number; power: number; elevation: number; tipX: number; tipY: number }
 export type ShotInputCommand =
@@ -33,6 +41,9 @@ export interface ShotInputView {
   resetAimPointer(): void;
   capturePointer(id: number, grab: boolean): void;
   releasePointer(id: number | null): void;
+  /** Asks the browser to lock the pointer; false when the Pointer Lock API is missing. The outcome arrives as pointerLockChanged/pointerLockError. */
+  requestPointerLock(): boolean;
+  exitPointerLock(): void;
 }
 
 const finite = (...values: number[]) => values.every(Number.isFinite);
@@ -48,11 +59,19 @@ export class ShotInputController {
   private keyboardOrbit = false;
   private readonly held = new Set<string>();
   private lastPointer: Point = { x: 0, y: 0 };
+  private locked = false;
+  private releasingLock = false;
+  private lockErrors = 0;
   constructor(private readonly view: ShotInputView, private readonly context: () => ShotInputContext, private readonly emit: (command: ShotInputCommand) => void) {}
 
   get setup(): Readonly<ShotSetupState> { return this.setupState; }
   get orbiting() { return !!this.orbitPointer || this.keyboardOrbit; }
   get canAct() { return this.context().canAct && !this.orbiting; }
+  get pointerLocked() { return this.locked; }
+  /** "Click to take the cue": the cue view is waiting for a click to lock the pointer. */
+  get lockHint() { const { cueView, phase } = this.context(); return this.lockAvailable && !this.locked && cueView && this.canAct && phase === 'ready'; }
+  // ponytail: two consecutive refusals (no API permission, sandboxing) mean today's unlocked controls for the session; one refusal is often Chrome's re-lock cooldown after Escape.
+  private get lockAvailable() { return this.lockErrors < 2; }
 
   /** Escape, blur, dialogs and turn changes: drop the setup and any look, keeping aim direction and power. */
   cancel() {
@@ -86,13 +105,26 @@ export class ShotInputController {
   setElevation(value: number) { if (Number.isFinite(value)) this.setupState.elevation = Math.max(0, Math.min(Math.PI / 3, value)); this.publish(); }
   setTip(x: number, y: number) { if (finite(x, y)) Object.assign(this.setupState, clampTip(x, y)); this.publish(); }
 
+  /** Browser pointer lock state. Losing a lock this controller did not release is an Escape: cancel the setup. */
+  pointerLockChanged(locked: boolean) {
+    const released = this.releasingLock; this.releasingLock = false;
+    if (locked === this.locked) return;
+    this.locked = locked; this.view.resetAimPointer();
+    if (locked) { this.lockErrors = 0; this.reanchorPower(); }
+    else if (!released) this.cancel();
+  }
+  pointerLockError() { this.lockErrors++; }
+  /** Dialogs, other views, turns this device does not play and window blur show the cursor again without cancelling. */
+  releasePointerLock() { if (this.locked && !this.releasingLock) { this.releasingLock = true; this.view.exitPointerLock(); } }
+
   pointerEnter(pointer: Pick<PointerInput, 'x' | 'y'>) {
+    if (this.locked) return;
     this.lastPointer = { x: pointer.x, y: pointer.y }; this.view.resetAimPointer();
     if (this.setupState.adjustment) this.adjustmentAnchor = { ...this.lastPointer }; else this.reanchorPower();
   }
   pointerLeave() { this.view.resetAimPointer(); }
-  pointerMove(pointer: PointerInput) {
-    const dx = pointer.x - this.lastPointer.x, dy = pointer.y - this.lastPointer.y, setup = this.setupState;
+  pointerMove(input: PointerInput) {
+    const pointer = this.lockedPosition(input), dx = pointer.x - this.lastPointer.x, dy = pointer.y - this.lastPointer.y, setup = this.setupState;
     this.lastPointer = { x: pointer.x, y: pointer.y };
     if (pointer.buttons & 2) {
       if (!this.orbitPointer && !this.beginPointerOrbit(pointer)) return;
@@ -114,21 +146,27 @@ export class ShotInputController {
     }
     this.publish();
   }
-  pointerDown(pointer: PointerInput) {
+  pointerDown(input: PointerInput) {
+    const pointer = this.lockedPosition(input);
     if (pointer.button === 2) { this.beginPointerOrbit(pointer); return; }
     if (this.orbiting || this.setupState.adjustment) return;
     if (pointer.button !== 0 || this.shotPointer !== null || !pointer.primary || this.context().blocked) return;
-    const control = this.view.tableControlAt(pointer.x, pointer.y);
+    // A hidden locked cursor cannot target the coin slot or chalk.
+    const control = this.locked ? null : this.view.tableControlAt(pointer.x, pointer.y);
     if (control) { this.emit({ type: control }); return; }
     if (!this.canAct) return;
     this.lastPointer = { x: pointer.x, y: pointer.y };
     const phase = this.context().phase;
     if (phase === 'ball-in-hand') { const point = this.view.tableAt(pointer.x, pointer.y); if (point) this.emit({ type: 'place', ...point }); return; }
     if (phase !== 'ready') return;
+    // In the cue view an unlocked click only takes the cue: it locks the pointer, never aim or a shot.
+    if (!this.locked && this.lockAvailable && this.context().cueView && this.view.requestPointerLock()) return;
     if (this.setupState.stage === 'aim') this.moveAim(pointer.x, pointer.y, pointer.shift);
-    this.shotPointer = pointer.id; this.view.capturePointer(pointer.id, false);
+    this.shotPointer = pointer.id;
+    if (!this.locked) this.view.capturePointer(pointer.id, false);
   }
-  pointerUp(pointer: PointerInput) {
+  pointerUp(input: PointerInput) {
+    const pointer = this.lockedPosition(input);
     if (this.orbitPointer?.id === pointer.id && pointer.button === 2) { this.endOrbit(); return; }
     if (pointer.button !== 0 || this.shotPointer !== pointer.id) return;
     this.releaseShotPointer(); this.advance(pointer.x, pointer.y);
@@ -168,14 +206,20 @@ export class ShotInputController {
     const adjustment = this.setupState.adjustment;
     if (code === 'KeyS' && adjustment === 'spin' || code === 'KeyE' && adjustment === 'elevation') this.setAdjustment(this.heldAdjustment());
   }
-  /** R + arrows rotate the view while held. */
+  /** R + arrows rotate the view while held. A pointer lock lasts only while this device plays its turn in the cue view. */
   frame(dt: number) {
+    const { blocked, cueView, ownTurn, phase } = this.context();
+    if (blocked || !cueView || !ownTurn || phase !== 'ready' && phase !== 'rolling') this.releasePointerLock();
     if (!this.keyboardOrbit) return;
     const axis = (positive: string, negative: string) => (this.held.has(positive) ? 1 : 0) - (this.held.has(negative) ? 1 : 0);
     this.view.rotateView(axis('ArrowRight', 'ArrowLeft') * dt, axis('ArrowUp', 'ArrowDown') * dt * .65);
   }
 
   private shot(): Shot { const { angle, power, elevation, tipX, tipY } = this.setupState; return { angle, power, elevation, tipX, tipY }; }
+  /** A locked pointer's screen position is frozen; integrate its movement into a virtual position instead. */
+  private lockedPosition(pointer: PointerInput): PointerInput {
+    return this.locked ? { ...pointer, x: this.lastPointer.x + (pointer.dx || 0), y: this.lastPointer.y + (pointer.dy || 0) } : pointer;
+  }
   private publish() {
     const { angle, power, elevation, tipX, tipY, stage, adjustment } = this.setupState;
     this.view.showAim({ angle, power, elevation, tipX, tipY, pullback: stage === 'power' ? power : .02, contactEditing: !!adjustment });
@@ -208,7 +252,9 @@ export class ShotInputController {
   private beginPointerOrbit(pointer: PointerInput) {
     if (this.context().blocked || !pointer.primary) return false;
     this.beginLook(); this.orbitPointer = { id: pointer.id, x: pointer.x, y: pointer.y };
-    this.view.capturePointer(pointer.id, true); return true;
+    // Pointer capture throws while the pointer is locked; the lock already delivers every event.
+    if (!this.locked) this.view.capturePointer(pointer.id, true);
+    return true;
   }
   /** Ending a look restores the selected view and resumes a still-held S/E modifier. */
   private endOrbit() {

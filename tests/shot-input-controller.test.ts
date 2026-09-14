@@ -3,11 +3,14 @@ import assert from 'node:assert/strict';
 import { ShotInputController, type KeyInput, type PointerInput, type ShotInputCommand, type ShotInputContext, type ShotInputView } from '../src/ui/shot-input-controller';
 
 function rig(overrides: Partial<ShotInputContext> = {}) {
-  const context: ShotInputContext = { canAct: true, blocked: false, phase: 'ready', width: 600, ...overrides };
-  const commands: ShotInputCommand[] = [], calls: string[] = [];
-  const scene = { aimAngle: .4 as number | null, direction: { x: 0, y: -8 }, control: null as 'coin' | 'chalk' | null, aim: { angle: 0, power: 0, pullback: 0, contactEditing: false } };
+  const context: ShotInputContext = { canAct: true, blocked: false, phase: 'ready', width: 600, cueView: true, ownTurn: true, ...overrides };
+  const commands: ShotInputCommand[] = [], calls: string[] = [], aimed: { x: number; y: number }[] = [];
+  // Pointer lock is unavailable unless a test turns it on, so the original tests keep today's click flow.
+  const scene = { aimAngle: .4 as number | null, direction: { x: 0, y: -8 }, control: null as 'coin' | 'chalk' | null, aim: { angle: 0, power: 0, pullback: 0, contactEditing: false }, lockApi: false };
   const view: ShotInputView = {
-    aimAt: () => scene.aimAngle,
+    requestPointerLock: () => { calls.push('request-lock'); return scene.lockApi; },
+    exitPointerLock: () => calls.push('exit-lock'),
+    aimAt: (x, y) => { aimed.push({ x, y }); return scene.aimAngle; },
     screenDirection: () => scene.direction,
     tableAt: (x, y) => ({ x: x / 100, z: y / 100 }),
     tableControlAt: () => scene.control,
@@ -21,7 +24,7 @@ function rig(overrides: Partial<ShotInputContext> = {}) {
   const pointer = (x: number, y: number, extra: Partial<PointerInput> = {}): PointerInput => ({ id: 1, x, y, button: 0, buttons: 0, primary: true, shift: false, ...extra });
   const key = (code: string, extra: Partial<KeyInput> = {}): KeyInput => ({ code, repeat: false, shift: false, target: 'other', ...extra });
   const click = (x: number, y: number) => { input.pointerDown(pointer(x, y)); input.pointerUp(pointer(x, y)); };
-  return { input, context, commands, calls, scene, pointer, key, click };
+  return { input, context, commands, calls, aimed, scene, pointer, key, click };
 }
 
 test('first click locks direction, pullback sets power and the second click shoots', () => {
@@ -137,4 +140,65 @@ test('no shot input is accepted when the seat cannot act; placement, table contr
   const menu = rig({ blocked: true });
   assert.equal(menu.input.keyDown(menu.key('KeyR')), false); menu.input.pointerDown(menu.pointer(0, 0, { button: 2 }));
   assert.equal(menu.input.orbiting, false);
+});
+
+test('cue view: an unlocked click only takes the cue; locked movement aims and pulls back the two-click shot', () => {
+  const { input, commands, calls, aimed, scene, pointer, click } = rig(); scene.lockApi = true;
+  assert.equal(input.lockHint, true);
+  input.setTip(.2, 0); click(300, 200);
+  assert.deepEqual([calls, input.setup.stage, commands.length, aimed.length], [['request-lock'], 'aim', 0, 0], 'the taking click neither aims nor locks aim');
+  input.pointerLockChanged(true);
+  assert.deepEqual([input.pointerLocked, input.lockHint], [true, false]);
+  // A locked pointer's screen position is frozen; only its movement counts.
+  input.pointerMove(pointer(300, 200, { dx: 40 })); input.pointerMove(pointer(300, 200, { dx: 25 }));
+  assert.deepEqual(aimed.map(point => point.x), [340, 365]);
+  click(300, 200);
+  assert.equal(input.setup.stage, 'power'); assert.equal(calls.some(call => call.startsWith('capture')), false, 'pointer capture throws while locked');
+  input.pointerMove(pointer(300, 200, { dy: 90 }));
+  assert.ok(Math.abs(input.setup.power - .55) < 1e-9);
+  click(300, 200);
+  assert.deepEqual(commands, [{ type: 'shoot', shot: { angle: .4, power: .55, elevation: 0, tipX: .2, tipY: 0 } }]);
+  input.cancel(); click(300, 200);
+  assert.equal(input.setup.stage, 'power', 'the lock outlasts the shot: the next click locks aim straight away');
+});
+
+test('losing the lock to Escape cancels like Escape; releases for dialogs, overhead and other turns keep the setup', () => {
+  const { input, context, calls, scene, click } = rig(); scene.lockApi = true;
+  click(0, 0); input.pointerLockChanged(true); input.setTip(.3, 0); click(0, 0);
+  assert.equal(input.setup.stage, 'power');
+  input.pointerLockChanged(false);
+  assert.deepEqual([input.pointerLocked, input.setup.stage, input.setup.tipX], [false, 'aim', 0], 'a browser unlock (Escape, blur) is a cancel');
+  const playing = { blocked: false, cueView: true, ownTurn: true, phase: 'ready' as const };
+  for (const change of [{ blocked: true }, { cueView: false }, { ownTurn: false }, { phase: 'ball-in-hand' as const }]) {
+    Object.assign(context, playing); input.pointerLockChanged(true); input.setTip(.3, 0); calls.length = 0;
+    input.frame(0); assert.deepEqual(calls, [], 'the lock holds while this device plays in the cue view');
+    Object.assign(context, change); input.frame(0); input.frame(0);
+    assert.deepEqual(calls, ['exit-lock'], `released once for ${JSON.stringify(change)}`);
+    input.pointerLockChanged(false);
+    assert.deepEqual([input.pointerLocked, input.setup.tipX], [false, .3], 'a release the game asked for is not a cancel');
+  }
+  Object.assign(context, playing, { phase: 'rolling' }); input.pointerLockChanged(true); calls.length = 0;
+  input.frame(0); assert.deepEqual(calls, [], 'the lock is kept while the shot rolls');
+  input.releasePointerLock(); input.pointerLockChanged(false); assert.equal(input.setup.tipX, .3, 'window blur releases without a second cancel');
+});
+
+test('pointer lock falls back to the unlocked click flow when unavailable, refused twice or outside the cue view', () => {
+  const missing = rig(); missing.click(0, 0);
+  assert.equal(missing.input.setup.stage, 'power', 'no Pointer Lock API: the first click locks aim as before');
+  const refused = rig(); refused.scene.lockApi = true;
+  refused.click(0, 0); refused.input.pointerLockError(); assert.equal(refused.input.setup.stage, 'aim');
+  refused.click(0, 0); refused.input.pointerLockError();
+  assert.deepEqual([refused.input.setup.stage, refused.input.lockHint], ['aim', false], 'one refusal may be the re-lock cooldown after Escape, so the next click asks again');
+  refused.click(0, 0); assert.equal(refused.input.setup.stage, 'power');
+  const overhead = rig({ cueView: false }); overhead.scene.lockApi = true; overhead.click(0, 0);
+  assert.deepEqual([overhead.calls.includes('request-lock'), overhead.input.setup.stage, overhead.input.lockHint], [false, 'power', false], 'overhead keeps a visible cursor and point-to-aim');
+});
+
+test('right-drag orbit keeps working on a locked pointer from movement alone', () => {
+  const { input, calls, scene, pointer, click } = rig(); scene.lockApi = true;
+  click(50, 50); input.pointerLockChanged(true); calls.length = 0;
+  input.pointerDown(pointer(50, 50, { button: 2 }));
+  input.pointerMove(pointer(50, 50, { buttons: 2, dx: 12, dy: -4 })); input.pointerMove(pointer(50, 50, { buttons: 2, dx: 3 }));
+  input.pointerUp(pointer(50, 50, { button: 2 }));
+  assert.deepEqual(calls, ['begin-orbit', 'orbit 12,-4', 'orbit 3,0', 'end-orbit']);
 });
