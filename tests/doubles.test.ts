@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { arrangeBalls, edit } from './arrangements';
 import { initPhysics, PoolGame } from '../src/simulation/game';
 import { choosePlacement, chooseShot } from '../src/simulation/ai';
-import { humanControls } from '../src/ui/session';
+import { humanControls } from '../src/match/policy';
 import { activeSeat, initialState, seatCount, seededRandom, teamOfSeat, TABLE, type GameFormat } from '../src/simulation/types';
 
 before(async()=>{await initPhysics();});

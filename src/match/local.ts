@@ -2,7 +2,8 @@ import { availableCues, canEquipCue, normalizeCues, type CueId } from '../simula
 import { PoolGame } from '../simulation/game';
 import { choosePlacement, chooseShot } from '../simulation/ai';
 import { activeSeat, seatCount, type Difficulty, type GameOptions, type GameState, type Mode, type Shot, type TableEvent } from '../simulation/types';
-import { canAdvance, humanControls, matchCapabilities, normalizeLevel } from './policy';
+import { normalizeLevel } from '../simulation/level-policy';
+import { canAdvance, humanControls, matchCapabilities } from './policy';
 import type { CommandResult } from './protocol';
 import type { Match, MatchActor, MatchChange, MatchCommand, MatchUpdate } from './types';
 

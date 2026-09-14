@@ -1,7 +1,8 @@
 import './style.css';
 import { initPhysics } from './simulation/game';
-import { LocalMatch, RemoteMatch, normalizeLevel, canAdvance as matchCanAdvance, resultTeams, type Match, type MatchCommand, type RoomSnapshot } from './match';
+import { LocalMatch, RemoteMatch, resultTeams, type Match, type MatchCommand, type RoomSnapshot } from './match';
 import { LAYOUTS } from './simulation/arcade';
+import { normalizeLevel } from './simulation/level-policy';
 import { CUE_CATALOG, canEquipCue, equippedCue, type CueId } from './simulation/cues';
 import { POWER_UPS, STATUS_EFFECTS } from './presentation/effects';
 import { deriveTablePresentation, seatLabel, teamLabel } from './presentation/table-presentation';
@@ -27,9 +28,8 @@ let mode: Mode = 'ai';
 let difficulty: Difficulty = (['casual', 'regular', 'expert'].includes(storage.get('difficulty', 'regular')) ? storage.get('difficulty', 'regular') : 'regular') as Difficulty;
 let layout: ArenaLayout = Object.hasOwn(LAYOUTS, storage.get('layout', 'crossfire')) ? storage.get('layout', 'crossfire') as ArenaLayout : 'crossfire';
 const levelNames = ['First round', 'Trick shots', 'Cross currents', 'Hard knocks', 'House champion'];
-const parseLevel = normalizeLevel;
-let unlockedLevel = parseLevel(storage.get('unlocked-level', '1'));
-let level = Math.min(unlockedLevel, parseLevel(storage.get('level', '1')));
+let unlockedLevel = normalizeLevel(storage.get('unlocked-level', '1'));
+let level = Math.min(unlockedLevel, normalizeLevel(storage.get('level', '1')));
 function renderLevels() {
   const select = $<HTMLSelectElement>('menu-level');
   select.replaceChildren(...levelNames.map((name, index) => {
@@ -39,7 +39,6 @@ function renderLevels() {
   }));
   select.value = String(level);
 }
-function canAdvance() { return matchCanAdvance(state,mode); }
 let match: Match;
 let unsubscribeMatch: (()=>void) | undefined;
 let scene: PoolScene;
@@ -93,7 +92,7 @@ function renderRecords() {
 }
 function saveResult() {
   if (state.phase !== 'over' || !state.arcade) return;
-  if (canAdvance()) { unlockedLevel = Math.max(unlockedLevel, state.arcade?.level + 1); storage.set('unlocked-level', String(unlockedLevel)); }
+  if (match.capabilities.canAdvance) { unlockedLevel = Math.max(unlockedLevel, state.arcade?.level + 1); storage.set('unlocked-level', String(unlockedLevel)); }
   const players = resultTeams(mode, seat);
   const records = readRecords();
   for (const player of players) {
@@ -136,9 +135,7 @@ function toast(message: string) { $('toast').textContent = message; $('toast').c
 function anyDialog() { return !!document.querySelector('dialog[open]'); }
 function closeDialog(id: string) { $<HTMLDialogElement>(id).close(); }
 function openDialog(id: string) { cancelDrag(); if (!$<HTMLDialogElement>(id).open) $<HTMLDialogElement>(id).showModal(); }
-function bothConnected() { return match?.ready ?? false; }
-function myTurn() { return match?.actor.canAct ?? false; }
-function canAct() { return initialized && myTurn() && !anyDialog() && !match.pending && !coinResetting && !orbitPointer && !keyboardOrbit && !document.hidden; }
+function canAct() { return initialized && match.actor.canAct && !anyDialog() && !match.pending && !coinResetting && !orbitPointer && !keyboardOrbit && !document.hidden; }
 function seatName(player: number) {
   return seatLabel(state,{mode,difficulty,room},player);
 }
@@ -149,7 +146,7 @@ function renderInvite() {
   const roster = $('invite-roster'); roster.replaceChildren(); roster.hidden = !room;
   if (!room) return;
   const capacity = seatCount(state.format), filled = room.players.filter(p => p.connected).length;
-  $('invite-status').textContent = bothConnected() ? `All ${capacity} players are ready.` : `${filled}/${capacity} connected · Waiting for ${capacity === 4 ? 'the teams' : 'your friend'}…`;
+  $('invite-status').textContent = match.ready ? `All ${capacity} players are ready.` : `${filled}/${capacity} connected · Waiting for ${capacity === 4 ? 'the teams' : 'your friend'}…`;
   for (const team of [0, 1]) {
     const section = document.createElement('section'); section.className = 'invite-team';
     const title = document.createElement('h3'); title.textContent = state.format === 'doubles' ? `Team ${team + 1}` : `Player ${team + 1}`; section.append(title);
@@ -305,7 +302,7 @@ function updateUI(force = false) {
   const arcadeUI = state.arcade ? { ...state.arcade, clock: undefined } : undefined;
   const key = JSON.stringify([!!orbitPointer,keyboardOrbit,shotSetup.adjustment,shotSetup.stage,state.cues,state.chalked, coinResetting, state.phase, presentation?.phase, presentation?.shotCount, presentation ? activeSeat(presentation) : null, state.turn, state.format, state.teamOrder, state.groups, state.shotCount, state.message, state.balls.filter(b => b.pocketed).map(b => b.id), state.winner, arcadeUI, difficulty, mode, room?.players, connected, aiMessage, anyDialog(), match.pending, document.hidden]);
   if (!force && key === lastUI) return; lastUI = key;
-  const viewModel=deriveTablePresentation(state,{mode,difficulty,room,connected,ready:!!bothConnected(),controlsTurn:myTurn(),canInteract:canAct(),aiThinking:aiMessage,shotStage:shotSetup.stage,adjustment:shotSetup.adjustment,resetting:coinResetting});
+  const viewModel=deriveTablePresentation(state,{mode,difficulty,room,connected,ready:match.ready,controlsTurn:match.actor.canAct,canInteract:canAct(),aiThinking:aiMessage,shotStage:shotSetup.stage,adjustment:shotSetup.adjustment,resetting:coinResetting});
   for (const player of [0, 1]) {
     $(`name-${player}`).textContent = playerName(player);
     const roster = $(`roster-${player}`); roster.hidden = state.format !== 'doubles'; roster.replaceChildren();
@@ -354,7 +351,7 @@ function updateUI(force = false) {
       resultKey = key;
       $('result-title').textContent = mode === 'ai' ? state.winner === 0 ? 'The table is yours.' : 'The house takes this one.' : `${playerName(state.winner!)} takes the rack.`;
       $('result-message').textContent = state.message;
-      $('next-level-button').hidden = !canAdvance();
+      $('next-level-button').hidden = !match.capabilities.canAdvance;
       $('next-level-button').textContent = `Level ${(state.arcade?.level || 1) + 1} →`;
       $('rematch-button').innerHTML = `Replay level ${state.arcade?.level || 1} ${icon('reset',17)}`;
       openDialog('result-dialog');
@@ -393,7 +390,7 @@ async function enterRoom(create:boolean) {
     if(!result.ok)throw new Error(result.error||'Could not open the table.');
     storage.set('name',name);hasStarted=true;installMatch(candidate);resultKey='';aimAngle=0;scene.aim.angle=0;cancelDrag();
     closeDialog('main-menu');closeDialog('room-dialog');$('invite-code').textContent=room!.code;void sound.unlock();
-    if(create||!bothConnected())openDialog('invite-dialog');else toast('You’re in.');
+    if(create||!match.ready)openDialog('invite-dialog');else toast('You’re in.');
     if(state.cues[seat]==='ash-house')equipPreferredCue();
     updateUI(true);
   }catch(error){candidate.dispose();if(intent===sessionIntent)$('room-error').textContent=error instanceof Error?error.message:'Could not open the table.';}
@@ -418,7 +415,7 @@ function setupUI() {
   const startFromMenu = (nextMode: Mode) => { hasStarted = true; newGame(nextMode, menuFormat); closeDialog('main-menu'); };
   renderLevels(); refreshMenuFormat();
   $('menu-format').onchange = () => { menuFormat = $<HTMLSelectElement>('menu-format').value === 'doubles' ? 'doubles' : 'singles'; storage.set('format', menuFormat); refreshMenuFormat(); };
-  $('menu-level').onchange = () => { level = Math.min(unlockedLevel, parseLevel($<HTMLSelectElement>('menu-level').value)); storage.set('level', String(level)); };
+  $('menu-level').onchange = () => { level = Math.min(unlockedLevel, normalizeLevel($<HTMLSelectElement>('menu-level').value)); storage.set('level', String(level)); };
   const openLobby = () => { if (mode === 'online' && room && menuFormat === state.format) { $('invite-code').textContent = room.code; openDialog('invite-dialog'); } else { $<HTMLSelectElement>('room-format').value = menuFormat; openDialog('room-dialog'); } };
   $('menu-begin').onclick = () => { setMenuPanel(true); selectMenuMode(menuMode); $('menu-session-start').focus(); };
   $('menu-back').onclick = () => { setMenuPanel(false); $('menu-begin').focus(); };
@@ -440,9 +437,7 @@ function setupUI() {
   $<HTMLInputElement>('volume').value = String(sound.volume * 100);
   $('volume').oninput = () => { sound.volume = Number($<HTMLInputElement>('volume').value) / 100; storage.set('volume', String(sound.volume)); sound.unlock(); };
   $('preview-audio').onclick = () => sound.preview();
-  // Migrate the former forced-High default once; later manual choices persist.
-  const savedQuality = storage.get('quality-policy','')==='adaptive-v1'?storage.get('quality','auto') as Quality:'auto';
-  storage.set('quality-policy','adaptive-v1');storage.set('quality',savedQuality);
+  const savedQuality = storage.get('quality','auto') as Quality;
   if (['auto','high','ultra','performance'].includes(savedQuality)) { $<HTMLSelectElement>('quality').value = savedQuality; scene.setQuality(savedQuality); }
   $('quality').onchange = () => { const q = $<HTMLSelectElement>('quality').value as Quality; scene.setQuality(q); storage.set('quality', q); resolutionNote(); };
   chooseCamera(storage.get('camera','angled')==='overhead');
@@ -468,7 +463,7 @@ function setupUI() {
   $('reset-button').onclick = () => { if (!match.capabilities.canReset) return toast('Finish this rack with everyone connected to reset the table.'); if (match.capabilities.canRematch) return openDialog('result-dialog'); openDialog('reset-dialog'); };
   $('confirm-reset').onclick = async () => { if(await command({type:'reset'},'The table cannot be reset yet.')){closeDialog('reset-dialog');toast('Fresh rack.');} };
   $('next-level-button').onclick = async () => {
-    if (!canAdvance()) return;
+    if (!match.capabilities.canAdvance) return;
     if(await command({type:'advance'},'This level cannot advance yet.'))closeDialog('result-dialog');
   };
   $('rematch-button').onclick = async () => {
