@@ -20,7 +20,6 @@ export interface ClientToServerEvents {
   'game:equip': (data: { cue: CueId }, ack: Ack) => void;
   'game:chalk': (data: Record<string, never>, ack: Ack) => void;
   'game:rematch': (data: { advance?: boolean }, ack: Ack) => void;
-  'game:power': (data: unknown, ack: Ack) => void;
 }
 export interface ServerToClientEvents {
   'room:state': (room: RoomSnapshot) => void;

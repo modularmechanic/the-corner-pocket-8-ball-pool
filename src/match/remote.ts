@@ -57,7 +57,6 @@ export class RemoteMatch implements Match {
   }
   subscribe(listener: (change: MatchChange) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   private notify(change: MatchChange) { for (const listener of this.listeners) listener(change); }
-  setIdentity(identity: Identity) { this.identity = { ...identity }; }
   setDifficulty(_difficulty: Difficulty) {}
   pauseAI() {}
   update(_dt: number, options: MatchUpdate = {}) { this.muted = !!options.muted; if (this.muted) this.timeline.mute(); }

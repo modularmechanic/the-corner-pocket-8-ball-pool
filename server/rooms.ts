@@ -72,7 +72,6 @@ export function attachRooms(http: HttpServer) {
     socket.on('game:chalk', (_, ack) => command(socket, { type: 'chalk' }, ack));
     socket.on('game:place', (point, ack) => command(socket, { type: 'place', x: point?.x, z: point?.z }, ack));
     socket.on('game:rematch', (data, ack) => command(socket, { type: data?.advance === true ? 'advance' : 'rematch' }, ack));
-    socket.on('game:power', (_, ack) => reply(ack, { ok: false, error: 'Power-ups are collected on the table.' }));
     socket.on('room:leave', () => leave(socket));
     socket.on('disconnect', () => leave(socket));
   });

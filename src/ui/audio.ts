@@ -21,7 +21,6 @@ export class TableAudio {
   get volume(){return this._volume;}
   set volume(value:number){this._volume=Math.max(0,Math.min(1,value));this.syncGain();}
   get ambience(){return this._ambience;}
-  set ambience(value:number){this._ambience=Math.max(0,Math.min(1,value));}
   private syncGain(){ if(this.context&&this.master)this.master.gain.setTargetAtTime(this.enabled?this.volume:0,this.context.currentTime,.025); }
   async prepare() {
     if(this.loading)return this.loading;
@@ -61,7 +60,6 @@ export class TableAudio {
     this.rolling.gain.gain.setTargetAtTime(this.enabled?level:0,this.context.currentTime,.08);
     this.rolling.pan.pan.setTargetAtTime(energy?Math.max(-.7,Math.min(.7,position/energy/6)):0,this.context.currentTime,.1);
   }
-  playBatch(events:TableEvent[]){ const start=events[0]?.time||0;for(const event of events)this.play(event,Math.max(0,Math.min(.04,event.time-start))); }
   play(event:TableEvent,delay=0){
     const ctx=this.context;
     if(!this.enabled||!ctx||ctx.state!=='running'||this.voices>=28||event.strength<.012)return;
