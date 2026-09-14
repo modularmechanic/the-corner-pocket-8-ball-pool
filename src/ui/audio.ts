@@ -13,14 +13,13 @@ export class TableAudio {
   private rolling: { source:AudioBufferSourceNode; gain:GainNode; pan:StereoPannerNode } | null=null;
   private _enabled=true;
   private _volume=.65;
-  private _ambience=.18;
+  private readonly ambience=.18;
   private eventCount=0;
   private effectVoices=0;
   get enabled(){return this._enabled;}
   set enabled(value:boolean){this._enabled=value;this.syncGain();}
   get volume(){return this._volume;}
   set volume(value:number){this._volume=Math.max(0,Math.min(1,value));this.syncGain();}
-  get ambience(){return this._ambience;}
   private syncGain(){ if(this.context&&this.master)this.master.gain.setTargetAtTime(this.enabled?this.volume:0,this.context.currentTime,.025); }
   async prepare() {
     if(this.loading)return this.loading;

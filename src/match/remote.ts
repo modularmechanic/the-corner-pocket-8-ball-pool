@@ -22,7 +22,7 @@ export class RemoteMatch implements Match {
   private recovering = false;
   private muted = false;
   private now: () => number;
-  private identity: Identity;
+  private readonly identity: Identity;
   constructor(config: RemoteMatchOptions) {
     this.identity = { ...config.identity }; this.now = config.now || (() => performance.now());
     const options = { autoConnect: false, reconnection: true, reconnectionDelay: 700, reconnectionDelayMax: 4000 };
