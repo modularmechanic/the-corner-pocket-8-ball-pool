@@ -7,6 +7,8 @@ export type MatchCommand =
   | { type: 'place'; x: number; z: number }
   | { type: 'chalk' }
   | { type: 'group'; group: Group }
+  /** Snooker's frame and billiards' game may be given up at the table; eight-ball has no concession rule. */
+  | { type: 'concede' }
   | { type: 'equip'; cue: CueId }
   | { type: 'rematch' }
   | { type: 'advance' }

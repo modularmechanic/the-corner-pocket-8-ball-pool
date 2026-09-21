@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import type { GameState } from '../simulation/types';
+import { TABLE, type GameState } from '../simulation/types';
+import { EIGHT_BALL_TABLE, tableOf, type TableSpec } from '../simulation/modes/table';
 import { canvasTexture } from './materials';
 
 /** `balls` are indexed by ball id and shared with the playing balls. */
@@ -49,10 +50,26 @@ export function drawTableDetailTextures(balls: readonly THREE.Texture[]): TableD
 }
 const TOKEN_FROM = new THREE.Vector3(3.31, 0.28, 3.34),
   TOKEN_TO = new THREE.Vector3(3.84, -0.87, 3.445);
-/** The visible machinery beneath the playing surface; never part of ball collision simulation. */
+/** Spacing of the balls waiting in the return; a ball is the same size on every table, so this never scales. */
+const RETURN_PITCH = 0.351;
+/** The fittings that belong to whichever cabinet is in play: the coin mechanism and ball return under the
+ * playing surface, and the outer pair of pendant shades that reach past the pub lamp onto the ends of a
+ * full-size slate. Never part of ball collision simulation. */
 export class TableDetails {
   readonly group = new THREE.Group();
   readonly coinControl = new THREE.Group();
+  /** Cut into the cabinet apron, so it is scaled with the slate and sits on whichever apron the cabinet has. */
+  private recess = new THREE.Group();
+  private returnLight: THREE.PointLight;
+  private coins: THREE.Mesh[] = [];
+  private coinSpots: [number, number][] = [];
+  private returnStart = -3.52;
+  private returnEntry = 2.08;
+  private returnZ = 3.08;
+  private endLights: THREE.SpotLight[] = [];
+  private tokenFrom = TOKEN_FROM.clone();
+  private tokenTo = TOKEN_TO.clone();
+  private tableSpec: TableSpec = EIGHT_BALL_TABLE;
   private lever = new THREE.Group();
   private token: THREE.Mesh;
   private returns = new Map<number, THREE.Mesh>();
@@ -66,6 +83,7 @@ export class TableDetails {
   private sharedBallMaps: readonly THREE.Texture[];
   constructor(scene: THREE.Scene, textures: TableDetailTextures) {
     scene.add(this.group);
+    this.group.add(this.recess);
     this.sharedBallMaps = textures.balls;
     const steel = new THREE.MeshPhysicalMaterial({
       map: textures.brushedSteel,
@@ -84,7 +102,7 @@ export class TableDetails {
       x: number,
       y: number,
       z: number,
-      parent: THREE.Group = this.group,
+      parent: THREE.Group = this.recess,
     ) => {
       const mesh = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 2, 0.014), mat);
       mesh.position.set(x, y, z);
@@ -102,7 +120,7 @@ export class TableDetails {
       const track = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 5.86, 24), steel);
       track.rotation.z = Math.PI / 2;
       track.position.set(-0.76, -1.175, z);
-      this.group.add(track);
+      this.recess.add(track);
     }
     const glass = new THREE.Mesh(
       new THREE.BoxGeometry(6.08, 0.53, 0.014),
@@ -118,16 +136,17 @@ export class TableDetails {
       }),
     );
     glass.position.set(-0.75, -0.955, 3.397);
-    this.group.add(glass);
+    this.recess.add(glass);
     const strip = new THREE.Mesh(
       new THREE.BoxGeometry(5.85, 0.018, 0.02),
       new THREE.MeshStandardMaterial({ color: '#f4dcaa', emissive: '#f4dcaa', emissiveIntensity: 1.2 }),
     );
     strip.position.set(-0.75, -0.679, 3.11);
-    this.group.add(strip);
+    this.recess.add(strip);
     const returnLight = new THREE.PointLight('#f7d9a5', 1.2, 2.5, 2);
     returnLight.position.set(-0.6, -0.82, 3.27);
     this.group.add(returnLight);
+    this.returnLight = returnLight;
     for (let id = 1; id <= 15; id++) {
       const mesh = new THREE.Mesh(
         new THREE.SphereGeometry(0.157, 32, 24),
@@ -190,11 +209,52 @@ export class TableDetails {
         coin.rotation.y = x + i * 0.7;
         coin.castShadow = true;
         this.group.add(coin);
+        this.coins.push(coin);
+        this.coinSpots.push([x, z]);
       }
     this.token = new THREE.Mesh(coinGeometry, coinMaterial);
     this.token.visible = false;
     this.token.castShadow = true;
     this.group.add(this.token);
+    // The pub pendant is three shades reaching about |x| <= 6. A 12-foot slate runs well past that at both
+    // ends, so the rig gains an outer pair that sits over whichever ends are actually in play, and stays
+    // dark on the pub table, where the pendant already covers the whole cloth.
+    for (const side of [-1, 1]) {
+      const lamp = new THREE.SpotLight('#fff0d8', 36, 11, 1.13, 0.27, 2);
+      lamp.visible = false;
+      lamp.userData.side = side;
+      this.endLights.push(lamp);
+      this.group.add(lamp, lamp.target);
+    }
+    this.syncTable(EIGHT_BALL_TABLE);
+  }
+  /** Re-lays the coin-op fittings and the end lamps onto `spec`'s cabinet. The apron recess is cut at the
+   * slate's scale by TableModel, so the facing, glass and tray stretch with it while the balls and coins
+   * standing in it keep their real size. */
+  private syncTable(spec: TableSpec) {
+    this.tableSpec = spec;
+    const sx = spec.halfWidth / TABLE.halfWidth,
+      sz = spec.halfDepth / TABLE.halfDepth;
+    this.recess.scale.set(sx, 1, sz);
+    this.returnLight.position.set(-0.6 * sx, -0.82, 3.27 * sz);
+    this.returnZ = 3.08 * sz;
+    this.returnStart = -0.75 * sx - 2.77;
+    this.returnEntry = -0.75 * sx + 2.83;
+    for (const ball of this.returns.values()) ball.position.set(this.returnEntry - 0.08, -1.005, this.returnZ);
+    this.coinControl.position.set(4.13 * sx, -0.96, 3.38 * sz);
+    this.coins.forEach((coin, i) =>
+      coin.position.set(this.coinSpots[i][0] * sx, coin.position.y, this.coinSpots[i][1] * sz),
+    );
+    this.tokenFrom.set(TOKEN_FROM.x * sx, TOKEN_FROM.y, TOKEN_FROM.z * sz);
+    this.tokenTo.set(TOKEN_TO.x * sx, TOKEN_TO.y, TOKEN_TO.z * sz);
+    const reaches = spec.halfWidth > TABLE.halfWidth + 0.5;
+    for (const lamp of this.endLights) {
+      const x = (lamp.userData.side as number) * (spec.halfWidth - 1.4);
+      lamp.visible = reaches;
+      lamp.position.set(x, 3.72, 0);
+      lamp.target.position.set(x * 1.08, 0, 0);
+      lamp.target.updateMatrixWorld();
+    }
   }
   animateReset() {
     this.resetAge = 0;
@@ -203,6 +263,8 @@ export class TableDetails {
   }
   /** Balls in `onTable` (such as those still fading out) have not reached the return yet. */
   update(state: GameState, dt: number, onTable: ReadonlyMap<number, unknown>) {
+    const spec = tableOf(state);
+    if (spec !== this.tableSpec) this.syncTable(spec);
     if (state.seed !== this.seed) {
       this.seed = state.seed;
       this.order.length = 0;
@@ -218,7 +280,7 @@ export class TableDetails {
       if (!this.order.includes(id)) {
         this.order.push(id);
         this.arrivalAge.set(id, 0);
-        this.returns.get(id)!.position.x = 2.08;
+        this.returns.get(id)!.position.x = this.returnEntry;
       }
     for (const id of this.order) this.arrivalAge.set(id, (this.arrivalAge.get(id) || 0) + dt);
     this.resetAge += dt;
@@ -230,7 +292,7 @@ export class TableDetails {
     this.token.visible = this.resetAge < 0.45;
     if (this.token.visible) {
       const t = Math.min(1, this.resetAge / 0.45);
-      this.token.position.lerpVectors(TOKEN_FROM, TOKEN_TO, t * t);
+      this.token.position.lerpVectors(this.tokenFrom, this.tokenTo, t * t);
       this.token.rotation.x = (t * Math.PI) / 2;
     }
     for (const [id, mesh] of this.returns) {
@@ -238,10 +300,10 @@ export class TableDetails {
       mesh.visible = index >= 0 && (resetting || (this.arrivalAge.get(id) || 0) >= 0.4);
       if (!mesh.visible) continue;
       const oldX = mesh.position.x,
-        target = -3.52 + index * 0.351;
+        target = this.returnStart + index * RETURN_PITCH;
       if (resetting && this.resetAge > 0.6) {
         const release = Math.max(0, (this.resetAge - 0.6 - index * 0.021) / 0.28);
-        mesh.position.set(target + release * 2.5, -1.005 - release * release * 0.65, 3.08);
+        mesh.position.set(target + release * 2.5, -1.005 - release * release * 0.65, this.returnZ);
         mesh.visible = release < 1;
       } else {
         mesh.position.x = THREE.MathUtils.damp(mesh.position.x, target, 6, dt);

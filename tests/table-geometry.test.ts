@@ -213,7 +213,14 @@ test('surface drag takes the strongest overlapping zone and composes sticky cue 
 });
 
 test('seeded layouts stay deterministic and satisfy the same shared clearance policies', () => {
-  for (const layout of ['crossfire', 'fortress', 'gauntlet'] satisfies ArenaLayout[])
+  for (const layout of [
+    'crossfire',
+    'fortress',
+    'gauntlet',
+    'riptide',
+    'livewire',
+    'blackout',
+  ] satisfies ArenaLayout[])
     for (let level = 1; level <= 5; level++)
       for (let seed = 0; seed < 8; seed++) {
         const state = initialState(`geometry-layout-${seed}`),

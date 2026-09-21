@@ -15,6 +15,30 @@ export const PUB_DRINK_PROPS = {
   glasses: PUB_DRINK_ASSETS.glasses.map((name) => `models/pub/${name}.glb`),
 };
 
+/** Every loaded glass material in the room, so a tier change converts all of them together and
+ * a glass that loads afterwards arrives in the mode the room is already in. */
+const glassware = new Set<THREE.MeshPhysicalMaterial>();
+let refracting = false;
+
+/** Two ways to draw the same vessel. Refraction is the real thing and costs a scene-colour pass
+ * every frame; alpha is free and keeps the modelled liquid readable. Nothing here is per-material
+ * state, so glassware can never be left half converted. */
+function applyGlassMode(material: THREE.MeshPhysicalMaterial): void {
+  material.transmission = refracting ? 0.94 : 0;
+  material.thickness = refracting ? 0.075 : 0;
+  material.transparent = !refracting;
+  material.opacity = refracting ? 1 : material.name.includes('Clear') ? 0.2 : 0.24;
+  material.depthWrite = refracting;
+  material.needsUpdate = true;
+}
+
+/** Called from the render budget: real refraction on the top tiers, alpha glass below. */
+export function setPubGlassTransmission(enabled: boolean): void {
+  if (enabled === refracting) return;
+  refracting = enabled;
+  for (const material of glassware) applyGlassMode(material);
+}
+
 export interface PubDrinksLayout {
   shelfParent?: THREE.Group;
   shelfLevels: readonly number[];
@@ -59,6 +83,8 @@ function shelfPositions(row: number): number[] {
 /** Each authored material is instanced across its placements, including the glassware. */
 export function buildPubDrinks(room: THREE.Group, installer: PropInstaller, options: Partial<PubDrinksLayout> = {}) {
   const layout = { ...PUB_DRINK_LAYOUT, ...options };
+  /** This room's own glass materials, so disposing it leaves nothing of its behind. */
+  const owned = new Set<THREE.MeshPhysicalMaterial>();
   const tabletopAssets = new THREE.Group(),
     shelfAssets = new THREE.Group();
   tabletopAssets.name = 'pub-cocktails-and-counter-bottles';
@@ -164,17 +190,17 @@ export function buildPubDrinks(room: THREE.Group, installer: PropInstaller, opti
     const group = new THREE.Group(),
       stemmed = kind === 0 || kind === 3;
     const glass = new THREE.MeshPhysicalMaterial({
-      name: 'Drink Glass Fallback',
+      name: 'Drink Glass Fallback Clear',
       color: '#e0eeeb',
-      transparent: true,
-      opacity: 0.2,
-      depthWrite: false,
       roughness: 0.035,
       clearcoat: 0.85,
       clearcoatRoughness: 0.025,
       envMapIntensity: 0.42,
       ior: 1.45,
     });
+    owned.add(glass);
+    glassware.add(glass);
+    applyGlassMode(glass);
     const base = new THREE.Mesh(
       new THREE.CylinderGeometry(0.15, 0.15, 0.02, 24),
       new THREE.MeshStandardMaterial({ color: '#98754a', roughness: 0.95 }),
@@ -217,23 +243,23 @@ export function buildPubDrinks(room: THREE.Group, installer: PropInstaller, opti
       for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
         if (material instanceof THREE.MeshStandardMaterial) {
           if (material.name.startsWith('Drink Glass')) {
-            const clear = material.name.includes('Clear');
-            material.transparent = true;
-            material.opacity = clear ? 0.2 : 0.24;
-            material.depthWrite = false;
             material.roughness = 0.035;
             material.metalness = 0;
             // The modeled vessels already have inner walls and rims. Rendering
             // both sides of every wall doubles their haze and dulls the liquid.
             material.side = THREE.FrontSide;
-            if (clear) material.color.set('#e0eeeb');
+            if (material.name.includes('Clear')) material.color.set('#e0eeeb');
             if (material instanceof THREE.MeshPhysicalMaterial) {
               material.clearcoat = 0.85;
               material.clearcoatRoughness = 0.025;
               material.ior = 1.45;
-              // Alpha keeps the visible modeled liquid intact and avoids a
-              // scene-color refraction pass for every shelf glass material.
-              material.transmission = 0;
+              owned.add(material);
+              glassware.add(material);
+              applyGlassMode(material);
+            } else {
+              material.transparent = true;
+              material.opacity = 0.22;
+              material.depthWrite = false;
             }
           } else if (material.name.startsWith('Drink Ice')) {
             material.transparent = true;
@@ -300,6 +326,8 @@ export function buildPubDrinks(room: THREE.Group, installer: PropInstaller, opti
       cocktails: cocktails.flat().length,
     }),
     dispose() {
+      for (const material of owned) glassware.delete(material);
+      owned.clear();
       // Dispose the two ownership branches together so shared instanced resources
       // from a bottle model on both shelves and counter are released once.
       const release = new THREE.Group();

@@ -1,8 +1,8 @@
+import { modeOf } from '../simulation/modes';
 import { kitchenPlacement } from '../simulation/table-geometry';
 import {
   activeSeat,
   isBreakShot,
-  legalTargets,
   seatCount,
   type Difficulty,
   type GameState,
@@ -139,6 +139,8 @@ export function deriveTablePresentation(state: GameState, viewer: TableViewer) {
         ? `Room ${viewer.room?.code || '—'} · ${viewer.room?.players.length || 0}/${seatCount(state.format)} players`
         : 'Player disconnected';
   else if (state.phase === 'rolling') text = 'Rolling';
+  // Nobody wins a horde: the run ends when they get through, and it says so itself.
+  else if (state.phase === 'over' && state.mode === 'zombie') text = state.message;
   else if (state.phase === 'over')
     text = `${teamLabel(state, viewer, state.winner!)} ${viewer.mode === 'ai' && state.winner === 0 && state.format === 'singles' ? 'win' : 'wins'}`;
   else if (viewer.aiThinking) text = `${actor} · Aiming`;
@@ -161,7 +163,15 @@ export function deriveTablePresentation(state: GameState, viewer: TableViewer) {
             : '1 · Aim';
   else if (isBreakShot(state)) text = viewer.controlsTurn ? 'Your break' : `${actor} · Break`;
   else if (!viewer.controlsTurn) text = `${actor}’s shot`;
-  else if (state.groups[state.turn] && legalTargets(state).every((ball) => ball.id === 8)) text = 'Eight ball';
+  // "Eight ball" is eight-ball's own end-of-rack banner: it needs the mode's targets, not eight-ball's, so that
+  // no other mode can reach it by accident. Only eight-ball ever fills `groups`, which is the first guard.
+  else if (
+    state.groups[state.turn] &&
+    modeOf(state)
+      .legalTargets(state)
+      .every((ball) => ball.id === 8)
+  )
+    text = 'Eight ball';
   const between = !viewer.resetting && !waiting && (state.phase === 'ready' || state.phase === 'ball-in-hand');
   const allowance = between && state.shotsLeft > 0;
   if (allowance) text += ` · ${state.shotsLeft === 2 ? RULE_TERMS.twoVisits : RULE_TERMS.oneVisitLeft}`;

@@ -1,11 +1,30 @@
 import * as THREE from 'three';
-import { TABLE, POCKETS, initialState, type GameState, type TableEvent, type Shot } from '../simulation/types';
+import {
+  TABLE,
+  POCKETS,
+  cueBallId,
+  initialState,
+  type GameState,
+  type TableEvent,
+  type Shot,
+} from '../simulation/types';
 import { EFFECTS } from '../presentation/effects';
 import { deriveTableEffects } from '../presentation/table-presentation';
-import { ballTexture, canvasTexture, clubLightingTexture } from './materials';
+import { tableOf, type TableSpec } from '../simulation/modes/table';
+
+/** Meshes are built for every id any mode racks, not just eight-ball's sixteen: snooker's
+ * colours are ids 16-21, and a shorter array threw on the first frame of a snooker frame. */
+const BALL_MESH_COUNT = 22;
+import { ballTexture, snookerBallTexture, canvasTexture, clubLightingTexture } from './materials';
 import { createTableSurfaces, type TableSurfaces } from './table-surfaces';
 import { createPropInstaller } from './asset-installer';
 import { RoomReflections } from './room-reflections';
+import { PowerupGlow } from './powerup-glow';
+import { FrostVisuals } from './frost-visuals';
+import { WardShield } from './ward-shield';
+import { deadeyeCinematic } from './deadeye-cinematic';
+import { OverdriveFire } from './overdrive-fire';
+import { setPubGlassTransmission } from './pub-drinks';
 import { ShotPaths } from './shot-paths';
 import { CueAppearance } from './cue-appearance';
 import { equippedCue } from '../simulation/cues';
@@ -38,6 +57,7 @@ import {
   type ViewportInsets,
 } from './camera';
 import { ShotCameraAim, ShotCameraRig } from './shot-camera';
+import { attractTour } from './attract-tour';
 import { ArenaVisuals } from './arena-visuals';
 import { BuffTrail } from './buff-trail';
 export type Quality = RenderQuality;
@@ -63,6 +83,10 @@ interface OutFade {
   position: THREE.Vector3;
   seenPocketed: boolean;
 }
+/** A rack nobody has broken yet, or one already finished: the only times the attract tour may hold the camera. */
+function attractable(state: GameState): boolean {
+  return state.phase === 'over' || (state.shotCount === 0 && state.phase !== 'rolling');
+}
 export class PoolScene {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
@@ -72,11 +96,22 @@ export class PoolScene {
     return this.cameraTransition.active ? this.cameraTransition.camera : this.selectedCamera;
   }
   private get selectedCamera(): THREE.PerspectiveCamera | THREE.OrthographicCamera {
+    if (attractTour.running || deadeyeCinematic.running) return this.perspectiveCamera;
     return this.overhead && !this.inspection && !this.orbit ? this.overheadCamera : this.perspectiveCamera;
   }
   private balls: THREE.Mesh[] = [];
   // Canvas ball maps are large; the coin-return balls reuse them.
-  private ballMaps = Array.from({ length: 16 }, (_, id) => ballTexture(id));
+  private ballMaps = Array.from({ length: BALL_MESH_COUNT }, (_, id) => (id <= 15 ? ballTexture(id) : snookerBallTexture(id)));
+  /** Snooker's own albedos: the fifteen reds are one colour and the six colours carry no number,
+   * so a snooker frame cannot reuse the numbered pool maps for ids 1-15. Built on first use. */
+  private snookerMaps: THREE.Texture[] | null = null;
+  private ballLook: 'pool' | 'snooker' = 'pool';
+  /** Bitmask of the ball ids the current rack actually contains; -1 until the first sync. */
+  private ballRoster = -1;
+  /** The pendant rig as the pub table authored it, so a 12-foot slate can be derived from it and
+   * eight-ball restored to exactly these values. */
+  private lampRig: { x: number; distance: number; intensity: number }[] = [];
+  private lampSpan = 0;
   private ballPositions: THREE.Vector3[] = [];
   private ballContactMap?: THREE.Texture;
   private cue = new THREE.Group();
@@ -114,11 +149,17 @@ export class PoolScene {
   private inspection = false;
   private inspectionPose?: { position: THREE.Vector3; target: THREE.Vector3 };
   private orbit: OrbitAngles | null = null;
+  private attractRunning = false;
+  private deadeyeRunning = false;
   private orbitReturn = new TemporaryCameraView();
   private cameraTransition = new CameraTransition();
   private orbitTarget = new THREE.Vector3();
   private perspectiveTarget = new THREE.Vector3();
-  private shotCamera = new ShotCameraRig();
+  private shotCamera = (() => {
+    const rig = new ShotCameraRig();
+    deadeyeCinematic.onStop = () => rig.reset(true);
+    return rig;
+  })();
   private shotCameraAim = new ShotCameraAim();
   private aiControlled = false;
   private aiFPS = false;
@@ -130,13 +171,19 @@ export class PoolScene {
   private height = 0;
   private renderedSeed = '';
   private renderedShotCount = 0;
-  private arena = new ArenaVisuals(this.scene);
   private pocketDrops = new Map<number, PocketDrop>();
   private outFades = new Map<number, OutFade>();
   private effects: TableEffects;
   private surfaces: TableSurfaces;
   private propInstaller = createPropInstaller();
+  // After the installer: the horde's rigged bodies load through it.
+  private arena = new ArenaVisuals(this.scene, undefined, this.propInstaller);
   private roomReflections?: RoomReflections;
+  private powerups = new PowerupGlow(this.scene);
+  private frost = new FrostVisuals(this.scene);
+  private wardShield = new WardShield(this.scene);
+  private overdriveFire = new OverdriveFire(this.scene);
+  private pubReflections?: RoomReflections;
   private fallbackEnvironment: THREE.WebGLRenderTarget;
   private pub?: ReturnType<typeof buildPub>;
   private postprocessing?: PoolPostprocessing;
@@ -210,6 +257,7 @@ export class PoolScene {
       this.gpuSampleAge = Infinity;
       this.shadowRevision.invalidate();
       this.roomReflections?.invalidate();
+      this.pubReflections?.invalidate();
       this.applyGraphicsBudget();
       onContext(false);
     });
@@ -220,17 +268,18 @@ export class PoolScene {
     this.scene.environment = this.fallbackEnvironment.texture;
     environment.dispose();
     pmrem.dispose();
-    this.scene.environmentIntensity = 0.18;
+    // Dimmed so the practicals read as the light sources: pendants, sconces and the table rig.
+    this.scene.environmentIntensity = 0.09;
     // Just enough room bounce to retain silhouettes; practical lamps carry the light.
-    const ambient = new THREE.HemisphereLight('#d3cec0', '#211912', 0.12);
+    const ambient = new THREE.HemisphereLight('#d3cec0', '#211912', 0.05);
     this.scene.add(ambient);
-    const windowBounce = new THREE.DirectionalLight('#bdced2', 0.14);
+    const windowBounce = new THREE.DirectionalLight('#bdced2', 0.07);
     windowBounce.position.set(-15, 4, 1);
     this.scene.add(windowBounce);
     // Match the Blender pendant's actual diffuser centers, just below the glass.
     // Wide, feathered cones overlap across the cloth without flooding the room.
     for (const x of [-2.1, 0, 2.1]) {
-      const lamp = new THREE.SpotLight('#fff0d8', x === 0 ? 25 : 36, 11, 1.13, 0.27, 2);
+      const lamp = new THREE.SpotLight('#fff0d8', x === 0 ? 34 : 48, 11, 1.13, 0.27, 2);
       lamp.position.set(x, 3.72, 0);
       lamp.target.position.set(x * 1.08, 0, 0);
       lamp.castShadow = true;
@@ -244,6 +293,7 @@ export class PoolScene {
       lamp.shadow.radius = 3.75;
       lamp.shadow.intensity = 0.8;
       this.tableLights.push(lamp);
+      this.lampRig.push({ x, distance: lamp.distance, intensity: lamp.intensity });
       this.scene.add(lamp, lamp.target);
     }
     // Gentle bounce reveals the brass crown while remaining confined to the fixture.
@@ -252,7 +302,7 @@ export class PoolScene {
     this.scene.add(pendantBounce);
     // Broad, low-energy bounce from the lamp canopy keeps cushion ends and
     // pocket facings readable without lifting the pub's ambient exposure.
-    const clothBounce = new THREE.RectAreaLight('#e1e7da', 0.38, 10.4, 4.8);
+    const clothBounce = new THREE.RectAreaLight('#e1e7da', 0.5, 10.4, 4.8);
     clothBounce.position.set(0, 3.15, 0);
     clothBounce.lookAt(0, 0, 0);
     this.scene.add(clothBounce);
@@ -293,6 +343,19 @@ export class PoolScene {
         this.practicalLights.withFullLighting(() => (this.pub ? this.pub.withEnclosedRoom(capture) : capture())),
       this.propInstaller,
     );
+    // The ball probe stands on the cloth and sees mostly baize, which is right for a ball and
+    // wrong for everything the room is made of. The fittings get their own, at standing height
+    // and without the table, so brass and glass reflect the pub rather than a green rectangle.
+    this.pubReflections = new RoomReflections(
+      this.renderer,
+      this.scene,
+      () => (this.pub ? [this.pub.group] : []),
+      (capture) =>
+        this.practicalLights.withFullLighting(() => (this.pub ? this.pub.withEnclosedRoom(capture) : capture())),
+      this.propInstaller,
+      () => (this.pub ? [this.pub.group] : []),
+      1.9,
+    );
     for (const ball of this.balls) this.roomReflections.add(ball.material as THREE.MeshPhysicalMaterial);
     for (const material of [this.cueAppearance.shaft, this.cueAppearance.butt, this.surfaces.brass])
       this.roomReflections.add(material);
@@ -306,7 +369,7 @@ export class PoolScene {
     this.pub = buildPub(this.scene, this.propInstaller);
   }
   private buildTable() {
-    this.table = new TableModel(this.scene, this.surfaces, drawTableTextures(this.ballMaps));
+    this.table = new TableModel(this.scene, this.surfaces, drawTableTextures(this.ballMaps.slice(0, 16)));
   }
   private buildBalls() {
     const geo = new THREE.SphereGeometry(TABLE.radius, 64, 48);
@@ -321,7 +384,7 @@ export class PoolScene {
     });
     this.ballContactMap = contactMap;
     const contactGeometry = new THREE.PlaneGeometry(TABLE.radius * 2.8, TABLE.radius * 2.8);
-    for (let id = 0; id <= 15; id++) {
+    for (let id = 0; id < BALL_MESH_COUNT; id++) {
       const mat = new THREE.MeshPhysicalMaterial({
         map: this.ballMaps[id],
         roughness: 0.16,
@@ -347,6 +410,59 @@ export class PoolScene {
       shadow.position.y = 0.012;
       ball.userData.shadow = shadow;
       this.scene.add(shadow);
+    }
+  }
+  /** Snooker dresses the same meshes differently: fifteen identical reds and six plain colours,
+   * where eight-ball wants numbered solids and stripes. Swapping the map beats rebuilding meshes,
+   * and the work happens once per mode change, not per frame. */
+  private syncBallLook(look: 'pool' | 'snooker') {
+    if (look === this.ballLook) return;
+    this.ballLook = look;
+    if (look === 'snooker' && !this.snookerMaps)
+      this.snookerMaps = Array.from({ length: BALL_MESH_COUNT }, (_, id) => snookerBallTexture(id));
+    const maps = look === 'snooker' ? this.snookerMaps! : this.ballMaps;
+    for (let id = 0; id < this.balls.length; id++) {
+      const material = this.balls[id].material as THREE.MeshPhysicalMaterial;
+      material.map = maps[id];
+      material.needsUpdate = true;
+    }
+  }
+  /** Meshes exist for every id any mode racks, so the ids this mode does NOT use must be hidden or they
+   * sit stacked at the origin — snooker's six colours appearing as a black ball in the middle of a pool
+   * table. Only absent ids are forced hidden; the per-frame loop still owns visibility of live balls. */
+  /** A 12-foot table under a rig tuned for a 7-foot one leaves both ends in the dark: the lamps reach
+   * about 11 units and snooker runs to 11.66. Spread the same three lamps with the slate and stretch
+   * their throw to match, rather than adding lights — every extra shadow-casting spot costs a shadow map,
+   * and this scene is already shadow-bound. */
+  private syncTableLamps(spec: TableSpec) {
+    if (!this.lampRig.length || spec.halfWidth === this.lampSpan) return;
+    this.lampSpan = spec.halfWidth;
+    const scale = spec.halfWidth / TABLE.halfWidth;
+    for (let i = 0; i < this.tableLights.length; i++) {
+      const lamp = this.tableLights[i],
+        authored = this.lampRig[i];
+      const x = authored.x * scale;
+      lamp.position.set(x, 3.72, 0);
+      lamp.target.position.set(x * 1.08, 0, 0);
+      lamp.target.updateMatrixWorld();
+      // Throw grows with the table but intensity does not fall off with it: inverse-square already
+      // dims the ends, so a longer table needs the extra reach without being washed out at the centre.
+      lamp.distance = authored.distance * scale;
+      lamp.intensity = authored.intensity * (0.72 + 0.28 * scale);
+      lamp.shadow.camera.far = lamp.distance;
+      lamp.shadow.needsUpdate = true;
+    }
+  }
+  private syncBallRoster(state: GameState) {
+    let present = 0;
+    for (const ball of state.balls) present |= 1 << ball.id;
+    if (present === this.ballRoster) return;
+    this.ballRoster = present;
+    for (let id = 0; id < this.balls.length; id++) {
+      if (present & (1 << id)) continue;
+      const mesh = this.balls[id];
+      mesh.visible = false;
+      (mesh.userData.shadow as THREE.Mesh).visible = false;
     }
   }
   private buildCue() {
@@ -413,6 +529,8 @@ export class PoolScene {
   handleEvent(event: TableEvent) {
     const obstacle = event.obstacle !== undefined ? this.arena.strikeObstacle(event.obstacle) : undefined;
     this.effects.emit(event, obstacle?.material);
+    this.powerups.emit(event);
+    this.wardShield.handleEvent(event);
     if (event.kind === 'pocket' && event.ball !== undefined)
       this.startPocketDrop(event.ball, event.x, event.z, event.elevation);
     if (event.kind === 'out' && event.ball !== undefined) {
@@ -433,7 +551,7 @@ export class PoolScene {
         elevation: event.elevation || 0,
         tipX: event.tipX || 0,
         tipY: event.tipY || 0,
-        height: Math.max(0, (this.balls[0]?.position.y || TABLE.radius) - TABLE.radius),
+        height: Math.max(0, (this.balls[event.ball ?? 0]?.position.y || TABLE.radius) - TABLE.radius),
       };
   }
   private startPocketDrop(id: number, x: number, z: number, elevation?: number) {
@@ -455,16 +573,66 @@ export class PoolScene {
     if (!this.width || !this.height) return;
     const ratio = this.width / this.height;
     const portrait = this.height > this.width * 1.05;
+    // The attract tour only borrows the perspective camera: no view state is written, so whatever the game
+    // was framing is still framed the moment it stops, and the blend below covers the hand-back.
+    const attractPose = attractTour.sample(dt, tableOf(this.cameraState));
+    if (attractPose || this.attractRunning) {
+      const perspective = this.perspectiveCamera;
+      if (!attractPose) {
+        this.attractRunning = false;
+        this.cameraTransition.begin(perspective, 0.9);
+      } else {
+        if (!this.attractRunning) this.cameraTransition.begin(this.camera, 0.9);
+        this.attractRunning = true;
+        perspective.aspect = ratio;
+        perspective.up.set(0, 1, 0);
+        perspective.fov = attractPose.fov;
+        perspective.near = 0.1;
+        perspective.far = 140;
+        perspective.position.copy(attractPose.position);
+        perspective.lookAt(attractPose.target);
+        perspective.updateProjectionMatrix();
+        perspective.updateMatrixWorld(true);
+        this.perspectiveTarget.copy(attractPose.target);
+        this.cameraTransition.update(this.selectedCamera, dt);
+        return;
+      }
+    }
+    // The deadeye super shot borrows the perspective camera exactly as the attract tour does: no view state
+    // is written, so the game's own framing is intact the instant it ends, and the blend covers both handovers.
+    const deadeyePose = deadeyeCinematic.sample(dt, tableOf(this.cameraState));
+    if (deadeyePose || this.deadeyeRunning) {
+      const perspective = this.perspectiveCamera;
+      if (!deadeyePose) {
+        this.deadeyeRunning = false;
+        this.cameraTransition.begin(perspective, 0.7);
+      } else {
+        if (!this.deadeyeRunning) this.cameraTransition.begin(this.camera, 0.5);
+        this.deadeyeRunning = true;
+        perspective.aspect = ratio;
+        perspective.up.set(0, 1, 0);
+        perspective.fov = deadeyePose.fov;
+        perspective.near = 0.035;
+        perspective.far = 140;
+        perspective.position.copy(deadeyePose.position);
+        perspective.lookAt(deadeyePose.target);
+        perspective.updateProjectionMatrix();
+        perspective.updateMatrixWorld(true);
+        this.perspectiveTarget.copy(deadeyePose.target);
+        this.cameraTransition.update(this.selectedCamera, dt);
+        return;
+      }
+    }
     if (this.overheadInsets)
       applyOverheadFit(this.overheadCamera, fitOverheadView(this.width, this.height, this.overheadInsets));
-    else fitOverheadCamera(this.overheadCamera, ratio);
+    else fitOverheadCamera(this.overheadCamera, ratio, tableOf(this.cameraState));
     const perspectiveCamera = this.perspectiveCamera;
     perspectiveCamera.aspect = ratio;
     perspectiveCamera.up.set(0, 1, 0);
     if (this.orbit) {
       perspectiveCamera.fov = portrait ? 38 : 39;
       perspectiveCamera.near = 0.08;
-      fitTableCamera(perspectiveCamera, this.orbitTarget, orbitDirection(this.orbit), ratio);
+      fitTableCamera(perspectiveCamera, this.orbitTarget, orbitDirection(this.orbit), ratio, tableOf(this.cameraState));
       this.perspectiveTarget.copy(this.orbitTarget);
     } else if (!this.inspection) {
       this.perspectiveTarget.copy(
@@ -526,6 +694,8 @@ export class PoolScene {
       ceiling = this.performanceBudget.ceiling;
     this.practicalLights.configure(this.quality, budget.tier, ceiling.tier);
     this.roomReflections?.setResolution(budget.reflectionSize);
+    this.pubReflections?.setResolution(budget.reflectionSize);
+    setPubGlassTransmission(budget.glassTransmission);
     for (const [index, lamp] of this.tableLights.entries()) {
       // Casters follow the ceiling (program keys); shadow intensity is a uniform.
       lamp.castShadow = ceiling.shadowLights === 3 || index === 1;
@@ -560,7 +730,7 @@ export class PoolScene {
     const changed = this.shadowRevision.changed(values);
     const decorative = this.decorativeShadowValues;
     decorative.length = 0;
-    for (const pickup of this.arena.pickups.values()) gather(pickup.group, decorative);
+    for (const pickup of this.powerups.pickups.values()) gather(pickup.group, decorative);
     for (const hazard of this.arena.hazards.values()) gather(hazard.group, decorative);
     this.decorativeShadowsDirty = this.decorativeShadowRevision.changed(decorative) || this.decorativeShadowsDirty;
     this.decorativeShadowAge += dt;
@@ -647,6 +817,21 @@ export class PoolScene {
     this.orbit = clampOrbit({ yaw: this.orbit!.yaw + yawRadians, pitch: this.orbit!.pitch + pitchRadians });
     this.resetAimPointer();
     this.updateCameras();
+  }
+  /**
+   * Starts the arcade attract tour. Returns false, and does nothing, when a rack is under way or the viewer
+   * asked for reduced motion. It stops itself on the first pointer, key, touch or wheel event. Nothing starts
+   * it by itself: the menu decides when the machine is idle enough to advertise.
+   */
+  startAttract(): boolean {
+    if (this.lost || !attractable(this.cameraState)) return false;
+    return attractTour.start();
+  }
+  stopAttract(): void {
+    attractTour.stop();
+  }
+  get attractPlaying(): boolean {
+    return attractTour.running;
   }
   setFPSView(): void {
     this.setOverhead(false);
@@ -775,6 +960,14 @@ export class PoolScene {
     this.clock += frameDt;
     this.chalkAge += frameDt;
     this.cameraState = state;
+    deadeyeCinematic.sync(state);
+    // A rack in play always owns the camera, whatever forgot to stop the tour.
+    if (!attractable(state)) attractTour.stop();
+    // A no-op unless the spec actually changed, so eight-ball pays one identity compare a frame.
+    this.table.sync(tableOf(state));
+    this.syncBallLook(state.mode === 'snooker' ? 'snooker' : 'pool');
+    this.syncBallRoster(state);
+    this.syncTableLamps(tableOf(state));
     const cameraInputKey = `${state.seed}:${state.shotCount}:${state.phase}`;
     if (cameraInputKey !== this.cameraInputKey) {
       this.cameraInputKey = cameraInputKey;
@@ -788,7 +981,9 @@ export class PoolScene {
       this.outFades.clear();
       this.effects.clear();
       this.arena.clearFlashes();
+      this.powerups.clear();
       this.buffTrail.clear();
+      this.overdriveFire.clear();
       this.cueStroke = null;
       for (const ball of state.balls) {
         this.balls[ball.id].rotation.set(-Math.PI / 2, 0, 0);
@@ -801,6 +996,16 @@ export class PoolScene {
       }
     }
     this.arena.update(state.arcade, this.clock, frameDt);
+    // Pickup glow, the buff/debuff moment and the ongoing indicator. Driven off the striker's own cue
+    // ball, not ball 0, since English Billiards gives each player their own.
+    const shooterCue = state.balls[cueBallId(state)];
+    this.powerups.update(
+      state.arcade?.pickups,
+      state.arcade?.buffs[state.turn],
+      shooterCue && !shooterCue.pocketed ? shooterCue : null,
+      this.clock,
+      frameDt,
+    );
     this.renderedShotCount = state.shotCount;
     for (const ball of state.balls) {
       const mesh = this.balls[ball.id],
@@ -869,7 +1074,7 @@ export class PoolScene {
       shadow.scale.setScalar(1 + Math.min(elevation, 3) * 0.65);
       (shadow.material as THREE.MeshBasicMaterial).opacity = 0.72 * Math.exp(-2.7 * elevation);
     }
-    const cueBall = state.balls[0];
+    const cueBall = state.balls[cueBallId(state)];
     const effects = deriveTableEffects(state),
       { overdrive, frozen, focus } = effects.cue;
     const buffColor = effects.halo?.color || EFFECTS.ward.color;
@@ -921,6 +1126,9 @@ export class PoolScene {
       frameDt,
     );
     this.effects.update(frameDt);
+    this.overdriveFire.update(state, frameDt, this.camera);
+    this.frost.update(state, frameDt);
+    this.wardShield.update(state, frameDt);
     this.pub?.update(this.clock, this.camera);
     this.table.details.update(state, frameDt, this.outFades);
     if (!this.lost) {
@@ -933,7 +1141,10 @@ export class PoolScene {
       }
       this.updateShadowBudget(frameDt);
       this.practicalLights.update(this.camera, frameDt);
-      const captured = this.roomReflections?.update(frameDt, state.phase !== 'rolling') || false;
+      const idleForCapture = state.phase !== 'rolling';
+      const captured =
+        (this.roomReflections?.update(frameDt, idleForCapture) || false) ||
+        (this.pubReflections?.update(frameDt, idleForCapture) || false);
       if (captured) {
         prewarmPrograms(this.renderer, this.scene, this.camera, !!this.postprocessing);
         this.postprocessing?.prewarm(this.performanceBudget.ceiling);
@@ -961,13 +1172,19 @@ export class PoolScene {
     this.gpuTimer.dispose();
     this.cueAppearance.dispose();
     this.resizeObserver.disconnect();
+    this.powerups.dispose();
+    this.frost.dispose();
+    this.wardShield.dispose();
+    this.overdriveFire.dispose();
     this.roomReflections?.dispose();
+    this.pubReflections?.dispose();
     this.shotPaths.dispose();
     this.effects.dispose();
     this.arena.dispose();
     this.table.details.dispose();
     this.table.pocketDetails.dispose();
     for (const texture of this.ballMaps) texture.dispose();
+    for (const texture of this.snookerMaps ?? []) texture.dispose();
     this.pub?.dispose();
     this.postprocessing?.dispose();
     this.surfaces.dispose();

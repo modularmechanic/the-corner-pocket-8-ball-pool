@@ -1,4 +1,12 @@
-import type { RuleSet } from '../simulation/types';
+import type { GameModeId, RuleSet } from '../simulation/types';
+import {
+  BILLIARDS_SECTIONS,
+  BILLIARDS_SOURCE,
+  SNOOKER_SECTIONS,
+  SNOOKER_SOURCE,
+  ZOMBIE_SECTIONS,
+  ZOMBIE_SOURCE,
+} from './mode-rule-books';
 import { RULE_TERMS } from './table-presentation';
 
 export interface RuleBookSection {
@@ -6,7 +14,21 @@ export interface RuleBookSection {
   bullets: string[];
 }
 
-/** Where each rule set's wording in this dialog comes from. */
+/** Modes this dialog can answer for. Wider than `GameModeId` while billiards and the horde are still landing in the
+ * simulation; once they are listed there the union collapses to it. */
+export type RuleBookMode = GameModeId | 'billiards' | 'zombie';
+
+/** One mode's book: what to head the dialog with, where the wording comes from, and the sections themselves.
+ * `ruleSets` is false for a mode whose rules do not vary by rule set, so the UI knows to hide the Old/New tabs. */
+export interface RuleBook {
+  mode: RuleBookMode;
+  title: string;
+  source: string;
+  ruleSets: boolean;
+  sections: RuleBookSection[];
+}
+
+/** Where each eight-ball rule set's wording in this dialog comes from. */
 export const RULES_SOURCE: Readonly<Record<RuleSet, string>> = {
   old: 'Based on the EPA Old Rules (1991 pub rules).',
   new: 'Based on the EPA / World Eightball Rules poster (EPA Oct 2019 issue).',
@@ -70,7 +92,7 @@ const OLD_SECTIONS: RuleBookSection[] = [
     bullets: [
       'Your opponent gets two visits in a row.',
       `With the cue ball still on the table they play it from where it lies, or tap ${place} first to move it. A potted or off-table cue ball must be placed behind the head string.`,
-      'Their first shot is a free shot: any ball may be hit first, the black included, and every ball it pots counts as theirs.',
+      'Their first shot is a free shot: any ball may be hit first, the black included, and every ball it pots counts as theirs. A foul break is the exception: it gives the two visits but no free shot.',
       TWO_VISITS,
     ],
   },
@@ -139,9 +161,30 @@ const NEW_SECTIONS: RuleBookSection[] = [
   { title: 'In this game', bullets: IN_THIS_GAME },
 ];
 
-/** Titled sections describing a rule set, in plain language, for the in-game Rules dialog. */
+/** Titled sections describing an eight-ball rule set, in plain language, for the in-game Rules dialog. */
 export function ruleBook(rules: RuleSet): RuleBookSection[] {
   return rules === 'old' ? OLD_SECTIONS : NEW_SECTIONS;
+}
+
+/** The book for one game mode. `rules` picks the eight-ball rule set and is ignored by every other mode, which is
+ * what `ruleSets: false` in the answer tells the caller. */
+export function ruleBookFor(mode: RuleBookMode, rules: RuleSet = 'new'): RuleBook {
+  switch (mode) {
+    case 'snooker':
+      return { mode, title: 'Snooker', source: SNOOKER_SOURCE, ruleSets: false, sections: SNOOKER_SECTIONS };
+    case 'billiards':
+      return {
+        mode,
+        title: 'English Billiards',
+        source: BILLIARDS_SOURCE,
+        ruleSets: false,
+        sections: BILLIARDS_SECTIONS,
+      };
+    case 'zombie':
+      return { mode, title: 'Zombie Horde', source: ZOMBIE_SOURCE, ruleSets: false, sections: ZOMBIE_SECTIONS };
+    default:
+      return { mode, title: 'Eight-ball', source: RULES_SOURCE[rules], ruleSets: true, sections: ruleBook(rules) };
+  }
 }
 
 /** The rule set the Rules dialog should open to: the running session's, or the saved preference before one starts. */

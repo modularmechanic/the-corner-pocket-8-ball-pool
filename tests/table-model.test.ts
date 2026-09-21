@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { TABLE, initialState } from '../src/simulation/types';
-import { TABLE_RAILS } from '../src/simulation/table-geometry';
+import { railsOf, TABLE_RAILS } from '../src/simulation/table-geometry';
+import { EIGHT_BALL_TABLE, SNOOKER_TABLE } from '../src/simulation/modes/table';
+import { apertureOf, POCKET_APERTURE } from '../src/render/pocket-details';
 import { TableModel, TABLE_SHADOW_LAYER, type TableModelSurfaces } from '../src/render/table-model';
 import { ORIGINAL_TABLE_OCCLUDERS } from './table-model-snapshot';
 
@@ -134,4 +136,32 @@ test('coin return waits for fading balls and leaves shared ball maps to their ow
   for (const texture of balls) texture.addEventListener('dispose', () => disposed.add(texture));
   details.dispose();
   assert.equal(disposed.size, 0);
+});
+
+test('a snooker frame draws the 12-foot slate it simulates on, and syncing back restores the pub table', () => {
+  const scene = new THREE.Scene(),
+    model = buildTable(scene);
+  model.sync(SNOOKER_TABLE);
+  const clothBox = new THREE.Box3().setFromObject(named(model, 'Cloth bed')[0]);
+  near(clothBox.max.x, SNOOKER_TABLE.halfWidth + SNOOKER_TABLE.radius, 'snooker cloth half width');
+  near(clothBox.max.z, SNOOKER_TABLE.halfDepth + SNOOKER_TABLE.radius, 'snooker cloth half depth');
+  const cushions = named(model, 'Cushion'),
+    rails = railsOf(SNOOKER_TABLE);
+  assert.equal(cushions.length, rails.length);
+  for (const [index, rail] of rails.entries()) {
+    const box = new THREE.Box3().setFromObject(cushions[index]);
+    near((box.max.x + box.min.x) / 2, rail.x, 'snooker cushion x');
+    near((box.max.z + box.min.z) / 2, rail.z, 'snooker cushion z');
+    near(box.max.x - box.min.x, rail.halfWidth * 2, 'snooker cushion width');
+  }
+  // Tighter mouths: the drawn aperture follows the mode's pocket radius rather than the pub table's.
+  assert.ok(apertureOf(SNOOKER_TABLE) < POCKET_APERTURE, 'snooker pockets are cut tighter');
+  const drop = model.pocketDetails.group.children.find((child) => child.name.startsWith('Corner pocket'))!;
+  near(Math.abs(drop.position.x), SNOOKER_TABLE.pockets[0].x * -1, 'pocket hardware sits on the snooker pockets');
+  // Everything the table drew belongs to the scene exactly once, with no leftovers from the pub table.
+  assert.deepEqual(new Set(model.occluders), new Set(scene.children));
+  model.sync(EIGHT_BALL_TABLE);
+  const back = new THREE.Box3().setFromObject(named(model, 'Cloth bed')[0]);
+  near(back.max.x, TABLE.halfWidth + TABLE.radius, 'the pub table comes back unchanged');
+  assert.equal(named(model, 'Cushion').length, TABLE_RAILS.length);
 });

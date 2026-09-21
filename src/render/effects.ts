@@ -1,87 +1,19 @@
 import * as THREE from 'three';
 import { effectDefinition } from '../presentation/effects';
 import type { Ball, TableEvent } from '../simulation/types';
-
-interface Pooled {
-  age: number;
-  life: number;
-}
-interface Spark extends Pooled {
-  position: THREE.Vector3;
-  velocity: THREE.Vector3;
-  color: THREE.Color;
-}
-interface Debris extends Pooled {
-  position: THREE.Vector3;
-  velocity: THREE.Vector3;
-  rotation: THREE.Euler;
-  spin: THREE.Vector3;
-  scale: THREE.Vector3;
-  color: THREE.Color;
-  steel: boolean;
-}
-interface Ripple extends Pooled {
-  x: number;
-  z: number;
-  color: THREE.Color;
-  size: number;
-}
-interface TrailParticle {
-  position: THREE.Vector3;
-  velocity: THREE.Vector3;
-  age: number;
-  life: number;
-  ice: boolean;
-}
-interface Flash {
-  light: THREE.PointLight;
-  mesh: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>;
-  age: number;
-  life: number;
-  strength: number;
-}
-interface Arc {
-  line: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
-  age: number;
-  life: number;
-  radius: number;
-  x: number;
-  z: number;
-}
-interface Ribbon {
-  mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
-  age: number;
-  life: number;
-  x: number;
-  z: number;
-}
-
-const pool = <T extends Pooled>(length: number, create: () => Omit<T, keyof Pooled>) =>
-  Array.from({ length }, () => ({ ...create(), age: 1, life: 0 }) as T);
-function nextFree(items: readonly Pooled[], from: number) {
-  while (from < items.length && items[from].age < items[from].life) from++;
-  return from;
-}
-/** One draw call per effect kind: per-instance RGBA rides in an instanced `color` attribute (vertexColors with alpha). */
-function instanced<M extends THREE.Material>(
-  name: string,
-  geometry: THREE.BufferGeometry,
-  material: M,
-  capacity: number,
-) {
-  geometry.setAttribute(
-    'color',
-    new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4).setUsage(THREE.DynamicDrawUsage),
-  );
-  const mesh = new THREE.InstancedMesh(geometry, material, capacity);
-  mesh.name = name;
-  mesh.count = 0;
-  mesh.visible = false;
-  mesh.frustumCulled = false;
-  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  return mesh;
-}
-
+import { instanced, nextFree, pool, type Debris, type Ripple, type Spark } from './effect-pools';
+import { createFireMesh, createIceMesh, createTrailParticles, updateTrailParticles } from './effect-trails';
+import {
+  createArc,
+  createFlash,
+  createRibbon,
+  updateArc,
+  updateFlash,
+  updateRibbon,
+  type Arc,
+  type Flash,
+  type Ribbon,
+} from './effect-flourishes';
 /** Cosmetic only: none of these transient objects participate in the simulation. */
 export class TableEffects {
   private group = new THREE.Group();
@@ -137,38 +69,11 @@ export class TableEffects {
     }),
     16,
   );
-  private trails: TrailParticle[] = Array.from({ length: 80 }, () => ({
-    position: new THREE.Vector3(),
-    velocity: new THREE.Vector3(),
-    age: 1,
-    life: 0,
-    ice: false,
-  }));
+  private trails = createTrailParticles();
   private nextTrail = 0;
   private trailClock = 0;
-  private fire = new THREE.InstancedMesh(
-    new THREE.ConeGeometry(0.055, 0.19, 6),
-    new THREE.MeshBasicMaterial({
-      color: '#fff5df',
-      transparent: true,
-      opacity: 0.8,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    }),
-    80,
-  );
-  private ice = new THREE.InstancedMesh(
-    new THREE.OctahedronGeometry(0.065, 0),
-    new THREE.MeshPhysicalMaterial({
-      color: '#c1edff',
-      metalness: 0.12,
-      roughness: 0.12,
-      clearcoat: 1,
-      transparent: true,
-      opacity: 0.85,
-    }),
-    80,
-  );
+  private fire = createFireMesh();
+  private ice = createIceMesh();
   private flashes: Flash[] = [];
   private arcs: Arc[] = [];
   private ribbons: Ribbon[] = [];
@@ -184,63 +89,10 @@ export class TableEffects {
     this.fire.count = 0;
     this.ice.count = 0;
     this.group.add(this.fire, this.ice);
-    for (let i = 0; i < 3; i++) {
-      const light = new THREE.PointLight('#ffb76a', 0, 3.3, 2),
-        mesh = new THREE.Mesh(
-          new THREE.SphereGeometry(0.12, 12, 8),
-          new THREE.MeshBasicMaterial({
-            color: '#ffe8c1',
-            transparent: true,
-            opacity: 0,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-          }),
-        );
-      light.userData.performanceFlash = true;
-      mesh.visible = false;
-      this.group.add(light, mesh);
-      this.flashes.push({ light, mesh, age: 1, life: 0, strength: 0 });
-    }
+    for (let i = 0; i < 3; i++) this.flashes.push(createFlash(this.group));
     for (let i = 0; i < 4; i++) {
-      const arcGeometry = new THREE.BufferGeometry();
-      arcGeometry.setAttribute(
-        'position',
-        new THREE.BufferAttribute(new Float32Array(56 * 3), 3).setUsage(THREE.DynamicDrawUsage),
-      );
-      const line = new THREE.LineSegments(
-        arcGeometry,
-        new THREE.LineBasicMaterial({
-          color: '#aeeaff',
-          transparent: true,
-          opacity: 0,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        }),
-      );
-      line.visible = false;
-      line.frustumCulled = false;
-      this.group.add(line);
-      this.arcs.push({ line, age: 1, life: 0, radius: 0.7, x: 0, z: 0 });
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(49 * 6), 3));
-      const indices = [];
-      for (let j = 0; j < 48; j++) indices.push(j * 2, j * 2 + 1, j * 2 + 2, j * 2 + 1, j * 2 + 3, j * 2 + 2);
-      geometry.setIndex(indices);
-      const mesh = new THREE.Mesh(
-        geometry,
-        new THREE.MeshBasicMaterial({
-          color: '#caa9ff',
-          transparent: true,
-          opacity: 0,
-          side: THREE.DoubleSide,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        }),
-      );
-      mesh.visible = false;
-      mesh.frustumCulled = false;
-      this.group.add(mesh);
-      this.ribbons.push({ mesh, age: 1, life: 0, x: 0, z: 0 });
+      this.arcs.push(createArc(this.group));
+      this.ribbons.push(createRibbon(this.group));
     }
   }
 
@@ -423,112 +275,10 @@ export class TableEffects {
   }
 
   update(dt: number) {
-    let fireCount = 0,
-      iceCount = 0;
-    for (const particle of this.trails) {
-      if (particle.age >= particle.life) continue;
-      particle.age += dt;
-      if (particle.age >= particle.life) continue;
-      const progress = particle.age / particle.life;
-      particle.velocity.y -= dt * (particle.ice ? 4.5 : 0.4);
-      particle.position.addScaledVector(particle.velocity, dt);
-      particle.position.y = Math.max(0.025, particle.position.y);
-      const scale = (1 - progress) * (particle.ice ? 0.85 : 1.35);
-      this.dummy.position.copy(particle.position);
-      this.dummy.rotation.set(
-        particle.ice ? particle.age * 8 : 0.2,
-        particle.age * 5,
-        particle.ice ? particle.age * 4 : 0,
-      );
-      this.dummy.scale.set(
-        scale * (particle.ice ? 0.55 : 1),
-        scale * (particle.ice ? 1.8 : 1),
-        scale * (particle.ice ? 0.55 : 1),
-      );
-      this.dummy.updateMatrix();
-      if (particle.ice) {
-        this.ice.setMatrixAt(iceCount, this.dummy.matrix);
-        this.color.set('#a9e3ff').multiplyScalar(0.8 + progress * 0.2);
-        this.ice.setColorAt(iceCount++, this.color);
-      } else {
-        this.fire.setMatrixAt(fireCount, this.dummy.matrix);
-        this.color.setHSL(0.12 - progress * 0.1, 1, 0.58 - progress * 0.25).multiplyScalar(1.9);
-        this.fire.setColorAt(fireCount++, this.color);
-      }
-    }
-    this.fire.count = fireCount;
-    this.ice.count = iceCount;
-    this.fire.instanceMatrix.needsUpdate = true;
-    this.ice.instanceMatrix.needsUpdate = true;
-    if (this.fire.instanceColor) this.fire.instanceColor.needsUpdate = true;
-    if (this.ice.instanceColor) this.ice.instanceColor.needsUpdate = true;
-    for (const flash of this.flashes) {
-      flash.age += dt;
-      const progress = Math.min(1, flash.age / flash.life);
-      flash.light.intensity = flash.strength * (1 - progress) ** 2;
-      flash.mesh.material.opacity = (1 - progress) * 0.75;
-      flash.mesh.scale.setScalar(0.6 + progress * 2.2);
-      flash.mesh.visible = progress < 1;
-    }
-    for (const arc of this.arcs) {
-      arc.age += dt;
-      if (arc.age >= arc.life) {
-        arc.line.visible = false;
-        continue;
-      }
-      const positions = arc.line.geometry.getAttribute('position') as THREE.BufferAttribute;
-      let vertex = 0;
-      for (let branch = 0; branch < 4; branch++) {
-        const angle = (branch * Math.PI) / 2 + 0.35;
-        let px = arc.x,
-          py = 0.22,
-          pz = arc.z;
-        for (let segment = 1; segment <= 6; segment++) {
-          const distance = (segment / 6) * arc.radius,
-            bend = Math.sin(segment * 9.2 + branch * 3 + Math.floor(arc.age * 60)) * 0.055;
-          const nx = arc.x + Math.cos(angle) * distance - Math.sin(angle) * bend,
-            ny = 0.16 + Math.abs(bend) * 2,
-            nz = arc.z + Math.sin(angle) * distance + Math.cos(angle) * bend;
-          positions.setXYZ(vertex++, px, py, pz);
-          positions.setXYZ(vertex++, nx, ny, nz);
-          if (segment === 3) {
-            positions.setXYZ(vertex++, nx, ny, nz);
-            positions.setXYZ(vertex++, nx + Math.cos(angle + 0.7) * 0.22, 0.23, nz + Math.sin(angle + 0.7) * 0.22);
-          }
-          px = nx;
-          py = ny;
-          pz = nz;
-        }
-      }
-      positions.needsUpdate = true;
-      arc.line.material.opacity = (1 - arc.age / arc.life) * (0.6 + Math.sin(arc.age * 100) * 0.25);
-    }
-    for (const ribbon of this.ribbons) {
-      ribbon.age += dt;
-      if (ribbon.age >= ribbon.life) {
-        ribbon.mesh.visible = false;
-        continue;
-      }
-      const progress = ribbon.age / ribbon.life,
-        positions = ribbon.mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
-      for (let i = 0; i <= 48; i++) {
-        const u = i / 48,
-          angle = u * Math.PI * 4.5 + progress * 9,
-          radius = 0.11 + u * 0.28 + progress * 0.12,
-          width = 0.013 * (1 - u * 0.55);
-        for (let side = 0; side < 2; side++) {
-          const r = radius + (side ? width : -width);
-          positions.setXYZ(
-            i * 2 + side,
-            ribbon.x + Math.cos(angle) * r,
-            0.04 + u * 0.73 * (1 - progress * 0.35),
-            ribbon.z + Math.sin(angle) * r,
-          );
-        }
-      }
-      positions.needsUpdate = true;
-      ribbon.mesh.material.opacity = Math.sin((Math.min(1, progress * 2) * Math.PI) / 2) * (1 - progress) * 0.85;
-    }
+    updateTrailParticles(this.trails, this.fire, this.ice, this.dummy, this.color, dt);
+    for (const flash of this.flashes) updateFlash(flash, dt);
+    for (const arc of this.arcs) updateArc(arc, dt);
+    for (const ribbon of this.ribbons) updateRibbon(ribbon, dt);
     let sparkCount = 0;
     this.dummy.rotation.set(0, 0, 0);
     this.dummy.scale.setScalar(1);

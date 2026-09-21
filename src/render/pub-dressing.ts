@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { PubPlacement } from './pub-models';
 import { PUB_LAYOUT, pubBackZ, pubFrontZ, pubSideX } from './pub-layout';
 import type { PropInstaller } from './asset-installer';
+import { dressWall, WALL_EXTENT, WALL_OBSTACLES } from './pub-wall-art';
 
 const FLOOR = -3.6;
 /** Prop paths relative to public/. */
@@ -19,13 +20,6 @@ export const PUB_DRESSING_PROPS = {
 /** Human-scale snug furnishings stay outside the pool table's cueing aisle. */
 const original = {
   hearth: [{ x: 9, y: FLOOR, z: 11.4, rotation: Math.PI, height: 9.15 }],
-  gallery: [
-    { x: -12.15, y: 3.08, z: 11.57, rotation: Math.PI, height: 2.32 },
-    { x: -8.65, y: 3.44, z: 11.57, rotation: Math.PI, height: 1.88 },
-    { x: -6.27, y: 3.6, z: 11.57, rotation: Math.PI, height: 1.46 },
-    { x: -12.1, y: -0.36, z: 11.57, rotation: Math.PI, height: 2.51 },
-    { x: -8.58, y: 0.09, z: 11.57, rotation: Math.PI, height: 2.2 },
-  ],
   rightGallery: [
     { x: 14.54, y: 1.57, z: -3.8, rotation: -Math.PI / 2, height: 1.52 },
     { x: 14.54, y: 0.82, z: -1.37, rotation: -Math.PI / 2, height: 1.58 },
@@ -33,7 +27,7 @@ const original = {
   ],
   dividers: [
     { x: 10.55, y: FLOOR, z: -0.05, rotation: 0, height: 3.3 },
-    { x: 7.4, y: FLOOR, z: 7.4, rotation: Math.PI / 2, height: 3.3 },
+    { x: -10.55, y: FLOOR, z: -0.05, rotation: 0, height: 3.3 },
   ],
   casks: [{ x: -12.25, y: FLOOR, z: -7.3, rotation: 0.1, height: 3.15 }],
   handpumps: [
@@ -42,24 +36,128 @@ const original = {
   ],
 } satisfies Record<string, PubPlacement[]>;
 
+const DARTBOARD = { x: pubSideX(-4.82), width: 2.34 * 1.33 };
+const SCREEN = { z: 10.45, y: 2.1, height: 2.3 };
+const TELEVISIONS = [
+  { z: -7.98, y: 2.1, height: 2.3 },
+  { z: 8.85, y: 2.1, height: 2.3 },
+];
+
+/** Every wall, dressed around whatever is already on it. Courses are stacked from the bottom up, and
+ * each one also avoids the courses already hung, so the walls carry as many pictures as they hold
+ * without a single overlap. */
+export const WALL_COURSES = {
+  entrance: dressWall(
+    WALL_EXTENT.entrance,
+    WALL_OBSTACLES.entrance(DARTBOARD.x, DARTBOARD.width),
+    [
+      { centre: 1.7, height: 1.4, gap: 0.7 },
+      { centre: 3.9, height: 1.3, gap: 0.7 },
+    ],
+    (piece, course) => ({
+      kind: piece.kind,
+      width: piece.width,
+      x: piece.along,
+      y: course.centre - course.height / 2,
+      z: 11.57,
+      rotation: Math.PI,
+      height: course.height,
+    }),
+  ),
+  left: dressWall(
+    WALL_EXTENT.side,
+    WALL_OBSTACLES.left(SCREEN.z, SCREEN.y + SCREEN.height / 2, SCREEN.height),
+    [
+      { centre: 1.45, height: 1.05, gap: 0.55 },
+      { centre: 2.9, height: 1.05, gap: 0.55 },
+      { centre: 5.05, height: 1.0, gap: 0.55 },
+    ],
+    (piece, course) => ({
+      kind: piece.kind,
+      width: piece.width,
+      x: -14.54,
+      y: course.centre - course.height / 2,
+      z: piece.along,
+      rotation: Math.PI / 2,
+      height: course.height,
+    }),
+  ),
+  right: dressWall(
+    WALL_EXTENT.side,
+    WALL_OBSTACLES.right(TELEVISIONS),
+    [
+      { centre: 1.45, height: 1.05, gap: 0.55 },
+      { centre: 2.9, height: 1.05, gap: 0.55 },
+      { centre: 5.05, height: 1.0, gap: 0.55 },
+    ],
+    (piece, course) => ({
+      kind: piece.kind,
+      width: piece.width,
+      x: 14.54,
+      y: course.centre - course.height / 2,
+      z: piece.along,
+      rotation: -Math.PI / 2,
+      height: course.height,
+    }),
+  ),
+  barWall: dressWall(
+    WALL_EXTENT.barWall,
+    WALL_OBSTACLES.barWall(),
+    [{ centre: 4.9, height: 1.15, gap: 0.65 }],
+    (piece, course) => ({
+      kind: piece.kind,
+      width: piece.width,
+      x: piece.along,
+      y: course.centre - course.height / 2,
+      z: PUB_LAYOUT.bounds.back + 0.22,
+      rotation: 0,
+      height: course.height,
+    }),
+  ),
+  // The chimney breast's face is at z 16.53 (its bounding box reaches 15.12, but that is the mantel
+  // shelf sticking out below). Hung just clear of the brick, above the mantel.
+  chimney: dressWall(WALL_EXTENT.chimney, [], [{ centre: 3.9, height: 1.5, gap: 0.5 }], (piece, course) => ({
+    kind: piece.kind,
+    width: piece.width,
+    x: piece.along,
+    y: course.centre - course.height / 2,
+    z: 16.42,
+    rotation: Math.PI,
+    height: course.height,
+  })),
+};
+
 export const PUB_DRESSING = {
   hearth: original.hearth.map((p) => ({ ...p, x: pubSideX(p.x), z: pubFrontZ(p.z) })),
-  gallery: original.gallery.map((p) => ({ ...p, x: pubSideX(p.x), z: pubFrontZ(p.z) })),
+  // The house team photographs, authored. buildPubGallery instances these by index.
+  gallery: [
+    { x: -12.15, y: 3.08, z: 11.57, rotation: Math.PI, height: 2.32 },
+    { x: -8.65, y: 3.44, z: 11.57, rotation: Math.PI, height: 1.88 },
+    { x: -6.27, y: 3.6, z: 11.57, rotation: Math.PI, height: 1.46 },
+    { x: -12.1, y: -0.36, z: 11.57, rotation: Math.PI, height: 2.51 },
+    { x: -8.58, y: 0.09, z: 11.57, rotation: Math.PI, height: 2.2 },
+  ].map((p) => ({ ...p, x: pubSideX(p.x), z: pubFrontZ(p.z) })),
+  // The course this module hangs around them, installed separately.
+  entranceExtra: WALL_COURSES.entrance.map((p) => ({ ...p, z: pubFrontZ(p.z) })),
   rightGallery: original.rightGallery.map((p, i) => ({
     ...p,
     x: pubSideX(p.x),
     z: p.z + (i < 2 ? -2.6 : 3.2) * (PUB_LAYOUT.expansion - 1),
   })),
-  dividers: original.dividers.map((p, i) => ({ ...p, x: pubSideX(p.x), z: i ? pubFrontZ(p.z) : p.z })),
+  dividers: original.dividers.map((p) => ({ ...p, x: pubSideX(p.x), z: p.z })),
+  leftGallery: WALL_COURSES.left.map((p) => ({ ...p, x: pubSideX(p.x) })),
+  rightGalleryExtra: WALL_COURSES.right.map((p) => ({ ...p, x: pubSideX(p.x) })),
   casks: original.casks.map((p) => ({ ...p, x: pubSideX(p.x), z: pubBackZ(p.z) })),
   handpumps: original.handpumps.map((p) => ({ ...p, z: pubBackZ(p.z) })),
+  backWall: WALL_COURSES.barWall,
+  chimney: WALL_COURSES.chimney,
 };
 
 /** Requests Blender-authored fixtures, each with a complete placeholder, under room-owned GPU disposal. */
 export function buildPubDressing(
   room: THREE.Group,
   installer: PropInstaller,
-  walls: { front: THREE.Group; right: THREE.Group },
+  walls: { front: THREE.Group; right: THREE.Group; back: THREE.Group; left: THREE.Group },
 ) {
   const assets = new THREE.Group();
   assets.name = 'pub-blender-dressing';
@@ -70,6 +168,12 @@ export function buildPubDressing(
   const rightWallAssets = new THREE.Group();
   rightWallAssets.name = 'pub-brick-gallery';
   walls.right.add(rightWallAssets);
+  const backWallAssets = new THREE.Group();
+  backWallAssets.name = 'pub-back-wall-gallery';
+  walls.back.add(backWallAssets);
+  const leftWallAssets = new THREE.Group();
+  leftWallAssets.name = 'pub-left-wall-gallery';
+  walls.left.add(leftWallAssets);
   const stone = new THREE.MeshStandardMaterial({ color: '#8a7460', roughness: 0.92 });
   const wood = new THREE.MeshStandardMaterial({ color: '#3f261b', roughness: 0.49 });
   const brass = new THREE.MeshStandardMaterial({ color: '#a18450', metalness: 0.76, roughness: 0.37 });
@@ -206,6 +310,27 @@ export function buildPubDressing(
     install(variant.path, variant.front, wallAssets, variant.frontFallback);
     install(variant.path, variant.right, rightWallAssets, variant.rightFallback);
   }
+  // Each hung piece carries the model it was laid out as, so the course installs exactly what it
+  // was measured for rather than cycling models by index and hoping the widths match.
+  const MODEL_OF = {
+    frame: PUB_DRESSING_PROPS.memorabilia.frame,
+    stout: PUB_DRESSING_PROPS.memorabilia.stout,
+    darts: PUB_DRESSING_PROPS.memorabilia.darts,
+  } as const;
+  const hangCourseModels = (
+    course: readonly (PubPlacement & { kind: keyof typeof MODEL_OF })[],
+    parent: THREE.Group,
+  ) => {
+    for (const kind of Object.keys(MODEL_OF) as (keyof typeof MODEL_OF)[]) {
+      const placements = course.filter((p) => p.kind === kind);
+      if (placements.length) installer.model(MODEL_OF[kind], { parent, placements });
+    }
+  };
+  hangCourseModels(PUB_DRESSING.leftGallery, leftWallAssets);
+  hangCourseModels(PUB_DRESSING.backWall, backWallAssets);
+  hangCourseModels(PUB_DRESSING.chimney, wallAssets);
+  hangCourseModels(PUB_DRESSING.rightGalleryExtra, rightWallAssets);
+  hangCourseModels(PUB_DRESSING.entranceExtra, wallAssets);
   install(PUB_DRESSING_PROPS.handpump, PUB_DRESSING.handpumps, assets, pumpFallback);
   install(PUB_DRESSING_PROPS.divider, PUB_DRESSING.dividers, assets, dividerFallback);
   install(PUB_DRESSING_PROPS.casks, PUB_DRESSING.casks, assets, caskFallback);

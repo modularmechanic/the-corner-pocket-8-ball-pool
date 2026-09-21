@@ -1,5 +1,7 @@
-/** Expands floor area by 50% while preserving the scale of every table and prop. */
-const expansion = Math.sqrt(1.5);
+/** Pushes the walls and every perimeter fitting outward while preserving the scale of each table and prop,
+ * so the 12-foot snooker cabinet (23.32 x 12.99) keeps the 3.4 units a full cue needs on all four sides.
+ * The pub table sits in the same room, so this is also what decides how open eight-ball feels. */
+const expansion = 1.45;
 export const PUB_LAYOUT = {
   expansion,
   floor: -3.6,

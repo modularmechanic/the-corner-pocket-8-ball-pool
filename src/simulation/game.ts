@@ -1,10 +1,8 @@
 import { canEquipCue, equippedCue, normalizeCues } from './cues';
 import type * as R from '@dimforge/rapier3d-compat';
 import {
-  initialState,
-  legalTargets,
+  cueBallId,
   optionalPlacement,
-  POCKETS,
   TABLE,
   other,
   seededRandom,
@@ -16,20 +14,39 @@ import {
   type TableEvent,
   type PowerUp,
 } from './types';
-import { groupChoice, settleShot } from './settlement';
+import { groupChoice } from './settlement';
+import { billiards, concedeFrame, modeOf, tableOf } from './modes';
 import {
   inPlacementZone,
   isClearBallSpot,
   isCueLie,
   snookered,
-  TABLE_RAILS,
-  TABLE_NOSES,
+  railsOf,
+  nosesOf,
   surfaceDragAt,
   rollingDeceleration,
   STICKY_DRAG,
   AIR_DRAG,
 } from './table-geometry';
-import { createArcade, LAYOUTS, makePickup, pickupPosition } from './arcade';
+import { deadeyeShot } from './ai';
+import {
+  addMark,
+  createArcade,
+  decayMarks,
+  FROST_CUE_DRAG,
+  FROST_RESTITUTION,
+  groundCentreY,
+  markDrag,
+  sanitizeMarks,
+  WARD_DEFLECTS,
+  LAYOUTS,
+  makePickup,
+  onRamp,
+  pickupPosition,
+  rampCorners,
+  rampSupportAt,
+  rampToTable,
+} from './arcade';
 
 function readOnlyView<T extends object>(source: T): T {
   const views = new WeakMap<object, object>();
@@ -88,15 +105,24 @@ export class PoolGame {
   private colliderKeys = new Map<number, string>();
   private activeContacts = new Set<string>();
   private events = new RAPIER.EventQueue(true);
-  private shotResult: ShotResult = { firstContact: null, potted: [], railAfterContact: false, breakRails: [] };
+  private shotResult: ShotResult = {
+    firstContact: null,
+    potted: [],
+    railAfterContact: false,
+    breakRails: [],
+    contacts: [],
+  };
   private legalBefore: number[] = [];
   private stillTime = 0;
   private rollTime = 0;
   private obstacleColliders = new Map<number, number>();
+  private rampColliders = new Set<number>();
   private obstacleCooldown = new Map<number, number>();
   private zoneOccupants = new Map<number, Set<number>>();
   private portalCooldown = new Map<number, number>();
   private hazardRewards = new Set<string>();
+  private ballColliders = new Map<number, number>();
+  private wardDeflects = 0;
   private portalRewardPending = false;
   private pickupRandom!: () => number;
   private pickupDraws = 0;
@@ -106,12 +132,16 @@ export class PoolGame {
   private pendingSpin = { x: 0, z: 0 };
   onEvent?: (event: TableEvent) => void;
   constructor(seed: string, options: GameOptions = {}) {
-    const state = initialState(seed, options.format, options.rules);
-    state.arcade = createArcade(
-      typeof options.layout === 'string' && Object.hasOwn(LAYOUTS, options.layout) ? options.layout : 'crossfire',
-      seed,
-      options.level,
-    );
+    // The requested mode racks its own table. Only eight-ball carries the arcade arena: blocks, hazards and
+    // pickups are pub-table furniture, and snooker and billiards have no rule that could judge a hit on one.
+    const mode = modeOf(options),
+      state = mode.initialState(seed, options);
+    if (mode.id === 'eight-ball')
+      state.arcade = createArcade(
+        typeof options.layout === 'string' && Object.hasOwn(LAYOUTS, options.layout) ? options.layout : 'crossfire',
+        seed,
+        options.level,
+      );
     this.arrange(state);
   }
   /** Rebuild a complete table without exposing Rapier handles or shared mutable state. */
@@ -125,19 +155,25 @@ export class PoolGame {
     state.freeShot = state.freeShot === true;
     state.nominated = state.nominated === 'solids' || state.nominated === 'stripes' ? state.nominated : null;
     state.rebreak = state.rebreak === true;
+    // Every mode keeps id === index, so its own rack says how many balls a legal arrangement has: sixteen for
+    // eight-ball, twenty-two for snooker, three for billiards. The eight-ball wording is kept verbatim.
+    const spec = tableOf(state),
+      expected = modeOf(state).rack(state.seed).length;
     if (
-      state.balls.length !== 16 ||
-      new Set(state.balls.map((b) => b.id)).size !== 16 ||
+      state.balls.length !== expected ||
+      new Set(state.balls.map((b) => b.id)).size !== expected ||
       state.balls.some(
         (b) =>
           !Number.isInteger(b.id) ||
           b.id < 0 ||
-          b.id > 15 ||
+          b.id >= expected ||
           ![b.x, b.z, b.vx, b.vz, b.elevation ?? 0, b.vy ?? 0].every(Number.isFinite) ||
           (b.elevation ?? 0) < 0,
       )
     )
-      throw new Error('An arrangement requires sixteen uniquely numbered balls with finite positions and velocities.');
+      throw new Error(
+        `An arrangement requires ${expected === 16 ? 'sixteen' : expected} uniquely numbered balls with finite positions and velocities.`,
+      );
     if (
       state.arcade?.obstacles.some(
         (o) => ![o.x, o.z, o.width, o.depth, o.hp, o.maxHp].every(Number.isFinite) || o.width <= 0 || o.depth <= 0,
@@ -162,6 +198,8 @@ export class PoolGame {
     this.colliderIds.clear();
     this.colliderKeys.clear();
     this.obstacleColliders.clear();
+    this.ballColliders.clear();
+    if (state.arcade) sanitizeMarks(state.arcade);
     this.activeContacts = new Set(continuation?.activeContacts ?? []);
     this.current = state;
     this.stateView = readOnlyView(state);
@@ -170,12 +208,18 @@ export class PoolGame {
       potted: [],
       railAfterContact: false,
       breakRails: [],
+      contacts: [],
       offTable: [],
     };
-    this.legalBefore = continuation?.legalBefore ?? legalTargets(state).map((b) => b.id);
+    this.legalBefore =
+      continuation?.legalBefore ??
+      modeOf(state)
+        .legalTargets(state)
+        .map((b) => b.id);
     this.stillTime = continuation?.stillTime ?? 0;
     this.rollTime = continuation?.rollTime ?? 0;
     this.portalRewardPending = continuation?.portalRewardPending ?? false;
+    this.wardDeflects = continuation?.wardDeflects ?? 0;
     this.obstacleCooldown = new Map(continuation?.obstacleCooldown ?? []);
     this.portalCooldown = new Map(continuation?.portalCooldown ?? []);
     this.zoneOccupants = new Map((continuation?.zoneOccupants ?? []).map(([id, zones]) => [id, new Set(zones)]));
@@ -204,7 +248,7 @@ export class PoolGame {
     this.world = new RAPIER.World({ x: 0, y: 0, z: 0 });
     this.world.timestep = 1 / 120;
     this.world.numSolverIterations = 12;
-    for (const [id, rail] of TABLE_RAILS.entries()) {
+    for (const [id, rail] of railsOf(spec).entries()) {
       const collider = this.world.createCollider(
         RAPIER.ColliderDesc.cuboid(rail.halfWidth, rail.halfHeight, rail.halfDepth)
           .setTranslation(rail.x, rail.y, rail.z)
@@ -215,7 +259,7 @@ export class PoolGame {
       this.colliderIds.set(collider.handle, -1);
       this.colliderKeys.set(collider.handle, `rail:${id}`);
     }
-    for (const [id, nose] of TABLE_NOSES.entries()) {
+    for (const [id, nose] of nosesOf(spec).entries()) {
       const collider = this.world.createCollider(
         RAPIER.ColliderDesc.ball(nose.radius)
           .setTranslation(nose.x, nose.y, nose.z)
@@ -246,6 +290,7 @@ export class PoolGame {
         body,
       );
       this.bodies.set(ball.id, body);
+      this.ballColliders.set(ball.id, collider.handle);
       this.colliderIds.set(collider.handle, ball.id);
       this.colliderKeys.set(collider.handle, `ball:${ball.id}`);
       body.setEnabled(!ball.pocketed);
@@ -265,6 +310,32 @@ export class PoolGame {
       this.obstacleColliders.set(obstacle.id, collider.handle);
       this.colliderKeys.set(collider.handle, `obstacle:${obstacle.id}`);
     }
+    // A ramp is a solid wedge the ball drives onto, not a zone that fires an impulse at it.
+    // Restitution 0 because a ramp is climbed rather than bounced off; friction 0 to match the
+    // cloth and the rails. Gravity and this shape are the whole of the ramp physics: a fast ball
+    // crests and flies, a slow one stalls part-way up and slides back the way it came.
+    for (const hazard of this.current.arcade?.hazards ?? []) {
+      if (hazard.kind !== 'ramp') continue;
+      const points = new Float32Array(
+        rampCorners(hazard).flatMap(([u, y, w]) => {
+          const p = rampToTable(hazard, u, w);
+          return [p.x, y, p.z];
+        }),
+      );
+      const desc = RAPIER.ColliderDesc.convexHull(points);
+      if (!desc) continue;
+      this.rampColliders.add(this.world.createCollider(desc.setRestitution(0).setFriction(0)).handle);
+    }
+    this.applyFrostRestitution();
+  }
+  /** A frozen cue ball is heavy: it comes off cushions and object balls dead for the length of its shot.
+   * Applied here as well as at the stroke, so rebuilding a rolling table keeps the ball it had. */
+  private applyFrostRestitution() {
+    const handle = this.ballColliders.get(cueBallId(this.current));
+    const collider = handle === undefined ? null : this.world.getCollider(handle);
+    if (!collider) return;
+    const frozen = this.current.phase === 'rolling' && !!this.current.arcade?.activeShot.frozen;
+    collider.setRestitution(frozen ? FROST_RESTITUTION : 0.96);
   }
   private emit(event: Omit<TableEvent, 'time'>) {
     this.onEvent?.({ ...event, time: this.rollTime });
@@ -273,8 +344,9 @@ export class PoolGame {
     if ((this.current.phase !== 'ready' && !optionalPlacement(this.current)) || this.current.chalked[this.current.turn])
       return false;
     this.current.chalked[this.current.turn] = true;
-    const cue = this.current.balls[0];
-    this.emit({ kind: 'chalk', x: cue.x, z: cue.z, strength: 0.65, ball: 0 });
+    const id = cueBallId(this.current),
+      cue = this.current.balls[id];
+    this.emit({ kind: 'chalk', x: cue.x, z: cue.z, strength: 0.65, ball: id });
     return true;
   }
   equipCue(seat: number, cue: unknown): boolean {
@@ -290,32 +362,49 @@ export class PoolGame {
     return true;
   }
   /** Also shoots an optional placement from where the cue ball lies, which consumes the option. */
-  shoot(shot: Shot): boolean {
+  shoot(input: Shot): boolean {
     if (
       (this.current.phase !== 'ready' && !optionalPlacement(this.current)) ||
-      !Number.isFinite(shot?.angle) ||
-      !Number.isFinite(shot?.power) ||
-      shot.power < 0.03 ||
-      shot.power > 1
+      !Number.isFinite(input?.angle) ||
+      !Number.isFinite(input?.power) ||
+      input.power < 0.03 ||
+      input.power > 1
     )
       return false;
+    // `undefined` means "not given" and defaults; anything else, null included, must be a real number.
+    const asked = [input.elevation, input.tipX, input.tipY].map((value) => (value === undefined ? 0 : value));
+    if (
+      !asked.every(Number.isFinite) ||
+      asked[0]! < 0 ||
+      asked[0]! > Math.PI / 3 ||
+      Math.hypot(asked[1]!, asked[2]!) > 0.80000001
+    )
+      return false;
+    const cueId = cueBallId(this.current),
+      cue = this.current.balls[cueId];
+    if (cue.pocketed) return false;
+    // Deadeye: an armed player's stroke is replaced by the perfect one at the ball they are pointing at —
+    // dead straight, plain ball, exactly enough pace to sink it. It is spent only if there is a pot to give:
+    // with nothing on, the player's own stroke stands and the charge stays armed.
+    const deadeye = this.current.arcade?.buffs[this.current.turn].focus ? deadeyeShot(this.current, input.angle) : null;
+    const shot = deadeye ?? input;
     const elevation = shot.elevation === undefined ? 0 : shot.elevation,
       tipX = shot.tipX === undefined ? 0 : shot.tipX,
       tipY = shot.tipY === undefined ? 0 : shot.tipY;
-    if (
-      ![elevation, tipX, tipY].every(Number.isFinite) ||
-      elevation < 0 ||
-      elevation > Math.PI / 3 ||
-      Math.hypot(tipX, tipY) > 0.80000001
-    )
-      return false;
-    const cue = this.current.balls[0];
-    if (cue.pocketed) return false;
     const chalked = this.current.chalked[this.current.turn];
     this.current.chalked[this.current.turn] = false;
     this.current.lastShot = { angle: shot.angle, power: shot.power, elevation, tipX, tipY };
-    this.legalBefore = legalTargets(this.current).map((b) => b.id);
-    this.shotResult = { firstContact: null, potted: [], railAfterContact: false, breakRails: [], offTable: [] };
+    this.legalBefore = modeOf(this.current)
+      .legalTargets(this.current)
+      .map((b) => b.id);
+    this.shotResult = {
+      firstContact: null,
+      potted: [],
+      railAfterContact: false,
+      breakRails: [],
+      contacts: [],
+      offTable: [],
+    };
     this.current.lastPotted = [];
     this.current.foul = false;
     this.current.phase = 'rolling';
@@ -344,10 +433,12 @@ export class PoolGame {
       buffs.overdrive = 0;
       buffs.frozen = 0;
       buffs.ward = 0;
-      buffs.focus = 0;
+      buffs.focus = deadeye || !buffs.focus ? 0 : 1;
       buffs.jammed = 0;
       buffs.sticky = 0;
     }
+    this.wardDeflects = 0;
+    this.applyFrostRestitution();
     const equipment = equippedCue(this.current);
     const efficiency = 1 - ((chalked ? 0.04 : 0.22) * (tipX * tipX + tipY * tipY)) / 0.64;
     const strikeSpeed = Math.min(
@@ -389,10 +480,10 @@ export class PoolGame {
       contact: false,
     };
     this.pendingSpin = { x: 0, z: 0 };
-    this.bodies.get(0)!.setLinvel({ x: cue.vx, y: lift, z: cue.vz }, true);
-    this.emit({ kind: 'cue', strength: shot.power, x: cue.x, z: cue.z, ball: 0, elevation, tipX, tipY, chalked });
+    this.bodies.get(cueId)!.setLinvel({ x: cue.vx, y: lift, z: cue.vz }, true);
+    this.emit({ kind: 'cue', strength: shot.power, x: cue.x, z: cue.z, ball: cueId, elevation, tipX, tipY, chalked });
     if (cue.airborne)
-      this.emit({ kind: 'jump', strength: Math.min(1, lift / 5.4), x: cue.x, z: cue.z, ball: 0, elevation: 0 });
+      this.emit({ kind: 'jump', strength: Math.min(1, lift / 5.4), x: cue.x, z: cue.z, ball: cueId, elevation: 0 });
     return true;
   }
   /** Places the cue ball in the kitchen, or keeps it where it lies when placement is optional. */
@@ -403,9 +494,10 @@ export class PoolGame {
       this.current.message = 'Playing from where the cue ball lies.';
       return true;
     }
-    if (!inPlacementZone(this.current, { x, z }) || !isClearBallSpot(this.current, { x, z }, 0, 'placement'))
+    const cueId = cueBallId(this.current);
+    if (!inPlacementZone(this.current, { x, z }) || !isClearBallSpot(this.current, { x, z }, cueId, 'placement'))
       return false;
-    this.respot(0, x, z);
+    this.respot(cueId, x, z);
     // A New Rules free ball needs the foul snooker to still exist from the new position.
     if (this.current.rules === 'new' && this.current.freeShot)
       this.current.freeShot = snookered(this.current, this.current.turn);
@@ -414,9 +506,32 @@ export class PoolGame {
     return true;
   }
   chooseGroup(group: unknown): boolean {
+    // Solids and stripes exist in eight-ball alone: snooker and billiards never enter `choose-group`, and asking
+    // them to pick one is meaningless rather than merely unreachable.
+    if ((this.current.mode ?? 'eight-ball') !== 'eight-ball') return false;
     const changes = groupChoice(this.current, group);
     if (changes) Object.assign(this.current, changes);
     return !!changes;
+  }
+  /** Conceding: snooker's frame (WPBSA Section 3 Rule 15) and billiards' game. Eight-ball has no such rule, so it
+   * has no command either. Each mode's own function decides the ending; only the fields it settles are copied back,
+   * because conceding moves no ball and the live bodies must keep the positions they have. */
+  concede(player: unknown): boolean {
+    if (this.current.phase === 'over' || this.current.phase === 'rolling') return false;
+    if (player !== 0 && player !== 1) return false;
+    const mode = this.current.mode;
+    const next =
+      mode === 'snooker'
+        ? concedeFrame(this.current, player)
+        : mode === 'billiards'
+          ? billiards.concedeGame(this.current, player)
+          : null;
+    if (!next) return false;
+    this.current.winner = next.winner;
+    this.current.phase = next.phase;
+    this.current.message = next.message;
+    if (next.snooker) this.current.snooker = next.snooker;
+    return true;
   }
   private respot(id: number, x: number, z: number) {
     const ball = this.current.balls[id];
@@ -469,6 +584,12 @@ export class PoolGame {
   }
   private integrateStep(dt: number): boolean {
     if (this.current.phase !== 'rolling') return false;
+    const spec = tableOf(this.current),
+      // The striker's own cue ball: ball 0 everywhere except English Billiards, where player 1 plays Yellow.
+      // `this.current.turn` is still the striker's while the shot rolls; settlement is what passes the turn on.
+      cueId = cueBallId(this.current),
+      // Past this much of the half-width a contact is with an end cushion rather than a side one.
+      endRailX = spec.halfWidth - 0.4;
     const energyBefore = this.current.balls.reduce(
       (sum, b) =>
         sum + (b.pocketed ? 0 : b.vx * b.vx + b.vz * b.vz + (b.vy || 0) ** 2 + 2 * GRAVITY * (b.elevation || 0)),
@@ -477,14 +598,19 @@ export class PoolGame {
     this.rollTime += dt;
     this.world.timestep = dt;
     // Symmetric gravity integration conserves flight energy between collisions.
+    // A ball on a ramp needs gravity as much as one in the air: it is what decelerates the climb
+    // and what rolls the ball back down. The wedge collider supplies the normal force.
     for (const ball of this.current.balls)
-      if (!ball.pocketed && ball.airborne) {
+      if (!ball.pocketed && (ball.airborne || onRamp(this.current.arcade, ball.x, ball.z))) {
         const body = this.bodies.get(ball.id)!;
         const velocity = body.linvel();
         body.setLinvel({ x: velocity.x, y: velocity.y - (GRAVITY * dt) / 2, z: velocity.z }, true);
       }
     this.world.step(this.events);
     this.events.drainCollisionEvents((a, b, started) => {
+      // Riding the wedge is not a cushion, a block or a ball contact; nothing in shot judging
+      // should hear about it.
+      if (this.rampColliders.has(a) || this.rampColliders.has(b)) return;
       const key = [this.colliderKeys.get(a), this.colliderKeys.get(b)].sort().join('|');
       if (!started) {
         this.activeContacts.delete(key);
@@ -536,19 +662,25 @@ export class PoolGame {
         }
         return;
       }
-      if (this.shotResult.firstContact === null) {
-        if (ia === 0 && ib > 0) this.shotResult.firstContact = ib;
-        if (ib === 0 && ia > 0) this.shotResult.firstContact = ia;
+      // `firstContact` settles eight-ball and snooker, but an English Billiards cannon is contact with
+      // BOTH object balls, so every distinct ball the cue ball strikes is recorded in contact order.
+      // Every object ball is "not the striker's cue ball": in billiards the OTHER side's cue ball is an object
+      // ball, so this cannot be `> 0`. Rails and obstacles are negative and have already been handled above.
+      const struck = ia === cueId && ib >= 0 ? ib : ib === cueId && ia >= 0 ? ia : null;
+      if (struck !== null) {
+        if (this.shotResult.firstContact === null) this.shotResult.firstContact = struck;
+        const contacts = (this.shotResult.contacts ??= []);
+        if (!contacts.includes(struck)) contacts.push(struck);
       }
-      if (((ia === 0 && ib > 0) || (ib === 0 && ia > 0)) && !this.cueSpin.contact) {
+      if (struck !== null && !this.cueSpin.contact) {
         this.cueSpin.contact = true;
         this.pendingSpin.x += this.cueSpin.dx * this.cueSpin.follow;
         this.pendingSpin.z += this.cueSpin.dz * this.cueSpin.follow;
         this.cueSpin.follow = 0;
       }
-      if ((ia === 0 && ib === -1) || (ib === 0 && ia === -1)) {
-        const cue = this.current.balls[0],
-          nx = Math.abs(cue.x) > 5.3 ? Math.sign(cue.x) : 0,
+      if ((ia === cueId && ib === -1) || (ib === cueId && ia === -1)) {
+        const cue = this.current.balls[cueId],
+          nx = Math.abs(cue.x) > endRailX ? Math.sign(cue.x) : 0,
           nz = nx ? 0 : Math.sign(cue.z);
         this.pendingSpin.x -= nz * this.cueSpin.side * 0.8;
         this.pendingSpin.z += nx * this.cueSpin.side * 0.8;
@@ -568,7 +700,7 @@ export class PoolGame {
           dz = bb.z - ba.z,
           len = Math.hypot(dx, dy, dz) || 1;
         speed = Math.abs(((ba.vx - bb.vx) * dx + ((ba.vy || 0) - (bb.vy || 0)) * dy + (ba.vz - bb.vz) * dz) / len);
-      } else speed = Math.abs(ba.x) > 5.3 ? Math.abs(ba.vx) : Math.abs(ba.vz);
+      } else speed = Math.abs(ba.x) > endRailX ? Math.abs(ba.vx) : Math.abs(ba.vz);
       if (speed > 0.12)
         this.emit({
           kind: bb ? 'ball' : 'cushion',
@@ -586,17 +718,27 @@ export class PoolGame {
       const p = body.translation(),
         v = body.linvel();
       const wasAirborne = !!ball.airborne;
-      let vy = Math.max(-10, Math.min(8, v.y - (wasAirborne ? (GRAVITY * dt) / 2 : 0)));
+      // ball.x/ball.z are still the pre-step position here, so this matches the half-step of
+      // gravity applied above.
+      const wasFalling = wasAirborne || onRamp(this.current.arcade, ball.x, ball.z);
+      let vy = Math.max(-10, Math.min(8, v.y - (wasFalling ? (GRAVITY * dt) / 2 : 0)));
+      // The table is no longer flat. The floor under a ball is the cloth, or the wedge surface
+      // where a ramp stands. The wedge collider does the real work; this is the net that stops a
+      // ball tunnelling through a surface the world has no collider for.
+      const ground = groundCentreY(this.current.arcade, p.x, p.z);
+      const slope = ground > TABLE.radius + 1e-9;
+      let centre = p.y;
       let height = Math.max(0, p.y - TABLE.radius);
       let landed = false;
-      if (p.y <= TABLE.radius + FLIGHT_EPSILON && vy <= 0.18) {
+      if (p.y <= ground + FLIGHT_EPSILON && vy <= 0.18) {
         landed = wasAirborne;
         // Felt absorbs the vertical impact; a small bounce is retained only for
         // fast descents. Tiny contacts settle without repeatedly waking the rack.
         const rebound = vy < -2.4 ? -vy * 0.13 : 0;
-        height = 0;
+        centre = ground;
+        height = ground - TABLE.radius;
         vy = rebound > 0.45 ? rebound : 0;
-        body.setTranslation({ x: p.x, y: TABLE.radius, z: p.z }, false);
+        body.setTranslation({ x: p.x, y: ground, z: p.z }, false);
         if (landed)
           this.emit({
             kind: 'land',
@@ -609,7 +751,8 @@ export class PoolGame {
       }
       ball.elevation = height;
       ball.vy = vy;
-      ball.airborne = height > FLIGHT_EPSILON || vy > 0.18;
+      // Airborne means off the ground, and on a ramp the ground is the wedge, not the cloth.
+      ball.airborne = centre > ground + FLIGHT_EPSILON || vy > 0.18;
       if (ball.airborne && !wasAirborne)
         this.emit({
           kind: 'jump',
@@ -621,8 +764,19 @@ export class PoolGame {
         });
       ball.x = p.x;
       ball.z = p.z;
-      const pocket = !ball.airborne && POCKETS.some((pk) => Math.hypot(p.x - pk.x, p.z - pk.z) < TABLE.pocketRadius);
-      const out = Math.abs(p.x) > 5.96 || Math.abs(p.z) > 3.15;
+      const pocket = ball.airborne
+        ? undefined
+        : spec.pockets.find((pk) => Math.hypot(p.x - pk.x, p.z - pk.z) < spec.pocketRadius);
+      const out = Math.abs(p.x) > spec.halfWidth + 0.26 || Math.abs(p.z) > spec.halfDepth + 0.3;
+      // The ward is a shield over the mouth of every pocket: the owner's cue ball and the black are turned
+      // away instead of dropping. A ball thrown off the table entirely is still lost — the shield covers
+      // pockets, not the floor.
+      if (pocket && !out && this.warded(ball.id)) {
+        this.wardDeflects++;
+        this.deflect(ball, body, pocket, spec.pocketRadius);
+        moving = true;
+        continue;
+      }
       if (pocket || out) {
         ball.pocketed = true;
         ball.vx = 0;
@@ -643,18 +797,28 @@ export class PoolGame {
         continue;
       }
       const speed = Math.hypot(v.x, v.z);
-      const zoneDrag = ball.airborne ? 1 : surfaceDragAt(this.current.arcade, { x: p.x, z: p.z });
-      const drag = ball.airborne
-        ? speed * AIR_DRAG
-        : rollingDeceleration(
-            speed,
-            zoneDrag * (ball.id === 0 && this.current.arcade?.activeShot.sticky ? STICKY_DRAG : 1),
-          );
+      const active = this.current.arcade?.activeShot;
+      // Scorched cloth drags on anything that crosses it; ice lets it slide. Both apply to every ball,
+      // not just the one that laid them down. A Heavy or frozen cue ball carries its own weight on top.
+      const zoneDrag = ball.airborne
+        ? 1
+        : surfaceDragAt(this.current.arcade, { x: p.x, z: p.z }) * markDrag(this.current.arcade, p.x, p.z);
+      const cueWeight =
+        ball.id === cueId ? (active?.sticky ? STICKY_DRAG : 1) * (active?.frozen ? FROST_CUE_DRAG : 1) : 1;
+      const drag = ball.airborne ? speed * AIR_DRAG : rollingDeceleration(speed, zoneDrag * cueWeight);
+      // The cue ball marks the cloth it runs over: Overdrive scorches it, a frozen ball ices it.
+      if (this.current.arcade && ball.id === cueId && !ball.airborne && speed > 0.2) {
+        // Heading travels with the scorch so the renderer can drag it along the ball's path.
+        if (active?.overdrive) addMark(this.current.arcade, 'burns', p.x, p.z, Math.atan2(v.x, v.z));
+        if (active?.frozen) addMark(this.current.arcade, 'frost', p.x, p.z);
+      }
       const next = Math.max(0, speed - dt * drag) * (landed ? 0.985 : 1);
       const ratio = speed > 0 ? next / speed : 0;
       ball.vx = v.x * ratio;
       ball.vz = v.z * ratio;
-      if (next < 0.035 && !ball.airborne) {
+      // On the flat a crawling ball has stopped. On a slope it has not: it is about to run back
+      // down, and zeroing it here would leave it standing on the side of the wedge forever.
+      if (next < 0.035 && !ball.airborne && !slope) {
         ball.vx = 0;
         ball.vz = 0;
       } else moving = true;
@@ -702,7 +866,9 @@ export class PoolGame {
         body.setLinvel({ x: 0, y: 0, z: 0 }, false);
         body.sleep();
       }
-      const settled = settleShot(this.current, this.shotResult, {
+      // Each mode judges its own stroke: eight-ball groups and the black, snooker's reds and colours, a billiards
+      // cannon. Calling settleShot here instead would judge every mode by eight-ball's rules.
+      const settled = modeOf(this.current).settle(this.current, this.shotResult, {
         legalBefore: this.legalBefore,
         shooter: this.current.turn,
         pendingPortal: this.portalRewardPending,
@@ -716,8 +882,45 @@ export class PoolGame {
     }
     return false;
   }
+  /** True while this ball is under the shooter's raised shield: their own cue ball, and the black. */
+  private warded(id: number): boolean {
+    if (!this.current.arcade?.activeShot.ward || this.wardDeflects >= WARD_DEFLECTS) return false;
+    return id === cueBallId(this.current) || id === 8;
+  }
+  /** Turn a shielded ball back out of a pocket mouth: put it on the lip and bounce it off the shield. */
+  private deflect(ball: Ball, body: R.RigidBody, pocket: { x: number; z: number }, pocketRadius: number) {
+    const away = Math.hypot(ball.x - pocket.x, ball.z - pocket.z);
+    const speed = Math.hypot(ball.vx, ball.vz);
+    // Dead centre over the pocket there is no outward direction to use, so leave the way it came in.
+    const nx = away > 1e-6 ? (ball.x - pocket.x) / away : speed > 1e-6 ? -ball.vx / speed : 1,
+      nz = away > 1e-6 ? (ball.z - pocket.z) / away : speed > 1e-6 ? -ball.vz / speed : 0;
+    const lip = pocketRadius + TABLE.radius * 0.55;
+    const dot = ball.vx * nx + ball.vz * nz;
+    // Reflect whatever is still driving it into the pocket, and always leave with enough pace to clear the mouth.
+    const rx = (dot < 0 ? ball.vx - 2 * dot * nx : ball.vx) * 0.62 + nx * 0.9,
+      rz = (dot < 0 ? ball.vz - 2 * dot * nz : ball.vz) * 0.62 + nz * 0.9;
+    ball.x = pocket.x + nx * lip;
+    ball.z = pocket.z + nz * lip;
+    ball.vx = rx;
+    ball.vz = rz;
+    ball.vy = 0;
+    ball.elevation = 0;
+    ball.airborne = false;
+    body.setTranslation({ x: ball.x, y: TABLE.radius, z: ball.z }, true);
+    body.setLinvel({ x: rx, y: 0, z: rz }, true);
+    this.emit({
+      kind: 'power',
+      power: 'ward',
+      status: 'ward',
+      ball: ball.id,
+      x: ball.x,
+      z: ball.z,
+      strength: Math.min(1, 0.4 + Math.hypot(rx, rz) / 8),
+    });
+  }
   private applyCueSpin(dt: number) {
-    const cue = this.current.balls[0],
+    const cueId = cueBallId(this.current),
+      cue = this.current.balls[cueId],
       spin = this.cueSpin;
     if (cue.pocketed) {
       this.pendingSpin = { x: 0, z: 0 };
@@ -755,7 +958,7 @@ export class PoolGame {
       cue.vz = z;
       this.pendingSpin = { x: 0, z: 0 };
     }
-    const body = this.bodies.get(0)!;
+    const body = this.bodies.get(cueId)!;
     if (Math.hypot(cue.vx, cue.vz) > 0.001) body.setLinvel({ x: cue.vx, y: cue.vy || 0, z: cue.vz }, true);
     spin.follow *= Math.exp(-(cue.airborne ? 0.12 : 0.9) * dt);
     spin.side *= Math.exp(-(cue.airborne ? 0.08 : 0.3) * dt);
@@ -782,6 +985,7 @@ export class PoolGame {
     const arcade = this.current.arcade;
     if (!arcade) return;
     arcade.clock = (arcade.clock || 0) + dt;
+    decayMarks(arcade, dt);
     for (const pickup of arcade.pickups)
       if (pickup.available && pickup.expiresAt !== undefined && arcade.clock >= pickup.expiresAt) {
         pickup.available = false;
@@ -827,9 +1031,17 @@ export class PoolGame {
     const previous = this.zoneOccupants.get(ball.id) || new Set<number>();
     const occupied = new Set<number>();
     for (const hazard of arcade.hazards) {
-      if (Math.hypot(ball.x - hazard.x, ball.z - hazard.z) >= hazard.radius) continue;
+      // Every other hazard is a painted zone. A ramp is a shape, so it counts the ball when the
+      // ball is actually riding the wedge rather than merely flying over the same patch of cloth.
+      const support = hazard.kind === 'ramp' ? rampSupportAt(hazard, ball.x, ball.z) : null;
+      if (
+        support
+          ? support.height <= 0 || (ball.elevation || 0) > support.height + 0.08
+          : Math.hypot(ball.x - hazard.x, ball.z - hazard.z) >= hazard.radius
+      )
+        continue;
       occupied.add(hazard.id);
-      if (ball.airborne) continue;
+      if (ball.airborne && !support) continue;
       const speed = Math.hypot(ball.vx, ball.vz);
       if (previous.has(hazard.id) || speed < 0.25) continue;
       if (hazard.kind === 'portal') {
@@ -864,24 +1076,12 @@ export class PoolGame {
         }
         break;
       }
-      if (hazard.kind === 'ramp' || hazard.kind === 'electric') {
-        const along = ball.vx * Math.cos(hazard.angle || 0) + ball.vz * Math.sin(hazard.angle || 0);
-        if (hazard.kind === 'ramp' && along < speed * 0.25) continue;
-        const nextSpeed = Math.min(23, speed * (hazard.kind === 'ramp' ? 1.14 : 1.18));
+      // The ramp used to be here too, as a velocity kick. It is a collider now: the climb, the
+      // crest and the roll back down all come out of the solver, so nothing is applied to the ball.
+      if (hazard.kind === 'electric') {
+        const nextSpeed = Math.min(23, speed * 1.18);
         ball.vx *= nextSpeed / speed;
         ball.vz *= nextSpeed / speed;
-        if (hazard.kind === 'ramp') {
-          ball.vy = Math.min(2.45, 2.05 + speed * 0.02);
-          ball.airborne = true;
-          this.emit({
-            kind: 'jump',
-            x: ball.x,
-            z: ball.z,
-            ball: ball.id,
-            elevation: ball.elevation || 0,
-            strength: ball.vy / 5.4,
-          });
-        }
         this.bodies.get(ball.id)!.setLinvel({ x: ball.vx, y: ball.vy || 0, z: ball.vz }, true);
       }
       if (hazard.kind === 'smoke' && ball.id === 0) arcade.buffs[this.current.turn].jammed = 1;
@@ -914,6 +1114,7 @@ export class PoolGame {
         stillTime: this.stillTime,
         rollTime: this.rollTime,
         portalRewardPending: this.portalRewardPending,
+        wardDeflects: this.wardDeflects,
         pickupDraws: this.pickupDraws,
         nextPickupAt: this.nextPickupAt,
         nextPickupId: this.nextPickupId,

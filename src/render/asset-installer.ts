@@ -48,7 +48,9 @@ export function browserPropLoader(): PropLoader {
   const models = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder),
     textures = new THREE.TextureLoader();
   return {
-    model: (url) => models.loadAsync(url).then((gltf) => gltf.scene),
+    // Clips ride along on the scene: three's own `Object3D.animations` field, so a rigged prop keeps them
+    // through the installer's one loader without a second load path.
+    model: (url) => models.loadAsync(url).then((gltf) => Object.assign(gltf.scene, { animations: gltf.animations })),
     texture: (url) => textures.loadAsync(url),
   };
 }

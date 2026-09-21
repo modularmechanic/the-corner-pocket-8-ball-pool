@@ -9,6 +9,7 @@ import { PUB_ENTERTAINMENT_PROPS } from '../src/render/pub-entertainment';
 import { PUB_GALLERY_PROPS } from '../src/render/pub-gallery';
 import { PUB_CLUB_DECOR_PROPS } from '../src/render/pub-club-decor';
 import { BAIZE_MAPS, WOOD_SCAN_MAPS } from '../src/render/table-surfaces';
+import { ZOMBIE_MODEL } from '../src/render/zombie-walkers';
 
 /** Every string leaf that names a file; slot names such as 'map' are skipped. */
 const files = (value: unknown): string[] =>
@@ -25,6 +26,7 @@ test('every prop path the render modules request exists under public/', () => {
     PUB_CLUB_DECOR_PROPS,
     BAIZE_MAPS,
     WOOD_SCAN_MAPS,
+    ZOMBIE_MODEL,
   ]);
   for (const path of paths) {
     assert.ok(!path.startsWith('/'), `${path} is relative to the base URL`);

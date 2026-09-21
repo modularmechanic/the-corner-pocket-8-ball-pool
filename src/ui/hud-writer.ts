@@ -47,12 +47,19 @@ const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (character) => `&#
 /** Writes the HUD every frame but touches an element property only when its value (or a section's signature) changed. */
 export class HudWriter {
   private readonly written = new Map<string, string | boolean>();
+  /** The running break for each seat in a mode that scores by break (currently just snooker; see the report for the
+   * capability the mode registry should expose so this isn't reconstructed by diffing scores frame to frame). Reset
+   * on a new rack; a seat's own break resets the moment play returns to them, and otherwise accumulates while their
+   * score keeps rising without the turn changing. */
+  private breaks: [number, number] = [0, 0];
+  private breakTrack: { seed: string; turn: number; scores: [number, number] } | null = null;
   constructor(private readonly element: (id: string) => HudElement) {}
 
   write(view: HudView) {
     const { state, table, mode, setup, canAct } = view,
       arcade = state.arcade,
       ready = state.phase === 'ready';
+    this.updateBreaks(state);
     for (const team of [0, 1] as const) this.writeTeam(view, team);
     this.toggle('scoreboard', 'doubles', state.format === 'doubles');
     this.writeInvite(view);
@@ -69,8 +76,14 @@ export class HudWriter {
     this.disabled('layout', mode === 'online');
     this.value('layout', arcade?.layout || view.layout);
     this.text('rules-badge', table.rules);
-    this.text('level-badge', `LV ${arcade?.level || 1}`);
-    this.attr('level-badge', 'title', levelName(arcade?.level));
+    // The horde counts waves, not levels: `arcade.level` is pinned at 1 for it, so the badge reads the run's own
+    // record (`state.horde`) the way the break badges read `state.snooker` — presence, never a mode id.
+    const horde = state.horde;
+    this.text('level-badge', horde ? `WAVE ${horde.wave}` : `LV ${arcade?.level || 1}`);
+    this.attr('level-badge', 'title', horde ? `Wave ${horde.wave} · ${horde.kills} down` : levelName(arcade?.level));
+    this.hidden('horde-badge', !horde);
+    if (horde) this.text('horde-badge', `☠ ${horde.kills}${horde.combo >= 1 ? ` · ×${horde.combo}` : ''}`);
+    this.writeConcede(view);
     this.hidden('portal-badge', !arcade?.portalTurns);
     this.text('portal-badge', `◎ ${arcade?.portalTurns || 0}`);
     this.text('status-text', table.status.text);
@@ -100,23 +113,81 @@ export class HudWriter {
     if (view.touch) this.writeTouchControls(view);
     if (state.phase === 'over') {
       const level = arcade?.level || 1;
+      // A solo horde run has no winner, so it reports itself: waves survived, kills and the final score.
       this.text(
         'result-title',
-        mode === 'ai'
-          ? state.winner === 0
-            ? 'The table is yours.'
-            : 'The house takes this one.'
-          : `${table.teams[state.winner ?? 0].name} takes the rack.`,
+        horde
+          ? 'They got through.'
+          : mode === 'ai'
+            ? state.winner === 0
+              ? 'The table is yours.'
+              : 'The house takes this one.'
+            : `${table.teams[state.winner ?? 0].name} takes the rack.`,
       );
-      this.text('result-message', state.message);
+      this.text(
+        'result-message',
+        horde
+          ? `${horde.wave - 1} ${horde.wave === 2 ? 'wave' : 'waves'} survived · ${horde.kills} down · ${horde.score.toLocaleString()} points`
+          : state.message,
+      );
       this.hidden('next-level-button', !view.canAdvance);
       this.text('next-level-button', `Level ${level + 1} →`);
-      this.patch('rematch-button.html', String(level), (element) => {
-        element.innerHTML = `Replay level ${level} ${icon('reset', 17)}`;
+      this.patch('rematch-button.html', horde ? 'horde' : String(level), (element) => {
+        element.innerHTML = horde ? `New run ${icon('reset', 17)}` : `Replay level ${level} ${icon('reset', 17)}`;
       });
     }
   }
 
+  /** True for a mode with no eight-ball style ball groups, whose score badge shows the total and whose new break
+   * indicator shows the current visit instead of group pills. Snooker is the only one today; a future mode signals
+   * the same thing by attaching its own scoring side-state the way `snooker` does (see the report for the explicit
+   * capability the registry should expose instead of this inference). */
+  private scoresByBreak(state: GameState): boolean {
+    return !!state.snooker;
+  }
+  /** Conceding belongs to the modes whose engine answers `{ type: 'concede' }`: a snooker frame (WPBSA Section 3
+   * Rule 15) and an English Billiards game. Eight-ball refuses the command, so the control is not there at all. */
+  private writeConcede({ state, canAct }: HudView) {
+    const frame = state.mode === 'snooker',
+      offered = frame || state.mode === 'billiards';
+    this.hidden('concede-button', !offered);
+    if (!offered) return;
+    const label = frame ? 'Concede the frame' : 'Concede the game';
+    // Rule 15 is a shot-clock right: only the player at the table, and only between shots.
+    this.disabled('concede-button', !canAct || (state.phase !== 'ready' && state.phase !== 'ball-in-hand'));
+    this.attr('concede-button', 'title', label);
+    this.attr('concede-button', 'aria-label', label);
+    this.text('concede-title', frame ? 'Concede the frame?' : 'Concede the game?');
+    this.text(
+      'concede-lead',
+      `Your opponent takes ${frame ? 'the frame' : 'the game'} there and then. There is no way back from this one.`,
+    );
+  }
+  private updateBreaks(state: GameState) {
+    if (!this.scoresByBreak(state)) {
+      this.breaks = [0, 0];
+      this.breakTrack = null;
+      return;
+    }
+    const scores = state.snooker!.scores,
+      track = this.breakTrack;
+    if (!track || track.seed !== state.seed) {
+      this.breaks = [0, 0];
+      this.breakTrack = { seed: state.seed, turn: state.turn, scores: [...scores] };
+      return;
+    }
+    if (track.turn !== state.turn) {
+      this.breaks[state.turn] = 0;
+      track.turn = state.turn;
+      track.scores = [...scores];
+      return;
+    }
+    const delta = scores[state.turn] - track.scores[state.turn];
+    if (delta > 0) {
+      this.breaks[state.turn] += delta;
+      track.scores = [...scores];
+    }
+  }
   private writeTeam({ state, table }: HudView, team: 0 | 1) {
     const over = state.phase === 'over',
       doubles = state.format === 'doubles',
@@ -139,24 +210,35 @@ export class HudWriter {
     );
     this.toggle(`player-${team}`, 'active', state.turn === team && !over);
     this.hidden(`turn-${team}`, state.turn !== team || over);
-    const group = state.groups[team],
-      ids = group ? GROUPS[group] : [],
-      potted = ids.filter((id) => state.balls[id].pocketed);
-    this.patch(`rack-${team}.html`, `${group}:${potted.join()}`, (element) => {
-      element.innerHTML = group
-        ? ids
-            .map((id) => {
-              const down = state.balls[id].pocketed;
-              return `<span class="mini-ball ${id > 8 ? 'stripe' : ''} ${down ? 'potted' : ''}" style="--ball:${BALL_COLORS[id]}" title="${id}${down ? ' · potted' : ''}"><span>${id}</span></span>`;
-            })
-            .join('')
-        : '<span class="mini-ball unassigned"></span>'.repeat(7);
-    });
-    this.attr(`rack-${team}`, 'aria-label', group ? `${group}: ${potted.length} potted` : 'Open table');
-    const score = Math.round(state.arcade?.scores[team] || 0);
+    // The horde has no object balls either, so it shows no rack of group pills.
+    const hasGroups = !this.scoresByBreak(state) && !state.horde;
+    this.hidden(`rack-${team}`, !hasGroups);
+    if (hasGroups) {
+      const group = state.groups[team],
+        ids = group ? GROUPS[group] : [],
+        potted = ids.filter((id) => state.balls[id].pocketed);
+      this.patch(`rack-${team}.html`, `${group}:${potted.join()}`, (element) => {
+        element.innerHTML = group
+          ? ids
+              .map((id) => {
+                const down = state.balls[id].pocketed;
+                return `<span class="mini-ball ${id > 8 ? 'stripe' : ''} ${down ? 'potted' : ''}" style="--ball:${BALL_COLORS[id]}" title="${id}${down ? ' · potted' : ''}"><span>${id}</span></span>`;
+              })
+              .join('')
+          : '<span class="mini-ball unassigned"></span>'.repeat(7);
+      });
+      this.attr(`rack-${team}`, 'aria-label', group ? `${group}: ${potted.length} potted` : 'Open table');
+    }
+    const score = Math.round(state.snooker?.scores[team] ?? state.arcade?.scores[team] ?? 0);
     this.patch(`score-${team}.text`, String(score), (element) => {
       element.textContent = score.toLocaleString();
     });
+    const scoresByBreak = this.scoresByBreak(state);
+    this.hidden(`break-${team}`, !scoresByBreak);
+    if (scoresByBreak)
+      this.patch(`break-${team}.text`, String(this.breaks[team]), (element) => {
+        element.textContent = `Break ${this.breaks[team]}`;
+      });
     const pills = table.teams[team].pills;
     this.patch(
       `buffs-${team}.html`,

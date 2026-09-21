@@ -253,7 +253,7 @@ test('UI new games pass the chosen rules only when a session starts; racks insid
   const started = rackOptions(profile.preferences, 'doubles', null);
   assert.deepEqual(
     started,
-    { layout: 'crossfire', level: 1, format: 'doubles', rules: 'new' },
+    { layout: 'crossfire', level: 1, format: 'doubles', rules: 'new', mode: 'eight-ball' },
     'Start Session applies the chosen rules',
   );
   const session = new LocalMatch({

@@ -177,3 +177,9 @@ Source boundaries:
 - `src/ui/`: DOM shell, `player-profile.ts` (preferences, records, unlocks), `shot-input-controller.ts` (DOM-free controls), `hud-writer.ts` (change-only HUD writes) and sampled table audio.
 - `server/`: HTTP/Vite hosting, room seats/tokens and transport around the authoritative Match.
 - `tests/`: rules, simulation and multiplayer integration tests.
+
+## Rust / Bevy port
+
+`corner-pocket-bevy/` holds an in-progress port of this game to Rust, Bevy 0.19 and Rapier, targeting native Metal and browser WebGL 2. It is a separate Cargo workspace (`sim`, `view`, `app`) and does not affect this TypeScript game, which remains the behaviour reference.
+
+The port plays local and computer matches with the original rules, physics, table, pub, cue and arcade artwork, HUD and audio. Multiplayer, release packaging, original-versus-port benchmarks and native ray tracing/DLSS are not done. See [corner-pocket-bevy/README.md](corner-pocket-bevy/README.md) for the workspace and verification commands, [PORTING.md](corner-pocket-bevy/PORTING.md) for the remaining acceptance scope, and [docs/evidence](corner-pocket-bevy/docs/evidence/README.md) for recorded checks and screenshots.

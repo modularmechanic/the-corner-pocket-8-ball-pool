@@ -2,6 +2,7 @@ import { spawnTemporaryPortals } from './arcade';
 import { HEAD_STRING_X, isClearBallSpot, snookered, type BallClearancePolicy } from './table-geometry';
 import {
   BLACK_SPOT,
+  cueBallId,
   groupOf,
   isBreakShot,
   newRack,
@@ -232,9 +233,22 @@ export function settleShot(input: GameState, result: ShotResult, context: Settle
       const random = seededRandom(state.seed + ':' + state.shotCount + ':' + shooter + ':' + reason);
       const status = choices[Math.floor(random() * choices.length)];
       arcade.buffs[shooter][status] = 1;
-      const cue = state.balls[0];
+      const cue = state.balls[cueBallId(state, shooter)];
       events.push({ kind: 'status', status, reason, x: cue.x, z: cue.z, strength: 0.8 });
     };
+    // A ward lasts the owner's visit, not one stroke: it re-arms for as long as the shooter keeps potting. It
+    // does not follow them onto the black, because a shield over the black would block their own winning pot.
+    const onBlackNow =
+      !!state.groups[shooter] && !state.balls.some((b) => !b.pocketed && groupOf(b.id) === state.groups[shooter]);
+    if (
+      arcade.activeShot.ward &&
+      state.winner === null &&
+      !foul &&
+      ownPotted > 0 &&
+      state.turn === shooter &&
+      !onBlackNow
+    )
+      arcade.buffs[shooter].ward = 1;
     if (state.winner === null) {
       if (arcade.scratchStreak[shooter] >= 2) award(['overdrive', 'ward', 'focus'], 'scratch-streak');
       // Arcade debuff on top of the foul for potting an opponent's ball alongside your own; a legal mixed pot (the

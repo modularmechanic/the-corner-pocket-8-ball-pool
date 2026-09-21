@@ -216,6 +216,8 @@ export class RemoteMatch implements Match {
     if (!this.roomInfo || !this.connected || (command.type !== 'equip' && !this.ready) || this.pending)
       return { ok: false, error: 'Reconnect all players before playing.' };
     if (command.type === 'reset') command = { type: 'rematch' };
+    // The room protocol has no concession message, and silently sending something else would end the wrong way.
+    if (command.type === 'concede') return { ok: false, error: 'Conceding is not available in an online room.' };
     if (['shoot', 'place', 'chalk', 'group'].includes(command.type) && !this.actor.canAct)
       return { ok: false, error: 'Wait for your turn.' };
     const generation = this.generation;

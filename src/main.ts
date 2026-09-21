@@ -1,6 +1,6 @@
 import './style.css';
 import { initPhysics } from './simulation/game';
-import { LocalMatch, type Match, type MatchCommand } from './match';
+import { LocalMatch, ZombieMatch, type Match, type MatchCommand } from './match';
 import type { RemoteMatch } from './match/remote';
 import { resolveRoomServer } from './match/room-server';
 import { LAYOUTS } from './simulation/arcade';
@@ -8,13 +8,16 @@ import { normalizeLevel } from './simulation/level-policy';
 import { CUE_CATALOG, canEquipCue, equippedCue } from './simulation/cues';
 import { POWER_UPS, STATUS_EFFECTS } from './presentation/effects';
 import { deriveTablePresentation, RULE_NAMES, seatLabel, teamLabel } from './presentation/table-presentation';
-import { defaultRuleSet, ruleBook, RULES_SOURCE } from './presentation/rule-book';
+import { defaultRuleSet, ruleBookFor, type RuleBook, type RuleBookMode } from './presentation/rule-book';
+import { CONTROL_HELP } from './presentation/control-help';
 import { inPlacementZone, optionalPlacementChoice } from './simulation/table-geometry';
 import {
   activeSeat,
+  cueBallId,
   type GameFormat,
   type ArenaLayout,
   type Difficulty,
+  type GameModeId,
   type GameState,
   type Group,
   type Mode,
@@ -33,8 +36,10 @@ import {
   type ShotInputContext,
   type ShotInputView,
 } from './ui/shot-input-controller';
+import { deadeyeCinematic } from './render/deadeye-cinematic';
 import { PlayerProfile, rackOptions } from './ui/player-profile';
 import { HudWriter, type HudElement } from './ui/hud-writer';
+import { gameModeCopy, gameModeSupportsFormat, gameModeSupportsOpponent, gameModes } from './ui/game-modes';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const roomServer = resolveRoomServer(import.meta.env.VITE_ROOM_SERVER_URL);
@@ -90,6 +95,9 @@ let touchInput = false;
 let touchFitted = false;
 let menuMode: Mode = 'ai';
 let menuFormat: GameFormat = profile.preferences.format;
+let menuGame: GameModeId = profile.preferences.game;
+/** Which mode's book the rulebook dialog is open to; the Old/New tabs re-render this same mode. */
+let rulebookMode: RuleBookMode = 'eight-ball';
 let identity: string;
 try {
   identity = sessionStorage.getItem('corner-pocket:identity') || createIdentity();
@@ -119,9 +127,62 @@ function renderRecords() {
     $('high-scores').append(row);
   }
 }
-function setMenuPanel(setup: boolean) {
-  $('menu-landing').hidden = setup;
-  $('menu-setup').hidden = !setup;
+type MenuPanel = 'landing' | 'games' | 'setup';
+function showMenuPanel(panel: MenuPanel) {
+  $('menu-landing').hidden = panel !== 'landing';
+  $('menu-games').hidden = panel !== 'games';
+  $('menu-setup').hidden = panel !== 'setup';
+  // The landing panel is the attract screen: the room plays behind it. One place decides the machine is idle
+  // enough to advertise, and it is here rather than in the renderer — `startAttract` refuses on its own while a
+  // rack is under way or the viewer asked for reduced motion, so this never has to know about either.
+  $('main-menu').dataset.panel = panel;
+  if (panel === 'landing') scene?.startAttract();
+  else scene?.stopAttract();
+}
+/** One card per registered game mode; iterating `gameModes()` instead of a fixed list means a mode registered
+ * later shows up here without touching this function. */
+function renderGameModes() {
+  $('menu-game-grid').replaceChildren(
+    ...gameModes().map((spec) => {
+      const copy = gameModeCopy(spec),
+        button = document.createElement('button');
+      button.className = 'menu-mode-card';
+      button.dataset.game = spec.id;
+      button.setAttribute('aria-pressed', String(spec.id === menuGame));
+      button.innerHTML = `<span class="menu-card-icon">${icon(copy.icon, 30)}</span><strong>${spec.label}</strong><span class="menu-card-detail">${copy.description}</span><span class="menu-card-selected">${icon('check', 16)}</span>`;
+      button.onclick = () => {
+        selectMenuGame(spec.id);
+        showMenuPanel('setup');
+        selectMenuMode(menuMode);
+        $('menu-session-start').focus();
+      };
+      return button;
+    }),
+  );
+}
+function syncGameCards() {
+  for (const button of $('menu-game-grid').querySelectorAll<HTMLButtonElement>('[data-game]'))
+    button.setAttribute('aria-pressed', String(button.dataset.game === menuGame));
+}
+/** Only the options that apply to the chosen game show: a mode whose own state never varies by rule set or match
+ * format (probed structurally, never by id — see `ruleBookFor` and `gameModeSupportsFormat`) hides that field, and
+ * one with no cue-sports spec at all (the zombie horde) hides the opponent picker too. */
+function refreshMenuSetupForGame() {
+  syncGameCards();
+  const entry = gameModes().find((mode) => mode.id === menuGame)!,
+    copy = gameModeCopy(entry),
+    book = ruleBookFor(menuGame),
+    hasOpponent = gameModeSupportsOpponent(menuGame);
+  $('menu-setup-title').firstChild!.textContent = entry.label;
+  $('menu-game-blurb').textContent = copy.description;
+  $('menu-rules-field').hidden = !book.ruleSets;
+  $('menu-format-field').hidden = !gameModeSupportsFormat(menuGame);
+  $('menu-opponent-section').hidden = !hasOpponent;
+  $('menu-lobby').hidden = !hasOpponent || !roomServer;
+}
+function selectMenuGame(id: GameModeId) {
+  menuGame = id;
+  refreshMenuSetupForGame();
 }
 function selectMenuMode(selected: Mode) {
   menuMode = selected;
@@ -131,7 +192,7 @@ function selectMenuMode(selected: Mode) {
     ['menu-online', 'online'],
   ])
     $('' + id).setAttribute('aria-pressed', String(selected === value));
-  $('menu-ai-options').hidden = selected !== 'ai';
+  $('menu-ai-options').hidden = selected !== 'ai' || !gameModeSupportsOpponent(menuGame);
   $('menu-mode-label').textContent =
     selected === 'ai' ? 'Against the house' : selected === 'local' ? 'Pass & play' : 'Private online room';
   $('menu-session-start').setAttribute(
@@ -156,7 +217,9 @@ function refreshMenuFormat() {
 }
 function showMainMenu() {
   menuFormat = state.format;
-  setMenuPanel(false);
+  menuGame = state.mode ?? 'eight-ball';
+  showMenuPanel('landing');
+  refreshMenuSetupForGame();
   selectMenuMode(match.mode);
   stopAI();
   renderRecords();
@@ -398,6 +461,8 @@ function updateUI() {
     placing: input.placing,
   });
   if ($<HTMLDialogElement>('cue-dialog').open) renderCueLocker();
+  // The arcade layout only means anything for a rack that actually carries arcade state; other modes hide it.
+  if ($<HTMLDialogElement>('settings-dialog').open) $('setting-layout').hidden = !state.arcade;
   if (state.phase === 'over' && presentation?.phase === 'over') {
     const key = `${state.seed}:${state.shotCount}:${state.winner}`;
     if (key !== resultKey && !$<HTMLDialogElement>('main-menu').open) {
@@ -407,12 +472,9 @@ function updateUI() {
   }
 }
 const selectedRules = (id: string): RuleSet => ($<HTMLSelectElement>(id).value === 'new' ? 'new' : 'old');
-function renderRuleBook(rules: RuleSet) {
-  $('rulebook-tab-old').setAttribute('aria-pressed', String(rules === 'old'));
-  $('rulebook-tab-new').setAttribute('aria-pressed', String(rules === 'new'));
-  $('rulebook-source').textContent = RULES_SOURCE[rules];
-  $('rulebook-sections').replaceChildren(
-    ...ruleBook(rules).map(({ title, bullets }) => {
+function renderSections(container: HTMLElement, sections: RuleBook['sections']) {
+  container.replaceChildren(
+    ...sections.map(({ title, bullets }) => {
       const section = document.createElement('details');
       const summary = document.createElement('summary');
       summary.textContent = title;
@@ -429,6 +491,16 @@ function renderRuleBook(rules: RuleSet) {
     }),
   );
 }
+function renderRuleBook(mode: RuleBookMode, rules: RuleSet) {
+  rulebookMode = mode;
+  const book = ruleBookFor(mode, rules);
+  $('rulebook-title').textContent = book.title;
+  $('rulebook-source').textContent = book.source;
+  $('rulebook-tabs').hidden = !book.ruleSets;
+  $('rulebook-tab-old').setAttribute('aria-pressed', String(rules === 'old'));
+  $('rulebook-tab-new').setAttribute('aria-pressed', String(rules === 'new'));
+  renderSections($('rulebook-sections'), book.sections);
+}
 /** New racks keep the running session's rules; Start Session passes `session: null` to apply the chosen rules. */
 function newGame(
   nextMode: Mode = match.mode,
@@ -437,13 +509,14 @@ function newGame(
 ) {
   if (nextMode === 'online') return;
   sessionIntent++;
+  const seed = createIdentity().slice(0, 8),
+    options = rackOptions(profile.preferences, nextFormat, session);
+  // The horde is not cue sports and cannot go through PoolGame — `modeOf` throws on it deliberately. It has its own
+  // authority, which speaks the same `Match` language everything downstream already speaks.
   installMatch(
-    new LocalMatch({
-      seed: createIdentity().slice(0, 8),
-      mode: nextMode,
-      difficulty: profile.preferences.difficulty,
-      options: rackOptions(profile.preferences, nextFormat, session),
-    }),
+    options.mode === 'zombie'
+      ? new ZombieMatch({ seed })
+      : new LocalMatch({ seed, mode: nextMode, difficulty: profile.preferences.difficulty, options }),
   );
   initialized = true;
   stopAI();
@@ -624,26 +697,46 @@ function setupUI() {
     });
     dialog.addEventListener('close', () => updateUI());
   });
+  renderSections($('control-help-sections'), CONTROL_HELP);
   $('help-button').onclick = () => openDialog('rules-dialog');
   $('rulebook-button').onclick = () => {
-    renderRuleBook(defaultRuleSet(hasStarted, state.rules, profile.preferences.rules));
+    renderRuleBook(state.mode ?? 'eight-ball', defaultRuleSet(hasStarted, state.rules, profile.preferences.rules));
     openDialog('rulebook-dialog');
   };
-  $('rulebook-tab-old').onclick = () => renderRuleBook('old');
-  $('rulebook-tab-new').onclick = () => renderRuleBook('new');
+  $('rulebook-tab-old').onclick = () => renderRuleBook(rulebookMode, 'old');
+  $('rulebook-tab-new').onclick = () => renderRuleBook(rulebookMode, 'new');
   $('play-nav').onclick = showMainMenu;
   $<HTMLDialogElement>('main-menu').addEventListener('cancel', (event) => {
     if (!hasStarted) event.preventDefault();
   });
+  $('main-menu').addEventListener('close', () => scene?.stopAttract());
+  // Nobody waits out the movie: any input on the attract screen goes straight to the game picker. Resume Game is
+  // the one control that must keep its own behaviour, so someone mid-session is never stranded; Escape stays
+  // Escape and Tab still moves focus. The prompt button does exactly what a stray key does, so it needs no
+  // exception of its own. The tour stops itself on these same events, so this only decides where the player lands.
+  const skipAttract = (event: Event) => {
+    if ($('menu-landing').hidden || !$<HTMLDialogElement>('main-menu').open) return;
+    const resume = $('menu-resume');
+    if (event instanceof KeyboardEvent) {
+      if (event.key === 'Escape' || event.key === 'Tab') return;
+      if (document.activeElement === resume && (event.key === 'Enter' || event.key === ' ')) return;
+    } else if (event.target instanceof Node && resume.contains(event.target)) return;
+    $('menu-begin').click();
+  };
+  for (const type of ['pointerdown', 'keydown', 'touchstart'] as const)
+    window.addEventListener(type, skipAttract, { capture: true, passive: true });
   $('menu-resume').onclick = () => closeDialog('main-menu');
   const chooseMenuRules = () => profile.set('rules', selectedRules('menu-rules'));
+  const chooseMenuGame = () => profile.set('game', menuGame);
   const startFromMenu = (nextMode: Mode) => {
     hasStarted = true;
     chooseMenuRules();
+    chooseMenuGame();
     newGame(nextMode, menuFormat, null);
     closeDialog('main-menu');
   };
   renderLevels();
+  renderGameModes();
   refreshMenuFormat();
   $('menu-format').onchange = () => {
     menuFormat = $<HTMLSelectElement>('menu-format').value === 'doubles' ? 'doubles' : 'singles';
@@ -653,17 +746,21 @@ function setupUI() {
   $('menu-level').onchange = () => profile.set('level', normalizeLevel($<HTMLSelectElement>('menu-level').value));
   $('menu-rules').onchange = chooseMenuRules;
   $('menu-rules-info').onclick = () => {
-    renderRuleBook(selectedRules('menu-rules'));
+    renderRuleBook(menuGame, selectedRules('menu-rules'));
     openDialog('rulebook-dialog');
   };
   $('menu-begin').onclick = () => {
-    setMenuPanel(true);
-    selectMenuMode(menuMode);
-    $('menu-session-start').focus();
+    showMenuPanel('games');
+    syncGameCards();
+    $('menu-game-grid').querySelector<HTMLButtonElement>('[aria-pressed="true"]')?.focus();
+  };
+  $('menu-games-back').onclick = () => {
+    showMenuPanel('landing');
+    $('menu-begin').focus();
   };
   $('menu-back').onclick = () => {
-    setMenuPanel(false);
-    $('menu-begin').focus();
+    showMenuPanel('games');
+    syncGameCards();
   };
   $('menu-start').onclick = () => selectMenuMode('ai');
   $('menu-local').onclick = () => selectMenuMode('local');
@@ -773,6 +870,10 @@ function setupUI() {
     if (match.capabilities.canRematch) return openDialog('result-dialog');
     openDialog('reset-dialog');
   };
+  $('concede-button').onclick = () => openDialog('concede-dialog');
+  $('confirm-concede').onclick = async () => {
+    if (await command({ type: 'concede' }, 'This game cannot be conceded.')) closeDialog('concede-dialog');
+  };
   $('confirm-reset').onclick = async () => {
     if (await command({ type: 'reset' }, 'The table cannot be reset yet.')) {
       closeDialog('reset-dialog');
@@ -821,9 +922,9 @@ function setupUI() {
 function createShotInput() {
   const canvas = scene.renderer.domElement;
   const view: ShotInputView = {
-    aimAt: (x, y) => scene.aimAtScreen(x, y, state.balls[0]),
+    aimAt: (x, y) => scene.aimAtScreen(x, y, state.balls[cueBallId(state)]),
     screenDirection: (angle) => {
-      const cue = state.balls[0],
+      const cue = state.balls[cueBallId(state)],
         from = scene.tableToScreen(cue.x, cue.z),
         to = scene.tableToScreen(cue.x + Math.cos(angle), cue.z + Math.sin(angle));
       return { x: to.x - from.x, y: to.y - from.y };
@@ -1055,7 +1156,8 @@ function frame(now: number) {
   const elapsed = Math.max(0, (now - previous) / 1000),
     dt = Math.min(elapsed, 0.06);
   previous = now;
-  match.update(elapsed, {
+  // Presentation only: the accumulator still steps at a fixed MATCH_STEP, so the trajectory is unchanged.
+  match.update(elapsed * (match.mode === 'online' ? 1 : deadeyeCinematic.timeScale), {
     aiPaused: coinResetting || anyDialog() || document.hidden,
     muted: document.hidden || elapsed > 0.5,
     aiCameraReady: scene.isAIViewReady(),

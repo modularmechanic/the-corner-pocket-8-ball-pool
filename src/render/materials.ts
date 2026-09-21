@@ -146,6 +146,28 @@ export function ballTexture(id: number) {
   });
 }
 
+/** Snooker's palette: the fifteen reds share one colour and the six colours are plain, unnumbered
+ * balls (WPBSA Section 1 Rule 2). Ids 16-21 are YELLOW..BLACK from `modes/snooker`. */
+const SNOOKER_COLORS: Readonly<Record<number, string>> = {
+  16: '#f2c200',
+  17: '#127a3c',
+  18: '#6d4223',
+  19: '#1450b4',
+  20: '#f2a0ae',
+  21: '#0a0c0e',
+};
+const SNOOKER_RED = '#a51b12';
+
+/** A snooker ball: flat colour, no number and no stripe. Cue ball falls through to `ballTexture`. */
+export function snookerBallTexture(id: number) {
+  if (id === 0) return ballTexture(0);
+  const color = SNOOKER_COLORS[id] ?? SNOOKER_RED;
+  return canvasTexture(8, 4, (ctx) => {
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, 8, 4);
+  });
+}
+
 export function clubLightingTexture() {
   const texture = canvasTexture(2048, 1024, (ctx) => {
     const background = ctx.createLinearGradient(0, 0, 0, 1024);

@@ -5,6 +5,10 @@ import { deriveTablePresentation } from '../src/presentation/table-presentation'
 import { createArcade } from '../src/simulation/arcade';
 import { initialState, type GameState } from '../src/simulation/types';
 import type { RoomSnapshot } from '../src/match/protocol';
+import { initialSnookerState } from '../src/simulation/modes/snooker';
+import { initialBilliardsState } from '../src/simulation/modes/billiards';
+import { projectZombie } from '../src/match/zombie';
+import { initialZombieState } from '../src/simulation/modes/zombie';
 
 function fakeDocument() {
   const log: string[] = [],
@@ -230,4 +234,65 @@ test('room names are escaped in the roster and invitation', () => {
   }
   assert.match(element('invite-roster').innerHTML, /2 · Guest · Reconnecting/);
   assert.equal(element('invite-status').textContent, '1/4 connected · Waiting for the teams…');
+});
+
+test('Concede belongs to snooker and billiards, is offered only between shots, and is absent from eight-ball', () => {
+  const { element } = fakeDocument(),
+    hud = new HudWriter(element);
+  hud.write(view(table()));
+  assert.equal(element('concede-button').hidden, true, 'eight-ball cannot concede, so it has no control');
+  const frame = initialSnookerState('concede');
+  frame.phase = 'ready';
+  hud.write(view(frame));
+  assert.equal(element('concede-button').hidden, false);
+  assert.equal('disabled' in element('concede-button').attributes, false);
+  assert.equal(element('concede-button').attributes['aria-label'], 'Concede the frame');
+  assert.match(String(element('concede-lead').textContent), /the frame/);
+  frame.phase = 'rolling';
+  hud.write(view(frame));
+  assert.equal('disabled' in element('concede-button').attributes, true, 'not while the balls are moving');
+  const inHand = structuredClone(frame);
+  inHand.phase = 'ball-in-hand';
+  hud.write(view(inHand));
+  assert.equal('disabled' in element('concede-button').attributes, false);
+  hud.write(view(inHand, { canAct: false }));
+  assert.equal('disabled' in element('concede-button').attributes, true, 'only the player at the table');
+  const game = initialBilliardsState('concede');
+  game.phase = 'ready';
+  hud.write(view(game));
+  assert.equal(element('concede-button').hidden, false);
+  assert.equal(element('concede-button').attributes['aria-label'], 'Concede the game');
+  hud.write(view(table()));
+  assert.equal(element('concede-button').hidden, true);
+});
+
+test('the horde HUD reads the run record, and its result dialog reports the run instead of a winner', () => {
+  const { element } = fakeDocument(),
+    hud = new HudWriter(element);
+  const run = projectZombie({ ...initialZombieState('hud-horde'), wave: 3, kills: 12, combo: 4, score: 2400 });
+  hud.write(view(run, { mode: 'local' }));
+  assert.equal(element('level-badge').textContent, 'WAVE 3', 'the wave has its own field; the level is pinned at 1');
+  assert.equal(run.arcade!.level, 1);
+  assert.equal(element('horde-badge').hidden, false);
+  assert.equal(element('horde-badge').textContent, '☠ 12 · ×4');
+  assert.equal(element('score-0').textContent, '2,400');
+  assert.equal(element('rack-0').hidden, true, 'no object balls, no group pills');
+  const missed = projectZombie({ ...initialZombieState('hud-horde'), wave: 3, kills: 12, combo: 0, score: 2400 });
+  hud.write(view(missed, { mode: 'local' }));
+  assert.equal(element('horde-badge').textContent, '☠ 12', 'a shot that killed nothing drops the chain');
+  const over = projectZombie({
+    ...initialZombieState('hud-horde'),
+    phase: 'over',
+    wave: 3,
+    kills: 12,
+    combo: 0,
+    score: 2400,
+  });
+  hud.write(view(over, { mode: 'local' }));
+  assert.equal(over.phase, 'over');
+  assert.equal(element('result-title').textContent, 'They got through.');
+  assert.equal(element('result-message').textContent, '2 waves survived · 12 down · 2,400 points');
+  assert.doesNotMatch(String(element('result-message').textContent), /wins|Player/);
+  assert.match(element('rematch-button').innerHTML, /New run/);
+  assert.equal(element('horde-badge').hidden, false);
 });

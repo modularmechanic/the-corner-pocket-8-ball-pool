@@ -1,19 +1,62 @@
 import * as THREE from 'three';
 import { TABLE } from '../simulation/types';
+import { EIGHT_BALL_TABLE, type TableSpec } from '../simulation/modes/table';
+import { PUB_LAYOUT } from './pub-layout';
 
 export interface OrbitAngles {
   yaw: number;
   pitch: number;
 }
 const DEG = Math.PI / 180;
-const bounds: THREE.Vector3[] = [];
-// The cabinet reaches beyond the playing surface; the legs stand inside it.
-for (const x of [-1, 1])
-  for (const z of [-1, 1])
-    for (const y of [-1.45, 0.55])
-      bounds.push(new THREE.Vector3(x * (TABLE.halfWidth + 0.85), y, z * (TABLE.halfDepth + 0.83)));
-for (const x of [-1, 1])
-  for (const z of [-1, 1]) bounds.push(new THREE.Vector3(x * (TABLE.halfWidth - 0.5), -3.6, z * TABLE.halfDepth));
+/** How close the eye may come to a wall before it would clip through and reveal the outside of the box. */
+const ROOM_MARGIN = 0.7;
+/** The furthest the eye may travel back along `forward` from `target` and still be inside the room.
+ *
+ * Framing is analytic: it asks for whatever distance fits the table in view, and a 12-foot slate asks for
+ * enough that the eye ends up through a wall, showing the room's exterior and the void behind it. The room
+ * is the hard limit, so the framing distance is capped by it rather than the other way round. A table that
+ * cannot fit the view from inside the room is cropped, which is the lesser fault by far. */
+export function maxDistanceInsideRoom(target: THREE.Vector3, forward: THREE.Vector3): number {
+  const { bounds, floor } = PUB_LAYOUT;
+  // Only the walls and the floor confine the eye. Rising above the ceiling is deliberate and handled:
+  // `pubCutaway` lifts the roof once the camera clears it, so a high orbit looks down into the room
+  // rather than at the outside of a box. Clamping vertically would fight that and, on a portrait
+  // viewport, no amount of lens widening can fit the table from under a ten-unit ceiling.
+  const axes: readonly (readonly [number, number, number])[] = [
+    [forward.x, bounds.left + ROOM_MARGIN - target.x, bounds.right - ROOM_MARGIN - target.x],
+    [forward.y, floor + ROOM_MARGIN - target.y, Infinity],
+    [forward.z, bounds.back + ROOM_MARGIN - target.z, bounds.front - ROOM_MARGIN - target.z],
+  ];
+  let limit = Infinity;
+  for (const [direction, low, high] of axes) {
+    // A ray parallel to a pair of walls never meets them.
+    if (Math.abs(direction) < 1e-6) continue;
+    const reach = direction > 0 ? high / direction : low / direction;
+    if (Number.isFinite(reach)) limit = Math.min(limit, reach);
+  }
+  // Never collapse onto the target: a degenerate distance is worse than a cropped table.
+  return Number.isFinite(limit) ? Math.max(1.2, limit) : Infinity;
+}
+/** The cabinet reaches beyond the playing surface; the legs stand inside it. Both overhangs scale with the slate,
+ * exactly as the drawn cabinet does, so a 12-foot table is framed whole instead of cropped to a pub table. */
+function boundsOf(spec: TableSpec): THREE.Vector3[] {
+  const sx = spec.halfWidth / TABLE.halfWidth,
+    sz = spec.halfDepth / TABLE.halfDepth;
+  const points: THREE.Vector3[] = [];
+  for (const x of [-1, 1])
+    for (const z of [-1, 1])
+      for (const y of [-1.45, 0.55])
+        points.push(new THREE.Vector3(x * (spec.halfWidth + 0.85 * sx), y, z * (spec.halfDepth + 0.83 * sz)));
+  for (const x of [-1, 1])
+    for (const z of [-1, 1]) points.push(new THREE.Vector3(x * (spec.halfWidth - 0.5 * sx), -3.6, z * spec.halfDepth));
+  return points;
+}
+const boundsCache = new Map<TableSpec, THREE.Vector3[]>();
+function framingBounds(spec: TableSpec): THREE.Vector3[] {
+  let points = boundsCache.get(spec);
+  if (!points) boundsCache.set(spec, (points = boundsOf(spec)));
+  return points;
+}
 
 export function clampOrbit({ yaw, pitch }: OrbitAngles): OrbitAngles {
   yaw = THREE.MathUtils.euclideanModulo(yaw + Math.PI, Math.PI * 2) - Math.PI;
@@ -41,6 +84,7 @@ export function fitTableCamera(
   target: THREE.Vector3,
   direction: THREE.Vector3,
   aspect: number,
+  spec: TableSpec = EIGHT_BALL_TABLE,
 ): number {
   camera.aspect = aspect;
   camera.up.set(0, 1, 0);
@@ -50,7 +94,7 @@ export function fitTableCamera(
   const tanV = Math.tan((camera.fov * DEG) / 2),
     tanH = tanV * aspect;
   let distance = 8;
-  for (const corner of bounds) {
+  for (const corner of framingBounds(spec)) {
     const offset = corner.clone().sub(target),
       x = offset.dot(right),
       y = offset.dot(up);
@@ -58,6 +102,26 @@ export function fitTableCamera(
     distance = Math.max(distance, offset.dot(forward) + depth);
   }
   distance += 0.025;
+  // The room is a hard limit: backing out through a wall or the roof shows the outside of the box and the
+  // void behind it. When the room binds before the framing does, widen the lens instead of cropping the
+  // table — a slightly wider view is a far smaller fault than a cue ball off-screen, and on a narrow
+  // portrait viewport the distance that fits the table is always outside the walls.
+  const reachable = maxDistanceInsideRoom(target, forward);
+  if (distance > reachable) {
+    let widest = tanV;
+    for (const corner of framingBounds(spec)) {
+      const offset = corner.clone().sub(target),
+        x = offset.dot(right),
+        y = offset.dot(up),
+        along = reachable - offset.dot(forward);
+      if (along <= 0.05) continue;
+      widest = Math.max(widest, Math.abs(y) / ((y >= 0 ? 0.8 : 0.86) * along), Math.abs(x) / (0.92 * aspect * along));
+    }
+    // Past roughly 100 degrees the distortion is worse than the crop, so stop widening and accept it.
+    const limit = Math.tan((100 * DEG) / 2);
+    camera.fov = (2 * Math.atan(Math.min(widest, limit))) / DEG;
+    distance = reachable;
+  }
   camera.far = Math.max(100, distance + 55);
   camera.position.copy(target).addScaledVector(forward, distance);
   camera.lookAt(target);
@@ -66,16 +130,26 @@ export function fitTableCamera(
   return distance;
 }
 
-export function tableFramingBounds(): THREE.Vector3[] {
-  return bounds.map((point) => point.clone());
+export function tableFramingBounds(spec: TableSpec = EIGHT_BALL_TABLE): THREE.Vector3[] {
+  return framingBounds(spec).map((point) => point.clone());
+}
+
+/** Half extents the overhead views frame: the cabinet, on the mode's own slate. */
+export function overheadExtent(spec: TableSpec = EIGHT_BALL_TABLE): { long: number; short: number } {
+  return { long: 6.6 * (spec.halfWidth / TABLE.halfWidth), short: 3.72 * (spec.halfDepth / TABLE.halfDepth) };
 }
 
 /** The table center stays at the viewport center in both screen orientations. */
-export function fitOverheadCamera(camera: THREE.OrthographicCamera, aspect: number): void {
+export function fitOverheadCamera(
+  camera: THREE.OrthographicCamera,
+  aspect: number,
+  spec: TableSpec = EIGHT_BALL_TABLE,
+): void {
   aspect = Number.isFinite(aspect) && aspect > 0 ? aspect : 16 / 9;
-  const portrait = aspect < 1;
-  const horizontal = portrait ? 3.72 : 6.6,
-    vertical = portrait ? 6.6 : 3.72;
+  const portrait = aspect < 1,
+    extent = overheadExtent(spec);
+  const horizontal = portrait ? extent.short : extent.long,
+    vertical = portrait ? extent.long : extent.short;
   const halfHeight = Math.max(vertical / 0.86, horizontal / (aspect * 0.9));
   camera.left = -halfHeight * aspect;
   camera.right = halfHeight * aspect;
@@ -108,7 +182,13 @@ export interface OverheadFit {
  * Touch overhead framing: the largest table (the same extents as the desktop overhead view) that fits the canvas area the
  * controls leave free, centered in that area. The long axis turns up the screen when that frames the table larger.
  */
-export function fitOverheadView(width: number, height: number, insets: ViewportInsets, fill = 0.94): OverheadFit {
+export function fitOverheadView(
+  width: number,
+  height: number,
+  insets: ViewportInsets,
+  fill = 0.94,
+  spec: TableSpec = EIGHT_BALL_TABLE,
+): OverheadFit {
   if (!(width > 0 && height > 0)) {
     width = 16;
     height = 9;
@@ -123,8 +203,9 @@ export function fitOverheadView(width: number, height: number, insets: ViewportI
     [top, bottom] = share(height, edge(insets.top), edge(insets.bottom));
   const freeWidth = width - left - right,
     freeHeight = height - top - bottom;
-  const flat = Math.min(freeWidth / (2 * 6.6), freeHeight / (2 * 3.72)),
-    upright = Math.min(freeWidth / (2 * 3.72), freeHeight / (2 * 6.6));
+  const { long, short } = overheadExtent(spec);
+  const flat = Math.min(freeWidth / (2 * long), freeHeight / (2 * short)),
+    upright = Math.min(freeWidth / (2 * short), freeHeight / (2 * long));
   const rotated = upright > flat,
     scale = Math.max(flat, upright) * fill,
     centerX = left + freeWidth / 2,

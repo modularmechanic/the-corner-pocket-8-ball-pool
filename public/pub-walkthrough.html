@@ -1,0 +1,173 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Pub walkthrough</title>
+    <style>
+      body {
+        margin: 0;
+        background: #0d0a07;
+        font: 13px/1.5 system-ui, sans-serif;
+        color: #e8d9be;
+      }
+      canvas {
+        display: block;
+      }
+      #hud {
+        position: fixed;
+        left: 16px;
+        bottom: 16px;
+        padding: 10px 14px;
+        background: #17120ecc;
+        border: 1px solid #4a3a26;
+        border-radius: 8px;
+        pointer-events: none;
+        white-space: pre;
+      }
+      #start {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-content: center;
+        text-align: center;
+        background: #0d0a07e6;
+        cursor: pointer;
+      }
+      #start h1 {
+        font-size: 22px;
+        margin: 0 0 8px;
+      }
+      #start p {
+        margin: 2px 0;
+        opacity: 0.75;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="start">
+      <div>
+        <h1>The Corner Pocket — walkthrough</h1>
+        <p>Click to look around</p>
+        <p>W A S D move · Shift run · Space up · C down · Esc release</p>
+        <p>1–8 jump: bar · kegs · darts · hearth · booths · snug · playing table · plan view</p>
+      </div>
+    </div>
+    <div id="hud"></div>
+    <script type="module">
+      import * as THREE from '/node_modules/three/build/three.module.js';
+      import { PointerLockControls } from '/node_modules/three/examples/jsm/controls/PointerLockControls.js';
+      import { buildPub } from '/src/render/pub.ts';
+      import { createPropInstaller } from '/src/render/asset-installer.ts';
+      import { createTableSurfaces } from '/src/render/table-surfaces.ts';
+      import { TableModel, drawTableTextures } from '/src/render/table-model.ts';
+      import { ballTexture } from '/src/render/materials.ts';
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.shadowMap.enabled = true;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.05;
+      document.body.append(renderer.domElement);
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.05, 400);
+      const installer = createPropInstaller();
+      // The room is built around the playing cabinet; without it this is just a big empty hall.
+      const surfaces = createTableSurfaces(installer);
+      buildPub(scene, installer);
+      new TableModel(scene, surfaces, drawTableTextures(Array.from({ length: 16 }, (_, id) => ballTexture(id))));
+      await installer.settled();
+      // A little ambient so nothing is pitch black while you are judging placement.
+      // Mirror the game's own rig, so what this shows is what the game renders.
+      scene.environmentIntensity = 0.09;
+      const fill = new THREE.HemisphereLight('#d3cec0', '#211912', 0.05);
+      scene.add(fill);
+      const windowBounce = new THREE.DirectionalLight('#bdced2', 0.07);
+      windowBounce.position.set(-15, 4, 1);
+      scene.add(windowBounce);
+      for (const lx of [-2.1, 0, 2.1]) {
+        const lamp = new THREE.SpotLight('#fff0d8', lx === 0 ? 34 : 48, 11, 1.13, 0.27, 2);
+        lamp.position.set(lx, 3.72, 0);
+        lamp.target.position.set(lx * 1.08, 0, 0);
+        scene.add(lamp, lamp.target);
+      }
+      const clothBounce = new THREE.RectAreaLight('#e1e7da', 0.5, 10.4, 4.8);
+      clothBounce.position.set(0, 3.15, 0);
+      clothBounce.lookAt(0, 0, 0);
+      scene.add(clothBounce);
+
+      // Four units to the metre: eye height is 1.65m above a floor at -3.6.
+      const EYE = -3.6 + 6.6;
+      const controls = new PointerLockControls(camera, renderer.domElement);
+      scene.add(controls.object ?? controls.getObject());
+      camera.position.set(0, EYE, -6);
+      camera.lookAt(0, EYE, 4);
+
+      const spots = {
+        Digit1: { p: [0, EYE, -8.5], look: [0, EYE - 0.3, -13.5], name: 'the bar' },
+        Digit2: { p: [-14, EYE, -6], look: [-17.5, EYE - 1, -9.5], name: 'the kegs' },
+        Digit3: { p: [-11.5, EYE, 12.5], look: [-11.5, EYE - 0.6, 16.9], name: 'the darts wall' },
+        Digit4: { p: [12, EYE, 11], look: [16.5, EYE - 0.5, 16.5], name: 'the hearth' },
+        Digit5: { p: [12, EYE, 2], look: [17.5, EYE - 0.8, 6], name: 'the booths' },
+        Digit6: { p: [-6, EYE, 6], look: [-12, EYE - 0.8, 13], name: 'the snug' },
+        Digit7: { p: [0, EYE, 14], look: [0, EYE - 2.2, 0], name: 'the playing table' },
+        Digit8: { p: [0, 30, 0.1], look: [0, -3.6, 0], name: 'plan view', hideCeiling: true },
+      };
+      window.__cam = camera;
+      window.__scene = scene;
+
+      const held = new Set();
+      addEventListener('keydown', (e) => {
+        held.add(e.code);
+        const spot = spots[e.code];
+        if (spot) {
+          camera.position.set(...spot.p);
+          camera.lookAt(...spot.look);
+          // The plan view has to see past the ceiling, and needs light the room's own lamps
+          // do not throw upward; every other spot puts both back.
+          scene.traverse((o) => {
+            if (o.name === 'pub-room-ceiling') o.visible = !spot.hideCeiling;
+          });
+          fill.intensity = spot.hideCeiling ? 2.6 : 0.3;
+          renderer.toneMappingExposure = spot.hideCeiling ? 1.5 : 1.05;
+        }
+      });
+      addEventListener('keyup', (e) => held.delete(e.code));
+      const start = document.getElementById('start');
+      start.addEventListener('click', () => controls.lock());
+      controls.addEventListener('lock', () => (start.style.display = 'none'));
+      controls.addEventListener('unlock', () => (start.style.display = 'grid'));
+      addEventListener('resize', () => {
+        camera.aspect = innerWidth / innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(innerWidth, innerHeight);
+      });
+
+      const hud = document.getElementById('hud');
+      const forward = new THREE.Vector3(),
+        right = new THREE.Vector3();
+      let last = performance.now();
+      renderer.setAnimationLoop(() => {
+        const now = performance.now(),
+          dt = Math.min((now - last) / 1000, 0.1);
+        last = now;
+        // 4 m/s walk, 9 m/s run, in a room scaled at four units to the metre.
+        const speed = (held.has('ShiftLeft') || held.has('ShiftRight') ? 36 : 16) * dt;
+        camera.getWorldDirection(forward);
+        forward.y = 0;
+        forward.normalize();
+        right.crossVectors(forward, camera.up).normalize();
+        if (held.has('KeyW')) camera.position.addScaledVector(forward, speed);
+        if (held.has('KeyS')) camera.position.addScaledVector(forward, -speed);
+        if (held.has('KeyD')) camera.position.addScaledVector(right, speed);
+        if (held.has('KeyA')) camera.position.addScaledVector(right, -speed);
+        if (held.has('Space')) camera.position.y += speed;
+        if (held.has('KeyC')) camera.position.y -= speed;
+        const p = camera.position;
+        hud.textContent = `x ${p.x.toFixed(1)}  y ${p.y.toFixed(1)}  z ${p.z.toFixed(1)}\n1 bar · 2 kegs · 3 darts · 4 hearth · 5 booths · 6 snug · 7 table · 8 plan`;
+        renderer.render(scene, camera);
+      });
+    </script>
+  </body>
+</html>

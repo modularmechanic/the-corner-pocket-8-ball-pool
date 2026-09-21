@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { canvasTexture, woodTexture } from './materials';
+import { canvasTexture } from './materials';
+import { useWood } from './pub-wood';
 import { countPubDraws } from './pub-batching';
 import { pubResources } from './pub-models';
 import { seededRandom } from '../simulation/types';
@@ -144,9 +145,8 @@ export function buildPubClubDecor(
   }
   // Bound canvas maps get the installer's prop anisotropy with the rest of each model.
   const printMap = clubPrints(),
-    glowMap = neonAtlas(),
-    woodMap = woodTexture();
-  for (const map of [printMap, glowMap, woodMap]) map.flipY = false;
+    glowMap = neonAtlas();
+  for (const map of [printMap, glowMap]) map.flipY = false;
   const bindMaps = (source: THREE.Object3D) => {
     const retiredMaterials = new Set<THREE.Material>(),
       retiredTextures = new Set<THREE.Texture>();
@@ -176,12 +176,16 @@ export function buildPubClubDecor(
           });
         }
         if (material instanceof THREE.MeshStandardMaterial) {
-          const map = name === 'Club archival print' ? printMap : name === 'Club display walnut' ? woodMap : null;
-          if (map) {
+          if (name === 'Club archival print') {
             if (material.map) retiredTextures.add(material.map);
-            material.map = map;
-            material.color.set(name === 'Club archival print' ? '#ffffff' : '#75563c');
+            material.map = printMap;
+            material.color.set('#ffffff');
             material.needsUpdate = true;
+          } else if (name === 'Club display walnut') {
+            // The scanned walnut, not a drawn one: the display cases are joinery like the rest.
+            if (material.map) retiredTextures.add(material.map);
+            useWood(material, 'walnut', 1.6, 1.6);
+            material.color.set('#b08a63');
           }
           material.envMapIntensity = name.includes('silver') ? 0.75 : 0.8;
           if (name === 'Club archival print') {
@@ -216,7 +220,7 @@ export function buildPubClubDecor(
     dispose() {
       const drawn = new Set<object>();
       for (const section of Object.values(sections)) for (const resource of pubResources(section)) drawn.add(resource);
-      for (const map of [printMap, glowMap, woodMap]) if (!drawn.has(map)) map.dispose();
+      for (const map of [printMap, glowMap]) if (!drawn.has(map)) map.dispose();
     },
   };
 }

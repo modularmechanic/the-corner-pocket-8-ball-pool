@@ -1,4 +1,6 @@
+import { BURN_DRAG, FROST_CUE_DRAG, FROST_RADIUS, FROST_SLIDE } from './arcade';
 import { equippedCue } from './cues';
+import { modeOf, tableOf } from './modes';
 import {
   circleInterval,
   firstPlacementSpot,
@@ -18,6 +20,7 @@ import {
 import {
   TABLE,
   POCKETS,
+  cueBallId,
   groupOf,
   isBreakShot,
   legalTargets,
@@ -40,10 +43,15 @@ interface Candidate {
   score: number;
 }
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
-/** Legal first-contact balls the AI aims at: a free shot or free ball never goes for the black too early. */
+/** Legal first-contact balls the AI aims at, as the mode being played defines them — snooker's reds and colours,
+ * a billiards object ball, eight-ball's group. Asking `legalTargets` from types directly would aim every mode at a
+ * group and an eight that only eight-ball has. */
 function aiTargets(state: GameState): Ball[] {
-  const targets = legalTargets(state),
-    onEight = legalTargets({ ...state, freeShot: false }).every((ball) => ball.id === 8);
+  const targets = modeOf(state).legalTargets(state);
+  // Eight-ball only: a free shot or free ball never goes for the black too early. No other mode has a ball 8
+  // that means anything (in snooker it is an ordinary red), so the filter stays where it belongs.
+  if ((state.mode ?? 'eight-ball') !== 'eight-ball') return targets;
+  const onEight = legalTargets({ ...state, freeShot: false }).every((ball) => ball.id === 8);
   return onEight ? targets : targets.filter((ball) => ball.id !== 8);
 }
 
@@ -77,10 +85,24 @@ function pathAlong(state: GameState, a: Point, b: Point): Path {
     if (hazard.kind === 'portal') portal = true;
     if (hazard.kind === 'smoke') risk += 1.5;
     const drag = surfaceDrag(hazard.kind);
-    const aligned = dx * Math.cos(hazard.angle || 0) + dz * Math.sin(hazard.angle || 0) >= 0.25;
-    const boost = hazard.kind === 'electric' ? 1.18 : hazard.kind === 'ramp' && aligned ? 1.14 : 1;
+    // A ramp is a wedge the ball has to climb now, not a speed pad: it costs a little energy at
+    // best and turns a slow ball back at worst. This straight-line model cannot express a
+    // rebound, so the least wrong thing it can say about a ramp is nothing.
+    const boost = hazard.kind === 'electric' ? 1.18 : 1;
     crossings.push({ start: hit[0], end: hit[1], drag, boost });
     risk += (drag - 1) * (hit[1] - hit[0]) * 0.12;
+  }
+  // Scorched and iced cloth is terrain too: a burn drags like water, ice lets the ball run on.
+  for (const mark of state.arcade?.burns ?? []) {
+    const hit = circleInterval(a, dx, dz, distance, mark, mark.radius);
+    if (!hit) continue;
+    const drag = 1 + mark.heat * (BURN_DRAG - 1);
+    crossings.push({ start: hit[0], end: hit[1], drag, boost: 1 });
+    risk += (drag - 1) * (hit[1] - hit[0]) * 0.12;
+  }
+  for (const mark of state.arcade?.frost ?? []) {
+    const hit = circleInterval(a, dx, dz, distance, mark, FROST_RADIUS);
+    if (hit) crossings.push({ start: hit[0], end: hit[1], drag: 1 - mark.life * FROST_SLIDE, boost: 1 });
   }
   const marks = [...new Set([0, distance, ...crossings.flatMap((h) => [h.start, h.end])])].sort((a, b) => a - b);
   const runs: Path['runs'] = [];
@@ -89,11 +111,15 @@ function pathAlong(state: GameState, a: Point, b: Point): Path {
       end = marks[i],
       middle = (start + end) / 2;
     let drag = 1,
+      slide = 1,
       boost = 1;
     for (const crossing of crossings) {
-      if (middle >= crossing.start && middle <= crossing.end) drag = Math.max(drag, crossing.drag);
+      if (middle >= crossing.start && middle <= crossing.end)
+        if (crossing.drag < 1) slide = Math.min(slide, crossing.drag);
+        else drag = Math.max(drag, crossing.drag);
       if (Math.abs(crossing.start - start) < 1e-8) boost *= crossing.boost;
     }
+    drag *= slide;
     runs.push({ distance: end - start, drag, boost });
   }
   return { distance, portal, risk, runs };
@@ -119,15 +145,20 @@ function speedForDistance(distance: number, arrival: number): number {
   }
   return (low + high) / 2;
 }
-function requiredSpeed(path: Path, arrival: number, sticky = false): number {
+function requiredSpeed(path: Path, arrival: number, cueDrag = 1): number {
   let speed = arrival;
   for (let i = path.runs.length - 1; i >= 0; i--) {
     const run = path.runs[i];
-    speed = speedForDistance(run.distance * run.drag * (sticky ? STICKY_DRAG : 1), speed);
+    speed = speedForDistance(run.distance * run.drag * cueDrag, speed);
     if (run.boost > 1 && speed > 23) return Infinity;
     speed /= run.boost;
   }
   return speed;
+}
+/** Extra cloth drag the striker's own cue ball carries this shot: a Heavy cue, a frozen (and so heavy) one, or both. */
+function cueDragOf(state: GameState): number {
+  const buffs = state.arcade?.buffs[state.turn];
+  return (buffs?.sticky ? STICKY_DRAG : 1) * (buffs?.frozen ? FROST_CUE_DRAG : 1);
 }
 function cueScale(state: GameState) {
   const buffs = state.arcade?.buffs[state.turn];
@@ -148,37 +179,44 @@ function pickupBonus(state: GameState, a: Point, b: Point): number {
   return Math.min(2, count) * 1.3;
 }
 function potCandidates(state: GameState): Candidate[] {
-  const cue = state.balls[0],
-    sticky = !!state.arcade?.buffs[state.turn].sticky;
+  const cue = state.balls[cueBallId(state)],
+    cueDrag = cueDragOf(state);
+  // The slate the mode is played on. Aiming at the pub table's pockets on a 12-foot snooker table would miss
+  // every one of them, and the cushion bounds below would reject nearly every ghost position as off the felt.
+  const spec = tableOf(state);
   const candidates: Candidate[] = [],
     maximum = 16.4 * cueScale(state);
-  for (const target of aiTargets(state))
-    for (const pocket of POCKETS) {
+  // A raised ward turns the black away from every pocket, so aiming to pot it is a wasted stroke: the AI plays
+  // a legal safety off it instead and comes back for it once the shield is spent.
+  const shielded = !!state.arcade?.buffs[state.turn].ward && (state.mode ?? 'eight-ball') === 'eight-ball';
+  for (const target of aiTargets(state)) {
+    if (shielded && target.id === 8) continue;
+    for (const pocket of spec.pockets) {
       const distance = Math.hypot(pocket.x - target.x, pocket.z - target.z);
       if (distance < 1e-5) continue;
       const nx = (pocket.x - target.x) / distance,
         nz = (pocket.z - target.z) / distance;
-      const ghost = { x: target.x - nx * TABLE.radius * 2.01, z: target.z - nz * TABLE.radius * 2.01 };
+      const ghost = { x: target.x - nx * spec.radius * 2.01, z: target.z - nz * spec.radius * 2.01 };
       const cueDistance = Math.hypot(ghost.x - cue.x, ghost.z - cue.z);
       if (cueDistance < 0.02) continue;
       const dot = (nx * (ghost.x - cue.x) + nz * (ghost.z - cue.z)) / cueDistance;
       if (
         dot < 0.26 ||
-        Math.abs(ghost.x) > TABLE.halfWidth - TABLE.radius ||
-        Math.abs(ghost.z) > TABLE.halfDepth - TABLE.radius
+        Math.abs(ghost.x) > spec.halfWidth - spec.radius ||
+        Math.abs(ghost.z) > spec.halfDepth - spec.radius
       )
         continue;
       if (
         !segmentClearOfTable(state, cue, ghost) ||
         !segmentClearOfTable(state, target, pocket) ||
-        !segmentClear(cue, ghost, state.balls, [0, target.id]) ||
-        !segmentClear(target, pocket, state.balls, [0, target.id])
+        !segmentClear(cue, ghost, state.balls, [cue.id, target.id]) ||
+        !segmentClear(target, pocket, state.balls, [cue.id, target.id])
       )
         continue;
       const first = pathAlong(state, cue, ghost),
         second = pathAlong(state, target, pocket);
       if (first.portal || second.portal) continue;
-      const speed = requiredSpeed(first, requiredSpeed(second, 0.75) / (0.98 * dot), sticky);
+      const speed = requiredSpeed(first, requiredSpeed(second, 0.75) / (0.98 * dot), cueDrag);
       if (!Number.isFinite(speed) || speed > maximum) continue;
       candidates.push({
         angle: Math.atan2(ghost.z - cue.z, ghost.x - cue.x),
@@ -195,12 +233,32 @@ function potCandidates(state: GameState): Candidate[] {
           pickupBonus(state, target, pocket),
       });
     }
+  }
   return candidates;
 }
+/** The perfect stroke Deadeye spends itself on: dead straight, plain ball, exactly the pace that sinks the ball the
+ * player is pointing at. Null when nothing is on, so the charge is not thrown away on an impossible table. */
+export function deadeyeShot(state: GameState, aim: number): Shot | null {
+  const options = potCandidates(state);
+  if (!options.length) return null;
+  const off = (candidate: Candidate) =>
+    Math.abs(Math.atan2(Math.sin(candidate.angle - aim), Math.cos(candidate.angle - aim)));
+  // The ball being aimed at wins; only a table with nothing anywhere near the aim falls back to the best pot on it.
+  const aimed = options.filter((candidate) => off(candidate) < 0.5);
+  const best = (aimed.length ? aimed : options).reduce((a, b) => (b.score > a.score ? b : a));
+  // A shade more pace than the bare minimum: the pot has to drop, not die in the jaws.
+  return {
+    angle: best.angle,
+    power: powerForSpeed(state, Math.min(16.4 * cueScale(state), best.speed * 1.12)),
+    elevation: 0,
+    tipX: 0,
+    tipY: 0,
+  };
+}
 function safetyCandidates(state: GameState): Candidate[] {
-  const cue = state.balls[0],
+  const cue = state.balls[cueBallId(state)],
     legal = new Set(aiTargets(state).map((b) => b.id)),
-    sticky = !!state.arcade?.buffs[state.turn].sticky;
+    cueDrag = cueDragOf(state);
   const maximum = 16.4 * cueScale(state),
     candidates: Candidate[] = [];
   const addRay = (angle: number, score: number, pickupDistance?: number) => {
@@ -212,7 +270,7 @@ function safetyCandidates(state: GameState): Candidate[] {
       dz = Math.sin(angle);
     const endpoint = { x: cue.x + dx * contact.distance, z: cue.z + dz * contact.distance };
     const path = pathAlong(state, cue, endpoint);
-    if (path.portal || requiredSpeed(path, 0.65, sticky) > maximum) return;
+    if (path.portal || requiredSpeed(path, 0.65, cueDrag) > maximum) return;
     let arrival = 4.0;
     if (target) {
       const afterContact = firstTableBoundary(state, target, angle),
@@ -226,7 +284,7 @@ function safetyCandidates(state: GameState): Candidate[] {
       );
       arrival = Math.min(11, requiredSpeed(after, 1) / (0.98 * normalDot));
     }
-    const speed = Math.min(maximum, requiredSpeed(path, arrival, sticky));
+    const speed = Math.min(maximum, requiredSpeed(path, arrival, cueDrag));
     if (Number.isFinite(speed))
       candidates.push({
         angle,
@@ -245,9 +303,10 @@ function safetyCandidates(state: GameState): Candidate[] {
   return candidates;
 }
 function bankCandidates(state: GameState): Candidate[] {
-  const cue = state.balls[0],
+  const cue = state.balls[cueBallId(state)],
+    spec = tableOf(state),
     candidates: Candidate[] = [],
-    sticky = !!state.arcade?.buffs[state.turn].sticky;
+    cueDrag = cueDragOf(state);
   for (const target of aiTargets(state))
     for (const [axis, side] of [
       ['x', -1],
@@ -255,17 +314,17 @@ function bankCandidates(state: GameState): Candidate[] {
       ['z', -1],
       ['z', 1],
     ] as const) {
-      const rail = side * (axis === 'x' ? TABLE.halfWidth - TABLE.radius : TABLE.halfDepth - TABLE.radius);
+      const rail = side * (axis === 'x' ? spec.halfWidth - spec.radius : spec.halfDepth - spec.radius);
       const reflected = { ...target, [axis]: rail * 2 - target[axis] },
         denominator = reflected[axis] - cue[axis];
       if (Math.abs(denominator) < 1e-5) continue;
       const fraction = (rail - cue[axis]) / denominator;
       if (fraction <= 0 || fraction >= 1) continue;
       const bounce = { x: cue.x + (reflected.x - cue.x) * fraction, z: cue.z + (reflected.z - cue.z) * fraction };
-      if (POCKETS.some((p) => Math.hypot(bounce.x - p.x, bounce.z - p.z) < 0.6)) continue;
+      if (spec.pockets.some((p) => Math.hypot(bounce.x - p.x, bounce.z - p.z) < 0.6)) continue;
       if (
-        !segmentClear(cue, bounce, state.balls, [0]) ||
-        !segmentClear(bounce, target, state.balls, [0, target.id]) ||
+        !segmentClear(cue, bounce, state.balls, [cue.id]) ||
+        !segmentClear(bounce, target, state.balls, [cue.id, target.id]) ||
         !segmentClearOfTable(state, cue, bounce) ||
         !segmentClearOfTable(state, bounce, target)
       )
@@ -273,7 +332,7 @@ function bankCandidates(state: GameState): Candidate[] {
       const first = pathAlong(state, cue, bounce),
         second = pathAlong(state, bounce, target);
       if (first.portal || second.portal) continue;
-      const speed = requiredSpeed(first, requiredSpeed(second, 5, sticky) / RAIL_RESTITUTION, sticky);
+      const speed = requiredSpeed(first, requiredSpeed(second, 5, cueDrag) / RAIL_RESTITUTION, cueDrag);
       if (speed <= 16.4 * cueScale(state))
         candidates.push({
           angle: Math.atan2(bounce.z - cue.z, bounce.x - cue.x),
@@ -284,13 +343,13 @@ function bankCandidates(state: GameState): Candidate[] {
   return candidates;
 }
 export function chooseShot(state: GameState, difficulty: Difficulty, random = Math.random): Shot {
-  const cue = state.balls[0];
+  const cue = state.balls[cueBallId(state)];
   if (isBreakShot(state)) {
     const apex = state.balls.find((b) => b.id === 1 && !b.pocketed) || { x: 2.55, z: 0 };
     const angle =
       Math.atan2(apex.z - cue.z, apex.x - cue.x) + (random() - 0.5) * (difficulty === 'expert' ? 0.006 : 0.025);
     const route = pathAlong(state, cue, apex);
-    const speed = requiredSpeed(route, difficulty === 'casual' ? 9 : 12, !!state.arcade?.buffs[state.turn].sticky);
+    const speed = requiredSpeed(route, difficulty === 'casual' ? 9 : 12, cueDragOf(state));
     return { angle, power: powerForSpeed(state, speed) };
   }
   let options = potCandidates(state);
@@ -312,8 +371,12 @@ export function chooseShot(state: GameState, difficulty: Difficulty, random = Ma
     speed: 7,
     score: 0,
   };
-  const focus = state.arcade?.buffs[state.turn].focus ? 0.6 : 1;
-  const error = (difficulty === 'casual' ? 0.065 : difficulty === 'regular' ? 0.018 : 0.0025) * focus;
+  // Deadeye is armed: take the pot it guarantees rather than a stroke of its own with a hand tremor on it.
+  if (state.arcade?.buffs[state.turn].focus) {
+    const perfect = deadeyeShot(state, shot.angle);
+    if (perfect) return perfect;
+  }
+  const error = difficulty === 'casual' ? 0.065 : difficulty === 'regular' ? 0.018 : 0.0025;
   return {
     angle: shot.angle + (random() - 0.5) * error * 2,
     power: clamp(
@@ -327,18 +390,27 @@ export function chooseShot(state: GameState, difficulty: Difficulty, random = Ma
 /** Optional placement keeps the lie while it offers a pot; otherwise (no makeable pot, or snookered) it moves to the
  * kitchen. ponytail: "no pot from here" stands in for a safety evaluation of the lie. */
 export function choosePlacement(state: GameState): Point {
-  const cue = state.balls[0];
+  const cue = state.balls[cueBallId(state)];
   if (!cue.pocketed && potCandidates(state).length) return { x: cue.x, z: cue.z };
   const targets = aiTargets(state),
     candidates: { point: Point; score: number }[] = [],
     kitchen = kitchenPlacement(state);
-  for (let x = -4.9; x < 5; x += 0.65)
-    for (let z = -2.2; z < 2.3; z += 0.65) {
+  // The scan grid is written in pub-table numbers and stretched to whatever slate the mode uses; on the pub table
+  // both scales are exactly 1, so every coordinate below is the number it always was. A fixed pool-sized grid would
+  // never reach snooker's D, which sits outside it, and the AI would fall through to the first spot it could find.
+  const spec = tableOf(state),
+    sx = spec.halfWidth / TABLE.halfWidth,
+    sz = spec.halfDepth / TABLE.halfDepth;
+  for (let x = -4.9 * sx; x < 5 * sx; x += 0.65 * sx)
+    for (let z = -2.2 * sz; z < 2.3 * sz; z += 0.65 * sz) {
       const point = { x, z };
-      if (!inPlacementZone(state, point, kitchen) || !isClearBallSpot(state, point, 0, 'ai-placement')) continue;
+      if (!inPlacementZone(state, point, kitchen) || !isClearBallSpot(state, point, cue.id, 'ai-placement')) continue;
       let score = -Math.abs(x) * 0.02;
       for (const target of targets) {
-        if (!segmentClear(point, target, state.balls, [0, target.id]) || !segmentClearOfTable(state, point, target))
+        if (
+          !segmentClear(point, target, state.balls, [cue.id, target.id]) ||
+          !segmentClearOfTable(state, point, target)
+        )
           continue;
         const path = pathAlong(state, point, target);
         if (!path.portal) score = Math.max(score, 20 - path.distance - path.risk);
@@ -367,9 +439,9 @@ export function choosePlacement(state: GameState): Point {
   if (best) return best;
   // Crowded custom states may cover every coarse-grid square. A finite finer
   // scan still prioritizes legal felt and avoids portals and acceleration pads.
-  for (let x = -5.3; x <= 5.3; x += 0.25)
-    for (let z = -2.5; z <= 2.5; z += 0.25) {
-      if (inPlacementZone(state, { x, z }, kitchen) && isClearBallSpot(state, { x, z }, 0, 'ai-fallback'))
+  for (let x = -5.3 * sx; x <= 5.3 * sx; x += 0.25 * sx)
+    for (let z = -2.5 * sz; z <= 2.5 * sz; z += 0.25 * sz) {
+      if (inPlacementZone(state, { x, z }, kitchen) && isClearBallSpot(state, { x, z }, cue.id, 'ai-fallback'))
         return { x, z };
     }
   // Hazards may cover every calm spot: accept any spot a human could use. An optional placement always has its lie;

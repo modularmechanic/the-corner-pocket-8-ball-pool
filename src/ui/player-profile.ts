@@ -1,10 +1,20 @@
 import { LAYOUTS } from '../simulation/arcade';
 import { DEFAULT_CUE, getCue, type CueId } from '../simulation/cues';
 import { MAX_LEVEL, normalizeLevel } from '../simulation/level-policy';
-import type { ArenaLayout, Difficulty, GameFormat, GameOptions, GameState, Mode, RuleSet } from '../simulation/types';
+import type {
+  ArenaLayout,
+  Difficulty,
+  GameFormat,
+  GameModeId,
+  GameOptions,
+  GameState,
+  Mode,
+  RuleSet,
+} from '../simulation/types';
 import { canAdvance, resultTeams } from '../match/policy';
 import { AI_NAMES, RULE_NAMES } from '../presentation/table-presentation';
 import type { RenderQuality } from '../render/performance';
+import { ALL_MODES } from '../simulation/modes';
 
 /** The subset of Web Storage the profile needs; an in-memory map works in Node. */
 export interface ProfileStorage {
@@ -31,6 +41,9 @@ export interface Preferences {
   camera: 'angled' | 'overhead';
   cue: CueId;
   name: string;
+  /** The game mode chosen last time the menu started a session. Eight-ball is the default so anyone who never
+   * touches the new picker gets exactly what they always got. */
+  game: GameModeId;
 }
 export interface MenuOption<T extends string = string> {
   value: T;
@@ -70,17 +83,19 @@ export const QUALITY_OPTIONS: MenuOption<RenderQuality>[] = entries(QUALITY_LABE
 }));
 export const levelName = (level: unknown) => LEVEL_NAMES[normalizeLevel(level) - 1];
 
-/** A new local rack's options. A running session keeps its rule set; only starting a session (no `session`) applies the chosen one. */
+/** A new local rack's options. A running session keeps its rule set and game mode; only starting a session (no
+ * `session`) applies the chosen ones. */
 export function rackOptions(
   preferences: Readonly<Preferences>,
   format: GameFormat,
-  session: Pick<GameState, 'rules'> | null,
+  session: Pick<GameState, 'rules' | 'mode'> | null,
 ): GameOptions {
   return {
     layout: preferences.layout,
     level: preferences.level,
     format,
     rules: session ? session.rules : preferences.rules,
+    mode: session ? (session.mode ?? 'eight-ball') : preferences.game,
   };
 }
 
@@ -88,6 +103,10 @@ const PREFIX = 'corner-pocket:',
   MAX_RECORDS = 8;
 const oneOf = <T extends string>(record: Record<T, unknown>, value: string | null, fallback: T): T =>
   value !== null && Object.hasOwn(record, value) ? (value as T) : fallback;
+/** Like `oneOf`, but validated against a list of `{ id }` rather than a record's keys — `ALL_MODES` is a list
+ * because it spans both `GameModeSpec` modes and the zombie horde, which is not shaped like one. */
+const oneOfId = <T extends string>(list: readonly { id: T }[], value: string | null, fallback: T): T =>
+  value !== null && list.some((item) => item.id === value) ? (value as T) : fallback;
 function validRecord(record: unknown): record is HouseRecord {
   if (!record || typeof record !== 'object') return false;
   const r = record as Record<string, unknown>;
@@ -122,6 +141,7 @@ export class PlayerProfile {
       camera: this.read('camera') === 'overhead' ? 'overhead' : 'angled',
       cue: getCue(this.read('cue'))?.id ?? DEFAULT_CUE,
       name: this.read('name') ?? 'Player',
+      game: oneOfId(ALL_MODES, this.read('game'), 'eight-ball'),
     };
   }
   get preferences(): Readonly<Preferences> {

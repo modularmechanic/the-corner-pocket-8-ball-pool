@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultRuleSet, ruleBook, RULES_SOURCE } from '../src/presentation/rule-book';
+import {
+  defaultRuleSet,
+  ruleBook,
+  ruleBookFor,
+  RULES_SOURCE,
+  type RuleBook,
+  type RuleBookMode,
+} from '../src/presentation/rule-book';
+import { CONTROL_HELP } from '../src/presentation/control-help';
 import { RULE_TERMS } from '../src/presentation/table-presentation';
 import type { RuleSet } from '../src/simulation/types';
 
@@ -14,6 +22,7 @@ const SECTION_TITLES = [
   'The black',
   'In this game',
 ];
+const sectionText = (book: RuleBook) => book.sections.map((section) => section.bullets.join(' ')).join(' ');
 const text = (rules: RuleSet, title?: string) =>
   ruleBook(rules)
     .filter((section) => !title || section.title === title)
@@ -123,4 +132,71 @@ test("defaultRuleSet shows the running session's rules once started, otherwise t
   assert.equal(defaultRuleSet(false, 'new', 'old'), 'old');
   assert.equal(defaultRuleSet(true, 'new', 'old'), 'new');
   assert.equal(defaultRuleSet(true, 'old', 'new'), 'old');
+});
+
+test('every mode answers with a titled, non-empty book, and only eight-ball varies by rule set', () => {
+  for (const mode of ['eight-ball', 'snooker', 'billiards', 'zombie'] as RuleBookMode[]) {
+    const book = ruleBookFor(mode, 'new');
+    assert.equal(book.mode, mode);
+    assert.ok(book.title.trim().length > 0, `${mode} has a title`);
+    assert.ok(book.source.trim().length > 0, `${mode} names its source`);
+    assert.ok(book.sections.length > 0, `${mode} has sections`);
+    for (const section of book.sections) {
+      assert.ok(section.title.trim().length > 0);
+      assert.ok(section.bullets.length > 0 && section.bullets.every((bullet) => bullet.trim().length > 0));
+    }
+    assert.equal(book.ruleSets, mode === 'eight-ball', `${mode} rule-set tabs`);
+  }
+});
+
+test('the eight-ball book is the settled eight-ball text, per rule set', () => {
+  for (const rules of BOTH) {
+    const book = ruleBookFor('eight-ball', rules);
+    assert.deepEqual(book.sections, ruleBook(rules));
+    assert.equal(book.source, RULES_SOURCE[rules]);
+  }
+  assert.notDeepEqual(ruleBookFor('eight-ball', 'old').sections, ruleBookFor('eight-ball', 'new').sections);
+  for (const mode of ['snooker', 'billiards', 'zombie'] as RuleBookMode[])
+    assert.deepEqual(ruleBookFor(mode, 'old').sections, ruleBookFor(mode, 'new').sections);
+});
+
+test('snooker, billiards and the horde describe what their engines actually do', () => {
+  const snooker = sectionText(ruleBookFor('snooker'));
+  assert.match(snooker, /yellow 2, green 3, brown 4, blue 5, pink 6 and black 7/);
+  assert.match(snooker, /place it anywhere inside the D/i);
+  assert.match(snooker, /penalty is 4 points/i);
+  assert.match(snooker, /ball you strike first is taken as the ball you nominated/i);
+  assert.match(snooker, /next score or foul decides the frame/i);
+
+  const billiards = sectionText(ruleBookFor('billiards'));
+  assert.match(billiards, /Cannon.*2 points/);
+  assert.match(billiards, /Pot the red 3, pot the other cue ball 2/);
+  assert.match(billiards, /75 cannons in a row|15 hazards in a row/);
+  assert.match(billiards, /foul costs 2 points/i);
+  assert.match(billiards, /100/);
+
+  const zombie = sectionText(ruleBookFor('zombie'));
+  assert.match(zombie, /no pockets/i);
+  assert.match(zombie, /reflects off it and keeps going/i);
+  assert.match(zombie, /first kill of a shot scores 100, the second 200/i);
+  assert.match(zombie, /250 points times the wave number/i);
+  assert.match(zombie, /reach the cue ball’s spot at your rail and the run is over/i);
+});
+
+test('control help covers the shared controls and never repeats a mode rule', () => {
+  assert.deepEqual(
+    CONTROL_HELP.map((section) => section.title),
+    ['Aim & shoot', 'Strike, spin & jumps', 'Camera', 'Ball in hand', 'Touch', 'Keyboard'],
+  );
+  const controls = CONTROL_HELP.map((section) => section.bullets.join(' ')).join(' ');
+  for (const pattern of [
+    /aim/i,
+    /contact point/i,
+    /right mouse button/i,
+    /placement/i,
+    /touch screens|aim dial/i,
+    /Arrow keys/,
+  ])
+    assert.match(controls, pattern);
+  assert.doesNotMatch(controls, /\bfoul\b|two visits|eight-ball|solids|stripes/i);
 });

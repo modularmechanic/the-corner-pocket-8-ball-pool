@@ -1,6 +1,8 @@
 import * as THREE from 'three';
-import { seededRandom, TABLE } from '../simulation/types';
+import { seededRandom, TABLE, type GameModeId } from '../simulation/types';
 import { PROP_ANISOTROPY, type PropInstaller } from './asset-installer';
+import { clothLook, clothSampler, clothTexels, type ClothLook } from './cloth';
+import type { RenderBudget } from './performance';
 
 /** Existing CC0 Wood Table 001 scans (Dimitrios Savva / Rico Cilliers, Poly Haven).
  * Cloth is baked in Blender via MCP. Remaining original surface fallbacks are
@@ -8,7 +10,7 @@ import { PROP_ANISOTROPY, type PropInstaller } from './asset-installer';
 export const TABLE_SURFACE_SOURCES = {
   walnut: 'wood-color.jpg, wood-normal.jpg, wood-roughness.jpg — Wood Table 001 / Poly Haven / CC0',
   cloth:
-    'Blender MCP fine wool baize — 2K albedo, 1K tangent normal and packed height/roughness bake; art/blender/fine-baize.blend',
+    'Eight-ball: Blender MCP fine wool baize — 2K albedo, 1K tangent normal and packed height/roughness bake; art/blender/fine-baize.blend. Snooker, billiards and zombie: seeded woven baize generated at the render budget’s size; see ./cloth.',
   leather: 'Original fine pebbled leather grain',
   brass: 'Original directional machining, oxidation and handling marks',
   cue: 'Original longitudinal maple and dark spliced hardwood grain',
@@ -157,6 +159,35 @@ export function createTableSurfaces(installer: PropInstaller) {
   cushion.normalScale.set(0.24, 0.24);
   cushion.bumpScale *= 0.8;
   cushion.sheen = 0.1;
+  // Eight-ball keeps the Blender bake and nothing below ever touches it for that mode. The other
+  // modes swap in cloth generated at the size the render budget asks for; one set is kept at a time.
+  const bakedBaize: Partial<Record<(typeof BAIZE_MAPS)[number][0], THREE.Texture>> = {};
+  let clothMode: GameModeId = 'eight-ball',
+    clothSize = 0,
+    generated: SurfaceMaps | null = null;
+  const bakedBump = TABLE.radius * 0.00035;
+  const applyLook = (look: ClothLook) => {
+    for (const [material, tuning] of [
+      [cloth, look.cloth],
+      [cushion, look.cushion],
+    ] as const) {
+      material.sheen = tuning.sheen;
+      material.sheenColor.set(tuning.sheenColor);
+      material.normalScale.set(tuning.normal, tuning.normal);
+      material.bumpScale = bakedBump * tuning.bump;
+    }
+  };
+  const applyBaked = () => {
+    for (const material of [cloth, cushion]) {
+      material.map = bakedBaize.color ?? null;
+      material.normalMap = bakedBaize.normal ?? null;
+      material.bumpMap = bakedBaize.surface ?? null;
+      material.roughnessMap = bakedBaize.surface ?? null;
+      // The matte placeholder colour stands in until the albedo bake actually lands.
+      material.color.set(bakedBaize.color ? (material === cloth ? '#ffffff' : '#e8eddf') : '#285f32');
+      material.needsUpdate = true;
+    }
+  };
   for (const [kind, path] of BAIZE_MAPS)
     installer.texture(path, {
       prepare: (texture) => {
@@ -169,17 +200,8 @@ export function createTableSurfaces(installer: PropInstaller) {
         texture.generateMipmaps = true;
       },
       use: (texture) => {
-        for (const material of [cloth, cushion]) {
-          if (kind === 'color') {
-            material.map = texture;
-            material.color.set(material === cloth ? '#ffffff' : '#e8eddf');
-          } else if (kind === 'normal') material.normalMap = texture;
-          else {
-            material.bumpMap = texture;
-            material.roughnessMap = texture;
-          }
-          material.needsUpdate = true;
-        }
+        bakedBaize[kind] = texture;
+        if (clothMode === 'eight-ball') applyBaked();
       },
     });
 
@@ -403,6 +425,30 @@ export function createTableSurfaces(installer: PropInstaller) {
     cueFerrule,
     cueTip,
     pocketVoid,
+    /** Give the bed and cushions the cloth this mode plays on, at the resolution this budget and
+     * display can actually show. A no-op when neither changed, so the caller may ask every frame;
+     * a tier change regenerates, and eight-ball always returns to the untouched Blender bake. */
+    setCloth(mode: GameModeId, budget: RenderBudget, viewportPixels: number, deviceDpr: number): void {
+      const texels = mode === 'eight-ball' ? 0 : clothTexels(budget, viewportPixels, deviceDpr);
+      if (mode === clothMode && texels === clothSize) return;
+      clothMode = mode;
+      clothSize = texels;
+      // The outgoing set is bound to the materials right up to here, so it is freed exactly once.
+      if (generated) for (const texture of Object.values(generated)) texture.dispose();
+      generated = null;
+      applyLook(clothLook(mode));
+      if (mode === 'eight-ball') return applyBaked();
+      generated = maps(texels, texels, clothSampler(mode, texels), 6, 3);
+      for (const material of [cloth, cushion]) {
+        material.map = generated.map;
+        material.normalMap = generated.normalMap;
+        // Height in R and roughness in G, one upload, exactly as the Blender surface bake packs it.
+        material.bumpMap = generated.roughnessMap;
+        material.roughnessMap = generated.roughnessMap;
+        material.color.set(material === cloth ? '#ffffff' : '#e8eddf');
+        material.needsUpdate = true;
+      }
+    },
     /** Maps are collected from the owned materials, so a swapped-out placeholder is never freed twice. */
     dispose() {
       const textures = new Set<THREE.Texture>();

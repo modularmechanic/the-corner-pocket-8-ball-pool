@@ -264,6 +264,16 @@ details li {
   color: #7e8c72;
   margin: 18px 0;
 }
+.settings-section-title {
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #8ea488;
+  margin: 22px 0 2px;
+}
+.settings-section-title:first-of-type {
+  margin-top: 4px;
+}
 .field-label {
   display: block;
   font-size: 8px;
@@ -1378,6 +1388,90 @@ body {
 .menu-resume:hover {
   background: #c4cfbf13;
 }
+/* Attract mode. The first screen is the room itself, so on the landing panel the menu's own backdrop, gradient
+ * and drifting lights get out of the way and leave one scrim along the bottom for the branding to sit on. Scoped
+ * to the panel attribute so it outranks the responsive `.menu-landing` rules further down the file. */
+.main-menu[data-panel='landing'] {
+  background: linear-gradient(to top, #050d0af2 0%, #050d0ab8 18%, #050d0a52 40%, #050d0a1f 62%, transparent 85%);
+}
+.main-menu[data-panel='landing']::backdrop {
+  background: transparent;
+  backdrop-filter: none;
+}
+.main-menu[data-panel='landing'] .menu-atmosphere {
+  display: none;
+}
+/* The attract screen is the room, not the game, so the table chrome behind the see-through menu steps aside and
+ * fades back in when the player moves on. The vignette stays: it is part of the framing, not a readout. */
+body:has(.main-menu[open][data-panel='landing'])
+  :is(.hud, .stage-tools, .power-control, .shot-status, .bottom-hud, .cue-setup, .lock-hint) {
+  opacity: 0;
+  pointer-events: none;
+}
+.hud,
+.stage-tools,
+.power-control,
+.shot-status,
+.bottom-hud {
+  transition: opacity 0.4s ease;
+}
+.main-menu[data-panel='landing'] .menu-landing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  text-align: center;
+  padding-bottom: 8px;
+}
+.attract-plate {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* Moving footage runs bright and dark under the same word, so the branding carries its own shadow. */
+  text-shadow:
+    0 2px 6px #04100bcc,
+    0 8px 34px #04100b99;
+}
+.attract-plate .menu-kicker {
+  margin-bottom: 14px;
+}
+.attract-plate .menu-title {
+  text-shadow: inherit;
+}
+.attract-plate .menu-landing-actions {
+  align-items: center;
+  margin-top: 30px;
+}
+.attract-prompt {
+  font: 600 13px/1 'DM Sans', Arial, sans-serif;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  color: #f2e4c2;
+  background: none;
+  border: 0;
+  padding: 12px 6px;
+  animation: attract-blink 1.9s steps(1, end) infinite;
+}
+.attract-prompt:hover,
+.attract-prompt:focus-visible {
+  color: #fff6de;
+}
+@keyframes attract-blink {
+  0%,
+  62% {
+    opacity: 1;
+  }
+  63%,
+  100% {
+    opacity: 0.18;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .attract-prompt {
+    animation: none;
+  }
+}
 .menu-feature {
   position: relative;
   height: 410px;
@@ -1569,6 +1663,10 @@ body {
   .menu-mode-grid:has(> [hidden]) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+/* The game-mode grid's card count grows as modes are registered, so it reflows instead of assuming three. */
+.menu-game-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
 }
 .menu-mode-card {
   position: relative;
@@ -2263,6 +2361,32 @@ body {
     padding: 15px 0 18px;
   }
 }
+/* Short landscape phones: the pickers take the compact phone card so a whole grid fits without a long scroll. */
+@media (max-height: 520px) and (min-width: 621px) {
+  .menu-mode-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .menu-mode-card {
+    min-height: 84px;
+    padding: 14px 38px 14px 74px;
+    justify-content: center;
+  }
+  .menu-card-number {
+    font-size: 9px;
+    right: 14px;
+    top: 10px;
+    letter-spacing: 1px;
+  }
+  .menu-card-icon {
+    position: absolute;
+    left: 16px;
+    top: 21px;
+    width: 42px;
+    height: 42px;
+    font-size: 17px;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .menu-mote {
     opacity: 0.25;
@@ -2682,6 +2806,12 @@ body {
   font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
+.player-break {
+  font-size: 10px;
+  color: #9eaf9f;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
 .scoreboard .turn-light {
   right: 6px;
   top: 7px;
@@ -2971,9 +3101,9 @@ dialog summary {
   --safe-l: max(12px, env(safe-area-inset-left));
   --safe-r: max(12px, env(safe-area-inset-right));
   --safe-b: max(12px, env(safe-area-inset-bottom));
-  --dial: 132px;
-  --shoot: 80px;
-  --slider-w: 76px;
+  --dial: 110px;
+  --shoot: 66px;
+  --slider-w: 54px;
   --tool: 36px;
   --row: calc(max(18px, env(safe-area-inset-bottom)) + 70px);
 }
@@ -3041,12 +3171,12 @@ dialog summary {
   left: calc(var(--safe-l) + var(--dial) + 10px);
   right: calc(var(--safe-r) + var(--shoot) + 10px);
   bottom: var(--row);
-  max-width: 220px;
-  height: 56px;
+  max-width: 190px;
+  height: 48px;
   margin: 0 auto;
   padding: 0 10px;
   border: 1px solid #d8bf78;
-  border-radius: 28px;
+  border-radius: 24px;
   background: #132019e6;
   color: #f1d38c;
   font-size: 15px;
@@ -3092,7 +3222,8 @@ dialog summary {
   right: calc(var(--safe-r) + (var(--shoot) - var(--slider-w)) / 2);
   bottom: calc(var(--row) + var(--shoot) + 12px);
   width: var(--slider-w);
-  height: clamp(170px, 55svh, calc(100svh - var(--row) - var(--shoot) - 160px));
+  /* The drag captures the pointer, so the strip only has to be a comfortable grab target; it need not span the screen. */
+  height: clamp(150px, 30svh, calc(100svh - var(--row) - var(--shoot) - 160px));
   touch-action: none;
   transition: opacity 0.2s;
 }
@@ -3163,8 +3294,8 @@ dialog summary {
 }
 @media (max-height: 700px) {
   [data-input='touch'] {
-    --dial: 120px;
-    --shoot: 72px;
+    --dial: 100px;
+    --shoot: 60px;
     --tool: 34px;
   }
 }
@@ -3179,13 +3310,13 @@ dialog summary {
 /* Landscape: two rows of tools sit just above the dial in a left column; the right column holds the mode tabs over the slider, and Engage over Shoot. */
 @media (orientation: landscape) {
   [data-input='touch'] {
-    --dial: 120px;
-    --shoot: 76px;
-    --slider-w: 72px;
+    --dial: 100px;
+    --shoot: 62px;
+    --slider-w: 52px;
     --tool: 34px;
     --tool-gap: 5px;
     --row: var(--safe-b);
-    --slider-h: clamp(150px, 60svh, calc(100svh - 130px));
+    --slider-h: clamp(140px, 48svh, calc(100svh - 130px));
   }
   [data-input='touch'] .stage-tools {
     right: auto;
@@ -3203,11 +3334,11 @@ dialog summary {
     bottom: calc(var(--safe-b) + var(--shoot) + 8px);
     width: var(--shoot);
     max-width: none;
-    height: 56px;
+    height: 48px;
     margin: 0;
-    padding: 0 6px;
-    border-radius: 16px;
-    font-size: 13px;
+    padding: 0 4px;
+    border-radius: 14px;
+    font-size: 12px;
     line-height: 1.15;
     white-space: normal;
     text-align: center;

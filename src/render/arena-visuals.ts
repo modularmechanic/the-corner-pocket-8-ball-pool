@@ -1,18 +1,24 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import type { ArcadeState, Hazard, Obstacle, Pickup } from '../simulation/types';
+import { rampCorners, rampFrame } from '../simulation/arcade';
 import { effectDefinition } from '../presentation/effects';
 import { canvasTexture, woodTexture } from './materials';
 import { enableTableShadows } from './table-model';
+import type { PropInstaller } from './asset-installer';
+import { ZombieWalkers, type Walker } from './zombie-walkers';
 
 interface ObstacleVisual {
   source: Obstacle;
   group: THREE.Group;
+  /** Everything the procedural crate draws. Hidden once a rigged body takes over. */
+  crate: THREE.Group;
   body: THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial>;
   pips: THREE.Mesh<THREE.BoxGeometry, THREE.MeshBasicMaterial>[];
   cracks: THREE.LineSegments;
   flash: number;
   hp: number;
+  walker?: Walker;
 }
 interface HazardVisual {
   source: Hazard;
@@ -22,12 +28,6 @@ interface HazardVisual {
   arcStep: number;
   ripples: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>[];
   clouds: THREE.Sprite[];
-}
-interface PickupVisual {
-  source: Pickup;
-  group: THREE.Group;
-  capsule: THREE.Group;
-  halo: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
 }
 interface Visual<T> {
   source: T;
@@ -42,16 +42,23 @@ const PIP_COLORS = {
 const SPENT_PIP = new THREE.Color('#354044');
 const ARC_VERTICES = 3 * 8 * 2;
 
+/** A walker carries its own speed (the zombie horde); every other obstacle is bolted to the cloth.
+ * Structural, so nothing here needs to know the zombie mode exists. */
+const walks = (obstacle: Obstacle): boolean => typeof (obstacle as { speed?: unknown }).speed === 'number';
+/** The horde walks towards the player's rail, down -x, until its first step gives a real heading.
+ * The model faces +z once glTF has turned Blender's -y about, so a heading is `atan2(dx, dz)`. */
+const WALK_HEADING = Math.atan2(-1, 0);
+
+// A walker moves every step, so its position is animated rather than rebuilt; everything else is fixed art.
 const sameObstacle = (a: Obstacle, b: Obstacle) =>
-  a.x === b.x &&
-  a.z === b.z &&
+  walks(a) === walks(b) &&
+  (walks(a) || (a.x === b.x && a.z === b.z)) &&
   a.width === b.width &&
   a.depth === b.depth &&
   a.material === b.material &&
   a.maxHp === b.maxHp;
 const sameHazard = (a: Hazard, b: Hazard) =>
   a.kind === b.kind && a.x === b.x && a.z === b.z && a.radius === b.radius && a.angle === b.angle && a.link === b.link;
-const samePickup = (a: Pickup, b: Pickup) => a.x === b.x && a.z === b.z && a.radius === b.radius && a.power === b.power;
 
 function disposeObstacle(visual: ObstacleVisual) {
   visual.body.material.map?.dispose();
@@ -89,16 +96,19 @@ export const ARENA_TEXTURES: ArenaTextures = {
 export class ArenaVisuals {
   private obstacleVisuals = new Map<number, ObstacleVisual>();
   private hazardVisuals = new Map<number, HazardVisual>();
-  private pickupVisuals = new Map<number, PickupVisual>();
   readonly obstacles: ReadonlyMap<number, { readonly group: THREE.Group }> = this.obstacleVisuals;
   readonly hazards: ReadonlyMap<number, { readonly group: THREE.Group }> = this.hazardVisuals;
-  readonly pickups: ReadonlyMap<number, { readonly group: THREE.Group }> = this.pickupVisuals;
   private smokeTexture?: THREE.Texture;
   private seen = new Set<number>();
+  /** Rigged bodies for walking obstacles. Without a prop installer the crates stand in, as they do while it loads. */
+  private walkers?: ZombieWalkers;
   constructor(
     private scene: THREE.Scene,
     private textures: ArenaTextures = ARENA_TEXTURES,
-  ) {}
+    props?: PropInstaller,
+  ) {
+    if (props) this.walkers = new ZombieWalkers(props);
+  }
 
   /** Flashes a struck obstacle; returns its material for the impact effect. */
   strikeObstacle(id: number): { readonly material: Obstacle['material'] } | undefined {
@@ -121,7 +131,7 @@ export class ArenaVisuals {
       obstacles,
       sameObstacle,
       (obstacle) => this.buildObstacle(obstacle),
-      disposeObstacle,
+      (visual) => this.dropObstacle(visual),
     );
     this.sync(
       this.hazardVisuals,
@@ -130,15 +140,9 @@ export class ArenaVisuals {
       (hazard) => this.buildHazard(hazard),
       (visual) => disposeGroup(visual.group),
     );
-    this.sync(
-      this.pickupVisuals,
-      pickups,
-      samePickup,
-      (pickup) => this.buildPickup(pickup),
-      (visual) => disposeGroup(visual.group),
-    );
     for (const obstacle of obstacles) {
       const visual = this.obstacleVisuals.get(obstacle.id)!;
+      if (walks(obstacle)) this.walk(visual, obstacle);
       visual.group.visible = obstacle.hp > 0;
       visual.flash = Math.max(0, visual.flash - dt * 5);
       visual.body.material.emissiveIntensity = visual.flash * 0.55;
@@ -149,21 +153,42 @@ export class ArenaVisuals {
           visual.pips[i].material.color.copy(i < obstacle.hp ? PIP_COLORS[obstacle.material] : SPENT_PIP);
       }
     }
-    for (const pickup of pickups) {
-      const visual = this.pickupVisuals.get(pickup.id)!;
-      visual.group.visible = pickup.available;
-      visual.capsule.rotation.y = clock * 0.55 + pickup.id * 0.7;
-      visual.halo.material.opacity = 0.5 + Math.sin(clock * 2 + pickup.id) * 0.15;
-    }
     for (const visual of this.hazardVisuals.values()) this.animateHazard(visual, clock);
+    this.walkers?.update(dt);
+  }
+
+  /** Carries a walking obstacle to its new spot, turns it along the step it just took, and gives it a rigged
+   * body as soon as one is available. The crate keeps drawing until then. */
+  private walk(visual: ObstacleVisual, obstacle: Obstacle) {
+    const dx = obstacle.x - visual.source.x,
+      dz = obstacle.z - visual.source.z;
+    if (dx * dx + dz * dz > 1e-8) visual.group.rotation.y = Math.atan2(dx, dz);
+    visual.source.x = obstacle.x;
+    visual.source.z = obstacle.z;
+    visual.group.position.set(obstacle.x, 0, obstacle.z);
+    if (visual.walker || !this.walkers) return;
+    const walker = this.walkers.acquire(obstacle.id);
+    if (!walker) return;
+    visual.walker = walker;
+    visual.group.add(walker.root);
+    enableTableShadows(walker.root);
+    visual.crate.visible = false;
+  }
+
+  /** Releases the rigged body first: the clone shares its geometry and materials with the source model,
+   * so it must leave the group before the group's own art is disposed. */
+  private dropObstacle(visual: ObstacleVisual) {
+    if (visual.walker) this.walkers?.release(visual.walker);
+    visual.walker = undefined;
+    disposeObstacle(visual);
   }
 
   dispose() {
-    for (const visual of this.obstacleVisuals.values()) disposeObstacle(visual);
-    for (const visual of [...this.hazardVisuals.values(), ...this.pickupVisuals.values()]) disposeGroup(visual.group);
+    for (const visual of this.obstacleVisuals.values()) this.dropObstacle(visual);
+    this.walkers?.dispose();
+    for (const visual of this.hazardVisuals.values()) disposeGroup(visual.group);
     this.obstacleVisuals.clear();
     this.hazardVisuals.clear();
-    this.pickupVisuals.clear();
     this.smokeTexture?.dispose();
     this.smokeTexture = undefined;
   }
@@ -192,163 +217,6 @@ export class ArenaVisuals {
           dispose(visual);
           visuals.delete(id);
         }
-  }
-
-  private buildPickup(pickup: Pickup): PickupVisual {
-    const power = pickup.power || 'focus',
-      color = effectDefinition(power).color,
-      radius = pickup.radius;
-    const group = new THREE.Group();
-    group.position.set(pickup.x, 0, pickup.z);
-    this.scene.add(group);
-    const plinth = new THREE.Mesh(
-      new THREE.CylinderGeometry(radius * 0.71, radius * 0.79, 0.04, 40),
-      new THREE.MeshStandardMaterial({ color: '#4c554a', metalness: 0.8, roughness: 0.3 }),
-    );
-    plinth.position.y = 0.02;
-    plinth.castShadow = true;
-    group.add(plinth);
-    const capsule = new THREE.Group();
-    capsule.position.y = 0.17;
-    group.add(capsule);
-    const material = new THREE.MeshPhysicalMaterial({
-      color,
-      emissive: color,
-      emissiveIntensity: 0.55,
-      metalness: 0.32,
-      roughness: 0.2,
-      clearcoat: 0.8,
-    });
-    const add = (geometry: THREE.BufferGeometry, x = 0, y = 0, z = 0, mat: THREE.Material = material) => {
-      const mesh = new THREE.Mesh(geometry, mat);
-      mesh.position.set(x, y, z);
-      mesh.castShadow = true;
-      capsule.add(mesh);
-      return mesh;
-    };
-    if (power === 'overdrive') {
-      const flame = new THREE.Shape();
-      flame.moveTo(0, -0.13);
-      flame.bezierCurveTo(-0.2, -0.1, -0.17, 0.075, -0.07, 0.12);
-      flame.bezierCurveTo(-0.055, 0.035, 0.025, 0.03, 0.015, 0.26);
-      flame.bezierCurveTo(0.22, 0.09, 0.2, -0.07, 0, -0.13);
-      const body = add(
-        new THREE.ExtrudeGeometry(flame, {
-          depth: 0.07,
-          bevelEnabled: true,
-          bevelSize: 0.012,
-          bevelThickness: 0.014,
-          bevelSegments: 2,
-          steps: 1,
-        }),
-        0,
-        0,
-        -0.035,
-      );
-      body.rotation.x = -0.38;
-      const core = add(
-        new THREE.ConeGeometry(0.06, 0.2, 7),
-        0.015,
-        -0.005,
-        0.06,
-        new THREE.MeshStandardMaterial({ color: '#ffe49a', emissive: '#ffd473', emissiveIntensity: 1.4 }),
-      );
-      core.rotation.z = -0.16;
-    } else if (power === 'frost') {
-      add(new THREE.IcosahedronGeometry(0.125, 0));
-      for (let i = 0; i < 5; i++) {
-        const angle = (i / 5) * Math.PI * 2,
-          crystal = add(
-            new THREE.OctahedronGeometry(0.085, 0),
-            Math.cos(angle) * 0.075,
-            0.015,
-            Math.sin(angle) * 0.075,
-          );
-        crystal.scale.set(0.48, 2.1, 0.48);
-        crystal.rotation.z = Math.cos(angle) * 0.38;
-        crystal.rotation.x = Math.sin(angle) * 0.38;
-      }
-    } else if (power === 'ward') {
-      const shield = new THREE.Shape();
-      shield.moveTo(-0.16, 0.13);
-      shield.lineTo(0.16, 0.13);
-      shield.lineTo(0.145, -0.035);
-      shield.quadraticCurveTo(0.11, -0.14, 0, -0.23);
-      shield.quadraticCurveTo(-0.11, -0.14, -0.145, -0.035);
-      shield.closePath();
-      const body = add(
-        new THREE.ExtrudeGeometry(shield, {
-          depth: 0.065,
-          bevelEnabled: true,
-          bevelSize: 0.012,
-          bevelThickness: 0.014,
-          bevelSegments: 2,
-          steps: 1,
-        }),
-        0,
-        0.05,
-        -0.03,
-      );
-      body.rotation.x = -0.36;
-      const crest = add(
-        new THREE.BoxGeometry(0.16, 0.028, 0.02),
-        0,
-        0.015,
-        0.059,
-        new THREE.MeshStandardMaterial({ color: '#e0ffe8', emissive: '#c8efcb', emissiveIntensity: 0.35 }),
-      );
-      crest.rotation.x = -0.36;
-      add(
-        new THREE.BoxGeometry(0.028, 0.16, 0.02),
-        0,
-        0.01,
-        0.07,
-        new THREE.MeshStandardMaterial({ color: '#e0ffe8', emissive: '#c8efcb', emissiveIntensity: 0.35 }),
-      );
-    } else if (power === 'focus') {
-      const ring = add(new THREE.TorusGeometry(0.13, 0.018, 8, 40));
-      ring.rotation.x = Math.PI / 2;
-      for (const angle of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) {
-        const mark = add(new THREE.BoxGeometry(0.095, 0.035, 0.025), Math.cos(angle) * 0.16, 0, Math.sin(angle) * 0.16);
-        mark.rotation.y = -angle;
-      }
-      add(new THREE.SphereGeometry(0.035, 16, 12));
-    } else {
-      const ring = add(new THREE.TorusGeometry(0.14, 0.025, 10, 48));
-      ring.rotation.x = 0.35;
-      const second = add(new THREE.TorusGeometry(0.1, 0.013, 8, 36));
-      second.rotation.y = Math.PI / 2;
-      second.rotation.z = 0.4;
-      add(
-        new THREE.IcosahedronGeometry(0.067, 1),
-        0,
-        0,
-        0,
-        new THREE.MeshPhysicalMaterial({
-          color: '#e0c4ff',
-          emissive: '#b684ff',
-          emissiveIntensity: 1.2,
-          transparent: true,
-          opacity: 0.65,
-          roughness: 0.08,
-        }),
-      );
-    }
-    const halo = new THREE.Mesh(
-      new THREE.RingGeometry(radius * 0.93, radius, 64),
-      new THREE.MeshBasicMaterial({
-        color,
-        transparent: true,
-        opacity: 0.7,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      }),
-    );
-    halo.rotation.x = -Math.PI / 2;
-    halo.position.y = 0.025;
-    group.add(halo);
-    return { source: { ...pickup }, group, capsule, halo };
   }
 
   private buildHazard(hazard: Hazard): HazardVisual {
@@ -388,43 +256,17 @@ export class ArenaVisuals {
         }),
       );
       ring(radius - 0.015, radius, copper, 0.7);
-      // A shallow copper launch plate rises in the same direction as the simulation's ramp angle.
-      const halfLength = radius * 0.72,
-        halfWidth = radius * 0.54;
+      // The visible wedge IS the collider: the same six corners the simulation feeds to Rapier,
+      // in the same frame (local +X is the ramp's facing direction). See rampCorners in arcade.ts.
+      const frame = rampFrame(hazard),
+        corners = rampCorners(hazard);
       const ramp = new THREE.BufferGeometry();
-      const low = 0.11 * (1 - halfLength / radius),
-        high = 0.11 * (1 + halfLength / radius);
-      const vertices = [
-        -halfLength,
-        low,
-        -halfWidth,
-        halfLength,
-        high,
-        -halfWidth,
-        halfLength,
-        high,
-        halfWidth,
-        -halfLength,
-        low,
-        halfWidth,
-        -halfLength,
-        0.005,
-        -halfWidth,
-        halfLength,
-        0.005,
-        -halfWidth,
-        halfLength,
-        0.005,
-        halfWidth,
-        -halfLength,
-        0.005,
-        halfWidth,
-      ];
-      ramp.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-      ramp.setIndex([0, 2, 1, 0, 3, 2, 1, 2, 6, 1, 6, 5, 0, 1, 5, 0, 5, 4, 3, 7, 6, 3, 6, 2]);
+      ramp.setAttribute('position', new THREE.Float32BufferAttribute(corners.flat(), 3));
+      // 0..3 are the base corners; 4 and 5 are the ridge ends. Four sloped faces, then the base.
+      ramp.setIndex([0, 4, 1, 1, 4, 5, 3, 2, 5, 3, 5, 4, 1, 5, 2, 0, 3, 4, 0, 1, 2, 0, 2, 3]);
       ramp.computeVertexNormals();
-      ramp.addGroup(0, 6, 0);
-      ramp.addGroup(6, 18, 1);
+      ramp.addGroup(0, 18, 0);
+      ramp.addGroup(18, 6, 1);
       const mesh = new THREE.Mesh(ramp, [
         new THREE.MeshPhysicalMaterial({
           color: copper,
@@ -438,36 +280,34 @@ export class ArenaVisuals {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       group.add(mesh);
+      // Kerb rails along the two climbing edges, lying on the surface rather than floating over it.
       for (const sign of [-1, 1]) {
+        const edge = sign * frame.halfWidth,
+          ridge = sign * frame.ridge,
+          run = frame.halfLength + frame.crest;
         const rail = new THREE.Mesh(
-          new THREE.BoxGeometry(halfLength * 2, 0.018, 0.024),
+          new THREE.BoxGeometry(Math.hypot(run, frame.height), 0.016, 0.022),
           new THREE.MeshStandardMaterial({ color: '#e2b977', metalness: 0.8, roughness: 0.24 }),
         );
-        rail.position.set(0, (low + high) / 2 + 0.012, sign * (halfWidth - 0.017));
-        rail.rotation.z = Math.atan2(high - low, halfLength * 2);
+        rail.position.set((-frame.halfLength + frame.crest) / 2, frame.height / 2 + 0.008, (edge + ridge) / 2);
+        rail.rotation.y = Math.atan2(ridge - edge, run);
+        rail.rotation.z = Math.atan2(frame.height, run);
         rail.castShadow = true;
         group.add(rail);
-        for (const along of [-0.6, 0.6]) {
-          const x = along * halfLength,
-            y = low + ((x + halfLength) / (halfLength * 2)) * (high - low);
-          const screw = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.013, 0.013, 0.012, 8),
-            new THREE.MeshStandardMaterial({ color: '#d7d1bf', metalness: 0.9, roughness: 0.24 }),
-          );
-          screw.position.set(x, y + 0.013, sign * (halfWidth - 0.04));
-          group.add(screw);
-        }
       }
+      // Direction arrows painted 4mm proud of the climbing face.
       const chevrons: THREE.Vector3[] = [];
-      for (const x of [-0.28, 0.05, 0.38]) {
-        const a = x * radius,
-          y = 0.11 * (a / radius + 1) + 0.005,
-          previousY = 0.11 * ((a - 0.1) / radius + 1) + 0.005;
+      const face = (u: number) => (frame.height * (u + frame.halfLength)) / (frame.halfLength + frame.crest) + 0.004,
+        step = (frame.halfLength + frame.crest) / 5,
+        wing = frame.halfWidth * 0.45;
+      for (const index of [1, 2, 3]) {
+        const u = -frame.halfLength + index * step,
+          tail = u - step * 0.6;
         chevrons.push(
-          new THREE.Vector3(a - 0.1, previousY, -0.13),
-          new THREE.Vector3(a, y, 0),
-          new THREE.Vector3(a, y, 0),
-          new THREE.Vector3(a - 0.1, previousY, 0.13),
+          new THREE.Vector3(tail, face(tail), -wing),
+          new THREE.Vector3(u, face(u), 0),
+          new THREE.Vector3(u, face(u), 0),
+          new THREE.Vector3(tail, face(tail), wing),
         );
       }
       group.add(
@@ -744,7 +584,15 @@ export class ArenaVisuals {
     );
     cracks.visible = false;
     group.add(cracks);
-    return { source: { ...obstacle }, group, body, pips, cracks, flash: 0, hp: -1 };
+    // A walker's crate goes in its own node so a rigged body can replace it wholesale; a bolted-down
+    // obstacle keeps its flat group, since nothing ever hides its art.
+    const crate = walks(obstacle) ? new THREE.Group() : group;
+    if (crate !== group) {
+      crate.add(...group.children);
+      group.add(crate);
+      group.rotation.y = WALK_HEADING;
+    }
+    return { source: { ...obstacle }, group, crate, body, pips, cracks, flash: 0, hp: -1 };
   }
 
   private animateHazard(visual: HazardVisual, clock: number) {

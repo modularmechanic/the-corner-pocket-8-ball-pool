@@ -196,6 +196,14 @@ export class LocalMatch implements Match {
       return { ok: false, error: 'Place the cue ball behind the head string.' };
     if (command.type === 'group' && state.phase !== 'choose-group')
       return { ok: false, error: 'There is no group to choose.' };
+    if (command.type === 'concede') {
+      const ok = this.game.concede(state.turn);
+      if (ok) {
+        this.pauseAI();
+        this.changed();
+      }
+      return { ok, ...(!ok ? { error: 'This game cannot be conceded.' } : {}) };
+    }
     const ok =
       command.type === 'shoot'
         ? this.game.shoot(command.shot)
@@ -212,13 +220,15 @@ export class LocalMatch implements Match {
   }
   private reset(seed?: string, options?: GameOptions) {
     const state = this.state;
-    // The rule set is fixed for the session: resets, rematches and new levels keep it.
+    // The rule set and the game are fixed for the session: resets, rematches and new levels keep them.
+    // Without the mode a snooker rematch would silently rack eight-ball, because PoolGame defaults to it.
     const next = {
       layout: state.arcade?.layout,
       level: state.arcade?.level,
       format: state.format,
       ...options,
       rules: state.rules,
+      mode: state.mode,
     };
     this.game.dispose();
     this.game = new PoolGame(seed || this.nextSeed(), { ...next, level: normalizeLevel(next.level) });
@@ -276,12 +286,18 @@ export class LocalMatch implements Match {
       this.accumulator = Math.max(0, this.accumulator - MATCH_STEP);
     }
     this.muted = !!options.muted;
-    // Spawns and expiries emit events; a quiet table only moves its pickup clock,
-    // so the frozen view is shared and just that number is refreshed.
-    const clock = this.game.state.arcade?.clock,
+    // Spawns and expiries emit events; a quiet table only moves its pickup clock and cools its
+    // marks, so the frozen view is shared and just those are refreshed. Scorches and ice fade with
+    // no event of their own, so without this they would decay in the simulation and never visibly
+    // fade on screen — the table would keep its burns forever from the player's side.
+    const live = this.game.state.arcade,
       view = this.cached;
-    if (view?.arcade && view.arcade.clock !== clock)
-      this.cached = Object.freeze({ ...view, arcade: Object.freeze({ ...view.arcade, clock }) });
+    const marksAlive = !!live && ((live.burns?.length ?? 0) > 0 || (live.frost?.length ?? 0) > 0);
+    if (view?.arcade && (view.arcade.clock !== live?.clock || marksAlive))
+      this.cached = Object.freeze({
+        ...view,
+        arcade: Object.freeze({ ...view.arcade, clock: live?.clock, burns: live?.burns, frost: live?.frost }),
+      });
     if (
       options.aiPaused ||
       !this.available ||

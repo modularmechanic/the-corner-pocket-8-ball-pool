@@ -123,8 +123,9 @@ test('water and slime add drag, with slime slowing a ball more than water', () =
   assert.ok(speeds[0] - speeds[2] > 0.3, 'slime must have a meaningful slowing effect');
 });
 
-test('only entering a declared ramp or electric pad can add speed, with a matching visible event and one score award', () => {
-  for (const kind of ['ramp', 'electric', 'water', 'slime', 'smoke'] satisfies HazardKind[]) {
+// Ramps are a shape rather than a zone effect and are covered end to end in ramps.test.ts.
+test('only entering a declared electric pad can add speed, with a matching visible event and one score award', () => {
+  for (const kind of ['electric', 'water', 'slime', 'smoke'] satisfies HazardKind[]) {
     const game = new PoolGame(`hazard-energy-${kind}`);
     try {
       setup(game, { 0: { x: -2.5, z: 0 } }, [{ id: 0, kind, x: -2, z: 0, radius: 0.6, angle: 0 }]);
@@ -134,15 +135,9 @@ test('only entering a declared ramp or electric pad can add speed, with a matchi
       const before = speed(game);
       game.step();
       assert.equal(events.filter((event) => event.hazard === kind).length, 1);
-      const energized = kind === 'ramp' || kind === 'electric';
+      const energized = kind === 'electric';
       assert.equal(speed(game) > before, energized, `${kind} must obey its declared effect`);
-      if (kind === 'ramp')
-        assert.ok(
-          game.state.balls[0].airborne && game.state.balls[0].vy! > 0,
-          'a ramp gives the ball a real upward launch',
-        );
       for (let step = 0; step < 10; step++) game.step();
-      if (kind === 'ramp') assert.ok(game.state.balls[0].elevation! > 0.1, 'the launched sphere rises above the cloth');
       assert.equal(
         events.filter((event) => event.hazard === kind).length,
         1,
@@ -152,20 +147,6 @@ test('only entering a declared ramp or electric pad can add speed, with a matchi
     } finally {
       game.dispose();
     }
-  }
-});
-
-test('ramps cannot boost a ball traveling against their direction', () => {
-  const game = new PoolGame('ramp-direction');
-  try {
-    setup(game, { 0: { x: -1.5, z: 0 } }, [{ id: 0, kind: 'ramp', x: -2, z: 0, radius: 0.6, angle: 0 }]);
-    game.shoot({ angle: Math.PI, power: 0.12 });
-    const initial = speed(game);
-    game.step();
-    assert.ok(speed(game) < initial);
-    assert.equal(game.state.arcade!.scores[0], 0);
-  } finally {
-    game.dispose();
   }
 });
 

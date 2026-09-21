@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { TABLE, type GameState, type Shot } from '../simulation/types';
+import { cueBallId, type GameState, type Shot } from '../simulation/types';
+import { tableOf, EIGHT_BALL_TABLE, type TableSpec } from '../simulation/modes/table';
 import { fitTableCamera } from './camera';
 
 export interface ShotCameraPose {
@@ -10,7 +11,9 @@ export interface ShotCameraPose {
   far: number;
   mode: 'shoot' | 'watch';
 }
-type CameraState = Pick<GameState, 'phase' | 'balls' | 'seed' | 'shotCount' | 'lastShot'>;
+/** `mode` and `turn` are here only so the camera can ask which ball the striker is on: English Billiards gives
+ * player 1 their own cue ball, and the shooter view must sit behind that one. */
+type CameraState = Pick<GameState, 'phase' | 'balls' | 'seed' | 'shotCount' | 'lastShot' | 'mode' | 'turn'>;
 const normalizeAngle = (angle: number) => Math.atan2(Math.sin(angle), Math.cos(angle));
 export const SHOT_WATCH_TRANSITION = 0.58;
 export const SHOT_RETURN_TRANSITION = 0.65;
@@ -38,24 +41,25 @@ export function shotCameraPose(
   aspect: number,
 ): ShotCameraPose {
   aspect = Number.isFinite(aspect) && aspect > 0 ? aspect : 16 / 9;
-  const cue = state.balls[0];
+  const cue = state.balls[cueBallId(state)],
+    spec = tableOf(state);
   const shooting = state.phase === 'ready' && !cue.pocketed;
   const angle = Number.isFinite(shot.angle) ? shot.angle : 0;
   if (!shooting) {
-    return watchCameraPose(state.lastShot?.angle ?? angle, aspect);
+    return watchCameraPose(state.lastShot?.angle ?? angle, aspect, undefined, spec);
   }
   const dx = Math.cos(angle),
     dz = Math.sin(angle),
     fov = aspect < 0.8 ? 58 : 47;
   const distance = 1.92 * Math.max(1, 0.62 / aspect),
-    cueY = TABLE.radius + Math.max(0, cue.elevation ?? 0);
+    cueY = spec.radius + Math.max(0, cue.elevation ?? 0);
   let height = cueY + Math.max(0.5, distance * 0.35) + Math.sin(shot.elevation ?? 0) * 0.16;
   // Near a cushion the camera may sit outside the table. Raise the eye just
   // enough for its ray to clear the rail instead of obscuring the white ball.
   const backX = -dx,
     backZ = -dz;
-  const exitX = Math.abs(backX) > 1e-8 ? (Math.sign(backX) * TABLE.halfWidth - cue.x) / backX : Infinity;
-  const exitZ = Math.abs(backZ) > 1e-8 ? (Math.sign(backZ) * TABLE.halfDepth - cue.z) / backZ : Infinity;
+  const exitX = Math.abs(backX) > 1e-8 ? (Math.sign(backX) * spec.halfWidth - cue.x) / backX : Infinity;
+  const exitZ = Math.abs(backZ) > 1e-8 ? (Math.sign(backZ) * spec.halfDepth - cue.z) / backZ : Infinity;
   const railDistance = Math.min(exitX, exitZ);
   if (railDistance < distance + 0.3) height = Math.max(height, cueY + (0.25 * distance) / Math.max(0.2, railDistance));
   const position = new THREE.Vector3(cue.x - dx * distance, height, cue.z - dz * distance);
@@ -78,6 +82,7 @@ export function watchCameraPose(
   heading: number,
   aspect: number,
   target = new THREE.Vector3(0, -0.12, 0),
+  spec: TableSpec = EIGHT_BALL_TABLE,
 ): ShotCameraPose {
   const pitch = (35 * Math.PI) / 180;
   const direction = new THREE.Vector3(
@@ -86,7 +91,7 @@ export function watchCameraPose(
     -Math.sin(heading) * Math.cos(pitch),
   );
   const camera = new THREE.PerspectiveCamera(aspect < 0.8 ? 58 : 52, aspect, 0.08, 120);
-  fitTableCamera(camera, target, direction, aspect);
+  fitTableCamera(camera, target, direction, aspect, spec);
   return {
     position: camera.position.clone(),
     target: target.clone(),
@@ -135,7 +140,7 @@ export class ShotCameraRig {
     dt: number,
     spectatingAI = false,
   ): THREE.Vector3 {
-    const cue = state.balls[0],
+    const cue = state.balls[cueBallId(state)],
       watch = spectatingAI || state.phase !== 'ready' || cue.pocketed;
     if (watch && (!this.initialized || this.mode !== 'watch')) {
       if (this.initialized) {
@@ -150,7 +155,7 @@ export class ShotCameraRig {
       this.watchAnchored = true;
     }
     const pose = watch
-      ? watchCameraPose(this.watchHeading, aspect, this.watchTarget)
+      ? watchCameraPose(this.watchHeading, aspect, this.watchTarget, tableOf(state))
       : shotCameraPose(state, shot, aspect);
     const relocation =
       pose.mode === 'shoot' &&

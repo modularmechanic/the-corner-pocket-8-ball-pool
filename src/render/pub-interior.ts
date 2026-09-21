@@ -1,96 +1,25 @@
 import * as THREE from 'three';
+import { useWood } from './pub-wood';
 import { batchPubStatic } from './pub-batching';
-import { canvasTexture } from './materials';
-import { seededRandom } from '../simulation/types';
 import { PUB_LAYOUT, pubBackZ, pubFrontZ, pubSideX } from './pub-layout';
+import { PUB_BOUNDS, pubCutaway } from './pub-cutaway';
+import {
+  pubCurtainTexture,
+  pubDoormatTexture,
+  pubExitSignTexture,
+  pubStreetWindowTexture,
+  stoneTexture,
+} from './pub-interior-textures';
 import type { PropInstaller } from './asset-installer';
 
-export const PUB_BOUNDS = PUB_LAYOUT.bounds;
+export { PUB_BOUNDS, pubCutaway, billiardFixtureVisible, updateBilliardFixture } from './pub-cutaway';
+export { stoneTexture } from './pub-interior-textures';
 /** Prop paths relative to public/. */
 export const PUB_BRICK_MAPS = [
   ['map', 'textures/pub/brick-color.webp'],
   ['normalMap', 'textures/pub/brick-normal.webp'],
   ['roughnessMap', 'textures/pub/brick-roughness.webp'],
 ] as const;
-export function pubCutaway(camera: { x: number; y: number; z: number }) {
-  return {
-    left: camera.x > PUB_BOUNDS.left + 0.45,
-    right: camera.x < PUB_BOUNDS.right - 0.45,
-    back: camera.z > PUB_BOUNDS.back + 0.45,
-    front: camera.z < PUB_BOUNDS.front - 0.45,
-    ceiling: camera.y < PUB_BOUNDS.ceiling - 0.65,
-  };
-}
-
-/** Keep the hanging fixture in oblique views, but remove its silhouette before it covers the table. */
-export function billiardFixtureVisible(camera: THREE.Camera): boolean {
-  if (camera instanceof THREE.OrthographicCamera) return false;
-  const table = new THREE.Box2(),
-    fixture = new THREE.Box2();
-  for (const x of [-6.45, 6.45])
-    for (const z of [-3.5, 3.5]) {
-      const p = new THREE.Vector3(x, 0.4, z).project(camera);
-      table.expandByPoint(new THREE.Vector2(p.x, p.y));
-    }
-  for (const x of [-3, 3])
-    for (const y of [3.75, 6.25])
-      for (const z of [-0.86, 0.86]) {
-        const p = new THREE.Vector3(x, y, z).project(camera);
-        fixture.expandByPoint(new THREE.Vector2(p.x, p.y));
-      }
-  table.expandByScalar(0.012);
-  return !table.intersectsBox(fixture);
-}
-const fixtureViews = new WeakMap<THREE.Group, { view: THREE.Matrix4; projection: THREE.Matrix4 }>();
-export function updateBilliardFixture(group: THREE.Group, camera: THREE.Camera): void {
-  const last = fixtureViews.get(group);
-  if (last && last.view.equals(camera.matrixWorldInverse) && last.projection.equals(camera.projectionMatrix)) return;
-  group.visible = billiardFixtureVisible(camera);
-  if (last) {
-    last.view.copy(camera.matrixWorldInverse);
-    last.projection.copy(camera.projectionMatrix);
-  } else
-    fixtureViews.set(group, { view: camera.matrixWorldInverse.clone(), projection: camera.projectionMatrix.clone() });
-}
-
-export function stoneTexture() {
-  const random = seededRandom('corner-pocket-flagstones');
-  const texture = canvasTexture(1024, 1024, (ctx) => {
-    ctx.fillStyle = '#51483c';
-    ctx.fillRect(0, 0, 1024, 1024);
-    for (let row = 0; row < 8; row++)
-      for (let col = -1; col < 5; col++) {
-        const x = col * 256 + (row % 2) * 128,
-          y = row * 128,
-          tone = 88 + random() * 34;
-        ctx.fillStyle = `rgb(${tone * 1.1},${tone},${tone * 0.83})`;
-        ctx.fillRect(x + 3, y + 3, 250, 122);
-        for (let n = 0; n < 180; n++) {
-          const px = x + random() * 256,
-            py = y + random() * 128;
-          ctx.fillStyle = random() > 0.4 ? '#c9c1a409' : '#211d1812';
-          ctx.beginPath();
-          ctx.ellipse(px, py, random() * 22 + 1, random() * 9 + 1, random() * 3, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.strokeStyle = '#d0c3a62c';
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(x + 6, y + 6, 244, 116);
-        if (random() > 0.4) {
-          ctx.strokeStyle = '#211f1933';
-          ctx.lineWidth = 0.6;
-          ctx.beginPath();
-          ctx.moveTo(x + 110, y + 4);
-          ctx.lineTo(x + 119, y + 25);
-          ctx.lineTo(x + 115, y + 52);
-          ctx.lineTo(x + 129, y + 65);
-          ctx.stroke();
-        }
-      }
-  });
-  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-  return texture;
-}
 
 /** A complete interior, with separate walls so exterior game cameras can cut away the nearest face. */
 export function buildPubInterior(
@@ -166,46 +95,9 @@ export function buildPubInterior(
     roughness: 0.35,
   });
   const frameMat = new THREE.MeshStandardMaterial({ color: '#eee0b3', roughness: 0.69 });
-  const curtainTex = canvasTexture(128, 256, (ctx) => {
-    ctx.fillStyle = '#762b2d';
-    ctx.fillRect(0, 0, 128, 256);
-    for (let i = 0; i < 128; i++) {
-      const t = Math.sin(i * 0.28);
-      ctx.fillStyle = `rgba(${t > 0 ? '245,192,123' : '20,7,8'},${Math.abs(t) * 0.22})`;
-      ctx.fillRect(i, 0, 1, 256);
-    }
-    for (let y = 3; y < 256; y += 8) {
-      ctx.fillStyle = '#edc78b15';
-      ctx.fillRect(0, y, 128, 1);
-    }
-  });
+  const curtainTex = pubCurtainTexture();
   const curtain = new THREE.MeshStandardMaterial({ map: curtainTex, roughness: 0.96, side: THREE.DoubleSide });
-  const windowTex = canvasTexture(512, 512, (ctx) => {
-    const sky = ctx.createLinearGradient(0, 0, 0, 512);
-    sky.addColorStop(0, '#101823');
-    sky.addColorStop(1, '#283039');
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, 512, 512);
-    const random = seededRandom('pub-street');
-    for (let i = 0; i < 7; i++) {
-      const x = i * 87 - 20,
-        h = 100 + random() * 160;
-      ctx.fillStyle = i % 2 ? '#6b736b' : '#6e6b5a';
-      ctx.fillRect(x, 512 - h, 78, h);
-      ctx.fillStyle = '#d1ba7b';
-      for (let y = 530 - h; y < 470; y += 48) for (let xx = x + 13; xx < x + 70; xx += 28) ctx.fillRect(xx, y, 11, 21);
-    }
-    for (let i = 0; i < 450; i++) {
-      ctx.strokeStyle = '#eff6dd2b';
-      ctx.lineWidth = 1;
-      const x = random() * 512,
-        y = random() * 512;
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(x - 3, y + 8 + random() * 18);
-      ctx.stroke();
-    }
-  });
+  const windowTex = pubStreetWindowTexture();
   const glazing = new THREE.MeshPhysicalMaterial({
     map: windowTex,
     color: '#60717d',
@@ -217,6 +109,10 @@ export function buildPubInterior(
     emissiveIntensity: 0.035,
   });
   // Two inward-facing masonry bays replace the central right windows, like the reference pub gallery.
+  // The dado band that runs round the room at bench height is glazed tile, the way a pub's wet wall
+  // is: boards above, tile below, the same on every wall.
+  const tile = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.22, metalness: 0.02 });
+  useWood(tile, 'tiles', 8, 1);
   const brick = new THREE.MeshStandardMaterial({
     normalScale: new THREE.Vector2(0.55, 0.55),
     color: '#d8c6ad',
@@ -239,13 +135,15 @@ export function buildPubInterior(
   for (const side of [-1, 1]) {
     const parent = side < 0 ? walls.left : walls.right,
       x = side * PUB_BOUNDS.right;
-    box(0.24, 2.2, depth, wood, x, floor + 1.1, centreZ, parent);
+    box(0.24, 2.2, depth, tile, x, floor + 1.1, centreZ, parent);
     box(0.24, 0.8, depth, cream, x, -1, centreZ, parent);
     box(0.24, 2.38, depth, cream, x, 5.21, centreZ, parent);
     let edge = PUB_BOUNDS.back;
     for (const centre of [...bays, PUB_BOUNDS.front + 2.275]) {
       const start = centre - 2.275;
-      if (start > edge) box(0.24, 4.65, start - edge, cream, x, 1.7, (start + edge) / 2, parent);
+      // The piers between the windows are masonry, not boards: a window reveal framed in oak on
+      // both sides read as panelling with holes in it.
+      if (start > edge) box(0.24, 4.65, start - edge, brick, x, 1.7, (start + edge) / 2, parent);
       edge = centre + 2.275;
     }
     for (let index = 0; index < bays.length; index++) {
@@ -276,12 +174,15 @@ export function buildPubInterior(
   }
   box(width, 10, 0.24, cream, 0, 1.4, PUB_BOUNDS.back, walls.back);
   // The previously empty front is now an entrance wall, with sidelights and two snug seating bays.
-  const burgundy = new THREE.MeshStandardMaterial({ color: '#803c37', roughness: 0.94 });
+  // The entrance bays were the one painted surface left in a room of boards; they take the same
+  // scanned oak as every other wall so all four walls read as one room.
+  const burgundy = new THREE.MeshStandardMaterial({ color: '#c9b396', roughness: 0.86 });
+  useWood(burgundy, 'oak', 6, 2.6);
   for (const side of [-1, 1]) {
     const bayWidth = PUB_BOUNDS.right - 3.5,
       x = side * (3.5 + bayWidth / 2);
     box(bayWidth, 10, 0.24, burgundy, x, 1.4, PUB_BOUNDS.front, walls.front);
-    box(bayWidth, 2.2, 0.3, wood, x, floor + 1.1, PUB_BOUNDS.front - 0.17, walls.front);
+    box(bayWidth, 2.2, 0.3, tile, x, floor + 1.1, PUB_BOUNDS.front - 0.17, walls.front);
   }
   box(7, 3, 0.24, cream, 0, 4.9, PUB_BOUNDS.front, walls.front);
   const door = new THREE.Group();
@@ -300,14 +201,7 @@ export function buildPubInterior(
     for (const y of [1.3, 3.5, 5.7]) box(1.12, 0.065, 0.1, wood, x, y, 0.2, door);
   }
   box(7.1, 0.22, 0.43, wood, 0, 6.99, 0, door);
-  const exitTex = canvasTexture(256, 64, (ctx) => {
-    ctx.fillStyle = '#2c583b';
-    ctx.fillRect(0, 0, 256, 64);
-    ctx.fillStyle = '#e3f1cb';
-    ctx.textAlign = 'center';
-    ctx.font = 'bold 42px Arial';
-    ctx.fillText('EXIT  →', 128, 48);
-  });
+  const exitTex = pubExitSignTexture();
   box(
     1.1,
     0.3,
@@ -318,17 +212,7 @@ export function buildPubInterior(
     0.23,
     door,
   );
-  const matTex = canvasTexture(512, 256, (ctx) => {
-    ctx.fillStyle = '#544638';
-    ctx.fillRect(0, 0, 512, 256);
-    ctx.strokeStyle = '#b49d71';
-    ctx.lineWidth = 8;
-    ctx.strokeRect(16, 16, 480, 224);
-    ctx.fillStyle = '#b49d71';
-    ctx.textAlign = 'center';
-    ctx.font = 'bold 35px Georgia';
-    ctx.fillText('THE CORNER POCKET', 256, 141);
-  });
+  const matTex = pubDoormatTexture();
   const doormat = new THREE.Mesh(
     new THREE.PlaneGeometry(3.7, 1.65),
     new THREE.MeshStandardMaterial({ map: matTex, roughness: 1 }),
@@ -348,7 +232,11 @@ export function buildPubInterior(
     centreZ,
     walls.ceiling,
   );
-  for (const z of [-8, -1, 6]) box(width, 0.45, 0.42, wood, 0, 6.09, z * PUB_LAYOUT.expansion, walls.ceiling);
+  // Beams stay on their authored ~7-unit pitch and fill the depth, so a longer room gains a beam rather
+  // than stretching three of them apart and leaving bare ceiling over each end of the table.
+  const beams = Math.max(3, Math.round(depth / 7));
+  for (let i = 0; i < beams; i++)
+    box(width, 0.45, 0.42, wood, 0, 6.09, PUB_BOUNDS.back + (depth * (i + 0.5)) / beams, walls.ceiling);
   for (const x of [-10, 10]) box(0.38, 0.32, depth, wood, pubSideX(x), 6.15, centreZ, walls.ceiling);
   // The detailed Blender-authored billiard pendant is installed by buildPub.
   for (const oldX of [-10.5, 10.5])
@@ -389,54 +277,7 @@ export function buildPubInterior(
         box(0.24, 0.09, 1.87, radiator, side * (PUB_BOUNDS.right - 0.5), y, z, parent);
       cylinder(0.035, 0.85, brass, side * (PUB_BOUNDS.right - 0.5), floor + 0.48, z + 1.06, parent);
     }
-  // Dartboard, surround and hand-written scoreboard in the front-left snug.
-  const darts = canvasTexture(512, 512, (ctx) => {
-    ctx.fillStyle = '#27241f';
-    ctx.fillRect(0, 0, 512, 512);
-    const nums = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
-    for (let i = 0; i < 20; i++) {
-      const a = ((i - 0.5) / 20) * Math.PI * 2 - Math.PI / 2,
-        b = ((i + 0.5) / 20) * Math.PI * 2 - Math.PI / 2;
-      ctx.beginPath();
-      ctx.moveTo(256, 256);
-      ctx.arc(256, 256, 192, a, b);
-      ctx.closePath();
-      ctx.fillStyle = i % 2 ? '#d9caa5' : '#262920';
-      ctx.fill();
-      for (const [r, w] of [
-        [178, 13],
-        [111, 11],
-      ]) {
-        ctx.beginPath();
-        ctx.arc(256, 256, r, a, b);
-        ctx.strokeStyle = i % 2 ? '#37684e' : '#923f37';
-        ctx.lineWidth = w;
-        ctx.stroke();
-      }
-      ctx.fillStyle = '#ded4b6';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.font = '23px Georgia';
-      const mid = (a + b) / 2;
-      ctx.fillText(String(nums[i]), 256 + Math.cos(mid) * 216, 256 + Math.sin(mid) * 216);
-    }
-    ctx.beginPath();
-    ctx.arc(256, 256, 16, 0, Math.PI * 2);
-    ctx.fillStyle = '#37684e';
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(256, 256, 7, 0, Math.PI * 2);
-    ctx.fillStyle = '#923f37';
-    ctx.fill();
-  });
-  box(2.95, 3.15, 0.14, wood, pubSideX(-4.82), 1.66, pubFrontZ(11.74), walls.front);
-  const board = new THREE.Mesh(
-    new THREE.CircleGeometry(1.27, 64),
-    new THREE.MeshStandardMaterial({ map: darts, roughness: 0.94 }),
-  );
-  board.rotation.y = Math.PI;
-  board.position.set(pubSideX(-4.82), 1.65, pubFrontZ(11.64));
-  walls.front.add(board);
+  // The darts wall is the cabinet model in pub-sports-props, which carries its own backing and doors.
   // Practical wall sconces and broad fills reveal details in the entire room.
   for (const [oldX, oldZ] of [
     [-13.8, 3.4],
@@ -453,7 +294,37 @@ export function buildPubInterior(
     light.position.set(x * 0.92, 3.65, z * 0.93);
     room.add(light);
   }
-  const fill = new THREE.PointLight('#eeb97e', 6, 10, 2);
+  // Ceiling pendants on the room's own grid, clear of the table's rig. Each is a practical: the
+  // shade is visible, the light under it lands on the floor and furniture below, and the budget
+  // picks whichever are nearest the camera. They are what gives the room its pools of light.
+  const pendantShade = new THREE.MeshStandardMaterial({ color: '#2b2118', roughness: 0.62, metalness: 0.18 });
+  const pendantGlow = new THREE.MeshStandardMaterial({
+    color: '#ffd9a0',
+    emissive: '#ffbe72',
+    emissiveIntensity: 1.5,
+    roughness: 0.5,
+  });
+  for (const [px, pz] of [
+    [-11.5, -6.5],
+    [11.5, -6.5],
+    [-11.5, 1.5],
+    [11.5, 1.5],
+    [-11.5, 9.5],
+    [11.5, 9.5],
+    [0, pubFrontZ(9.4)],
+  ] as const) {
+    const x = Math.abs(px) > 8 ? pubSideX(px) : px;
+    cylinder(0.035, 1.05, brass, x, 5.85, pz, props);
+    const shade = cylinder(0.52, 0.46, pendantShade, x, 5.15, pz, props);
+    shade.castShadow = false;
+    const bulb = cylinder(0.18, 0.16, pendantGlow, x, 4.98, pz, props);
+    bulb.castShadow = false;
+    const down = new THREE.PointLight('#ffca8a', 16, 12, 2);
+    down.position.set(x, 4.8, pz);
+    room.add(down);
+  }
+  // A single low fill keeps the corners from going to black; the pendants carry the room.
+  const fill = new THREE.PointLight('#eeb97e', 2.5, 10, 2);
   fill.position.set(0, 5.45, pubFrontZ(6.8));
   room.add(fill);
   // Static trim, glazing and furniture details are merged by material per cutaway section.

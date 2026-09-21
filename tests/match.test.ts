@@ -6,6 +6,7 @@ import { canAdvance } from '../src/match/policy';
 import { MAX_LEVEL, normalizeLevel } from '../src/simulation/level-policy';
 import { activeSeat, type GameState, type TableEvent } from '../src/simulation/types';
 import { SnapshotTimeline, NETWORK_DELAY } from '../src/match/timeline';
+import { rackOptions, type Preferences } from '../src/ui/player-profile';
 before(initPhysics);
 function settled(match: LocalMatch) {
   for (let i = 0; i < 4000 && match.state.phase === 'rolling'; i++) match.update(MATCH_STEP, { aiPaused: true });
@@ -325,5 +326,55 @@ test('snapshot timeline samples collisions together and drops stale effects when
     assert.deepEqual(timeline.drainEvents(1000), []);
   } finally {
     match.dispose();
+  }
+});
+
+test("the menu's chosen game reaches PoolGame, and a reset keeps it", () => {
+  // The menu's only handle on the mode is `rackOptions`, which reads the saved preference; main.ts hands the
+  // result straight to LocalMatch. Drive the same path here so a break anywhere along it fails this test.
+  const preferences = { layout: 'crossfire', level: 1, format: 'singles', rules: 'new', game: 'snooker' } as const;
+  const expected = { 'eight-ball': 16, snooker: 22, billiards: 3 } as const;
+  for (const [game, balls] of Object.entries(expected) as [keyof typeof expected, number][]) {
+    const options = rackOptions({ ...preferences, game } as unknown as Preferences, 'singles', null);
+    assert.equal(options.mode, game);
+    const match = new LocalMatch({ seed: 'menu-mode', mode: 'ai', options });
+    try {
+      assert.equal(match.state.mode ?? 'eight-ball', game);
+      assert.equal(match.state.balls.length, balls);
+      // A rematch or a new rack must not quietly drop back to eight-ball.
+      assert.equal(match.dispatch({ type: 'reset' }).ok, true);
+      assert.equal(match.state.mode ?? 'eight-ball', game);
+      assert.equal(match.state.balls.length, balls);
+      // A running session keeps its own game, whatever the menu preference now says.
+      assert.equal(
+        rackOptions({ ...preferences, game: 'eight-ball' } as unknown as Preferences, 'singles', match.state).mode,
+        game,
+      );
+    } finally {
+      match.dispose();
+    }
+  }
+});
+
+test('conceding ends a snooker frame and a billiards game, and eight-ball has no such command', () => {
+  for (const [mode, conceded] of [
+    ['snooker', true],
+    ['billiards', true],
+    ['eight-ball', false],
+  ] as const) {
+    const match = new LocalMatch({ seed: 'concede', mode: 'local', options: { mode } });
+    try {
+      assert.equal(match.dispatch({ type: 'concede' }).ok, conceded);
+      assert.equal(match.state.phase === 'over', conceded);
+      if (conceded) assert.equal(match.state.winner, 1);
+      // Choosing a group is meaningless outside eight-ball, whatever phase the state claims.
+      const state = match.snapshot();
+      state.phase = 'choose-group';
+      state.winner = null;
+      match.arrange(state);
+      assert.equal(match.dispatch({ type: 'group', group: 'solids' }).ok, mode === 'eight-ball');
+    } finally {
+      match.dispose();
+    }
   }
 });

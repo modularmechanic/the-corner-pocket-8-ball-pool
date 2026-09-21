@@ -1,4 +1,6 @@
+import { cushionGaps, EIGHT_BALL_TABLE, tableOf, type PlacementZone, type TableSpec } from './modes/table';
 import {
+  cueBallId,
   legalTargets,
   optionalPlacement,
   POCKETS,
@@ -18,27 +20,56 @@ interface Rectangle extends Point {
   depth: number;
 }
 export const RAIL_RESTITUTION = 0.83;
-export const TABLE_RAILS = [-1, 1].flatMap((sign) => [
-  { x: sign * 5.83, z: 0, halfWidth: 0.13, halfDepth: 2.48, y: 0.13, halfHeight: 0.3, restitution: RAIL_RESTITUTION },
-  ...[-2.84, 2.84].map((x) => ({
-    x,
-    z: sign * 2.98,
-    halfWidth: 2.43,
-    halfDepth: 0.13,
-    y: 0.13,
-    halfHeight: 0.3,
-    restitution: RAIL_RESTITUTION,
-  })),
-]);
-export const TABLE_NOSES = [-1, 1].flatMap((side) =>
-  [-5.2, -0.41, 0.41, 5.2].map((x) => ({
-    x,
-    z: side * (Math.abs(x) > 5 ? 2.91 : 2.87),
-    radius: 0.075,
-    y: 0.13,
-    restitution: 0.8,
-  })),
-);
+/** Cushion thickness, shared by every table. */
+const RAIL_THICKNESS = 0.13;
+/** Cushions for one table: two end rails and four side rails, leaving the six pocket mouths open. */
+export function railsOf(spec: TableSpec) {
+  const { corner, sideInset, middle } = cushionGaps(spec.pocketRadius);
+  const inner = spec.halfWidth - sideInset;
+  return [-1, 1].flatMap((sign) => [
+    {
+      x: sign * (spec.halfWidth + RAIL_THICKNESS),
+      z: 0,
+      halfWidth: RAIL_THICKNESS,
+      halfDepth: spec.halfDepth - corner,
+      y: 0.13,
+      halfHeight: 0.3,
+      restitution: RAIL_RESTITUTION,
+    },
+    ...[-1, 1].map((side) => ({
+      // Rounded, like pocketsFor, so the derived pool rails are bit-for-bit the hand-written ones they replace.
+      x: Math.round(((side * (middle + inner)) / 2) * 1e9) / 1e9,
+      z: sign * (spec.halfDepth + RAIL_THICKNESS),
+      halfWidth: (inner - middle) / 2,
+      halfDepth: RAIL_THICKNESS,
+      y: 0.13,
+      halfHeight: 0.3,
+      restitution: RAIL_RESTITUTION,
+    })),
+  ]);
+}
+/** Pocket jaws: the rounded cushion noses either side of each mouth. */
+export function nosesOf(spec: TableSpec) {
+  const { middle, jawInset, jawRadius } = cushionGaps(spec.pocketRadius);
+  const outer = spec.halfWidth - jawInset;
+  return [-1, 1].flatMap((side) =>
+    [-outer, -middle, middle, outer].map((x) => ({
+      x,
+      z: side * (spec.halfDepth + (Math.abs(x) > middle ? 0.06 : 0.02)),
+      radius: jawRadius,
+      y: 0.13,
+      restitution: 0.8,
+    })),
+  );
+}
+const railCache = new Map<TableSpec, { rails: ReturnType<typeof railsOf>; noses: ReturnType<typeof nosesOf> }>();
+function cushionsOf(spec: TableSpec) {
+  let entry = railCache.get(spec);
+  if (!entry) railCache.set(spec, (entry = { rails: railsOf(spec), noses: nosesOf(spec) }));
+  return entry;
+}
+export const TABLE_RAILS = cushionsOf(EIGHT_BALL_TABLE).rails;
+export const TABLE_NOSES = cushionsOf(EIGHT_BALL_TABLE).noses;
 export const ROLLING_RESISTANCE = { constant: 0.42, linear: 0.12 } as const;
 export const STICKY_DRAG = 2.4;
 export const AIR_DRAG = 0.015;
@@ -149,6 +180,8 @@ export interface TableContact extends Point {
  * cushion never snookers, a jaw only when it is close to the cue ball). Two ball diameters. */
 export const JAW_SNOOKER_RANGE = TABLE.radius * 4;
 export function firstTableBoundary(state: GameState, origin: Point, angle: number, snookerLine = false): TableContact {
+  const spec = tableOf(state),
+    { rails, noses } = cushionsOf(spec);
   const dx = Math.cos(angle),
     dz = Math.sin(angle);
   let nearest: TableContact = { kind: 'edge', id: -1, distance: Infinity, x: origin.x, z: origin.z };
@@ -160,27 +193,27 @@ export function firstTableBoundary(state: GameState, origin: Point, angle: numbe
     if (!snookerLine || length <= JAW_SNOOKER_RANGE) accept(kind, id, length);
   };
   if (!snookerLine)
-    for (const [id, rail] of TABLE_RAILS.entries())
+    for (const [id, rail] of rails.entries())
       accept(
         'rail',
         id,
-        roundedBoxRay(origin, dx, dz, { ...rail, width: rail.halfWidth * 2, depth: rail.halfDepth * 2 }, TABLE.radius),
+        roundedBoxRay(origin, dx, dz, { ...rail, width: rail.halfWidth * 2, depth: rail.halfDepth * 2 }, spec.radius),
       );
-  for (const [id, nose] of TABLE_NOSES.entries()) {
-    const radius = Math.sqrt((TABLE.radius + nose.radius) ** 2 - (TABLE.radius - nose.y) ** 2);
-    jaw('rail', TABLE_RAILS.length + id, circleRay(origin, dx, dz, nose, radius));
+  for (const [id, nose] of noses.entries()) {
+    const radius = Math.sqrt((spec.radius + nose.radius) ** 2 - (spec.radius - nose.y) ** 2);
+    jaw('rail', rails.length + id, circleRay(origin, dx, dz, nose, radius));
   }
   for (const obstacle of state.arcade?.obstacles ?? [])
-    if (obstacle.hp > 0) accept('obstacle', obstacle.id, roundedBoxRay(origin, dx, dz, obstacle, TABLE.radius));
+    if (obstacle.hp > 0) accept('obstacle', obstacle.id, roundedBoxRay(origin, dx, dz, obstacle, spec.radius));
   for (const hazard of state.arcade?.hazards ?? [])
     if (hazard.kind === 'portal') accept('portal', hazard.id, circleRay(origin, dx, dz, hazard, hazard.radius));
-  for (const [id, pocket] of POCKETS.entries())
-    jaw('pocket', id, circleRay(origin, dx, dz, pocket, TABLE.pocketRadius));
+  for (const [id, pocket] of spec.pockets.entries())
+    jaw('pocket', id, circleRay(origin, dx, dz, pocket, spec.pocketRadius));
   // A grazing path may miss both a jaw and the pocket. Bound the preview at the
   // outer table, without inventing a cushion across that opening.
   if (!Number.isFinite(nearest.distance)) {
-    const x = Math.abs(dx) > 1e-9 ? (Math.sign(dx) * (TABLE.halfWidth + 0.4) - origin.x) / dx : Infinity;
-    const z = Math.abs(dz) > 1e-9 ? (Math.sign(dz) * (TABLE.halfDepth + 0.45) - origin.z) / dz : Infinity;
+    const x = Math.abs(dx) > 1e-9 ? (Math.sign(dx) * (spec.halfWidth + 0.4) - origin.x) / dx : Infinity;
+    const z = Math.abs(dz) > 1e-9 ? (Math.sign(dz) * (spec.halfDepth + 0.45) - origin.z) / dz : Infinity;
     accept('edge', -1, Math.max(0, Math.min(x, z)));
   }
   return nearest;
@@ -192,12 +225,13 @@ export function firstTableContact(
   ignoreBall = 0,
   snookerLine = false,
 ): TableContact {
+  const radius = tableOf(state).radius;
   const dx = Math.cos(angle),
     dz = Math.sin(angle);
   let nearest = firstTableBoundary(state, origin, angle, snookerLine);
   for (const ball of state.balls) {
-    if (ball.id === ignoreBall || ball.pocketed || (ball.elevation ?? 0) >= TABLE.radius * 2) continue;
-    const length = circleRay(origin, dx, dz, ball, Math.sqrt((TABLE.radius * 2) ** 2 - (ball.elevation ?? 0) ** 2));
+    if (ball.id === ignoreBall || ball.pocketed || (ball.elevation ?? 0) >= radius * 2) continue;
+    const length = circleRay(origin, dx, dz, ball, Math.sqrt((radius * 2) ** 2 - (ball.elevation ?? 0) ** 2));
     if (length < nearest.distance)
       nearest = { kind: 'ball', id: ball.id, distance: length, x: origin.x + dx * length, z: origin.z + dz * length };
   }
@@ -210,7 +244,7 @@ export function segmentClearOfTable(state: GameState, a: Point, b: Point): boole
   const contact = firstTableBoundary(state, a, Math.atan2(b.z - a.z, b.x - a.x));
   return (
     contact.distance >= length - 0.002 ||
-    (contact.kind === 'pocket' && distance(b, POCKETS[contact.id]) < TABLE.pocketRadius)
+    (contact.kind === 'pocket' && distance(b, tableOf(state).pockets[contact.id]) < tableOf(state).pocketRadius)
   );
 }
 
@@ -219,17 +253,25 @@ export function segmentClearOfTable(state: GameState, a: Point, b: Point): boole
  * immediately trigger another hazard or pocket. All distances are center gaps. */
 export type BallClearancePolicy =
   'placement' | 'ai-placement' | 'ai-fallback' | 'object-respot' | 'eight-respot' | 'ward-respot' | 'portal-exit';
+/** `pocketGap` is measured out from the mouth, so a tighter pocket keeps the same margin of felt around it. */
 const BALL_CLEARANCE = {
-  placement: { edge: 0.03, pocket: 0.4, block: 0.02, ball: 0.02, hazard: 'none', hazardGap: 0 },
-  'ai-placement': { edge: 0.03, pocket: 0.44, block: 0.025, ball: 0.035, hazard: 'all', hazardGap: 0.08 },
-  'ai-fallback': { edge: 0.03, pocket: 0.44, block: 0.025, ball: 0.035, hazard: 'active', hazardGap: 0.04 },
-  'object-respot': { edge: 0.05, pocket: 0.45, block: 0.03, ball: 0.025, hazard: 'none', hazardGap: 0 },
-  'eight-respot': { edge: 0.03, pocket: 0.4, block: 0.02, ball: TABLE.radius * 0.1, hazard: 'none', hazardGap: 0 },
-  'ward-respot': { edge: 0.05, pocket: 0.45, block: 0.03, ball: TABLE.radius * 0.1, hazard: 'all', hazardGap: 0.04 },
-  'portal-exit': { edge: 0.04, pocket: 0.48, block: 0.04, ball: 0.05, hazard: 'none', hazardGap: 0 },
+  placement: { edge: 0.03, pocketGap: 0.1, block: 0.02, ball: 0.02, hazard: 'none', hazardGap: 0 },
+  'ai-placement': { edge: 0.03, pocketGap: 0.14, block: 0.025, ball: 0.035, hazard: 'all', hazardGap: 0.08 },
+  'ai-fallback': { edge: 0.03, pocketGap: 0.14, block: 0.025, ball: 0.035, hazard: 'active', hazardGap: 0.04 },
+  'object-respot': { edge: 0.05, pocketGap: 0.15, block: 0.03, ball: 0.025, hazard: 'none', hazardGap: 0 },
+  'eight-respot': { edge: 0.03, pocketGap: 0.1, block: 0.02, ball: TABLE.radius * 0.1, hazard: 'none', hazardGap: 0 },
+  'ward-respot': { edge: 0.05, pocketGap: 0.15, block: 0.03, ball: TABLE.radius * 0.1, hazard: 'all', hazardGap: 0.04 },
+  'portal-exit': { edge: 0.04, pocketGap: 0.18, block: 0.04, ball: 0.05, hazard: 'none', hazardGap: 0 },
 } as const;
 /** The head string crosses the break spot; the kitchen lies behind it, towards the head rail. */
-export const HEAD_STRING_X = -TABLE.halfWidth / 2;
+export const HEAD_STRING_X = EIGHT_BALL_TABLE.placement.headStringX;
+/** Inside the mode's placement zone: behind the head string, and inside the D as well when the mode has one. */
+function inZone(zone: PlacementZone, point: Point): boolean {
+  return (
+    point.x <= zone.headStringX + 1e-9 &&
+    (zone.dRadius === undefined || Math.hypot(point.x - zone.headStringX, point.z) <= zone.dRadius + 1e-9)
+  );
+}
 /** Ball in hand is always placed in the kitchen (the baulk area) under both rule sets.
  * A kitchen with no clear spot opens the whole table for a lost cue ball rather than leaving the turn unplayable.
  * ponytail: "no clear spot" is judged on a 0.1 grid, so a narrower free sliver still counts as full. */
@@ -238,17 +280,22 @@ export function kitchenPlacement(state: GameState): boolean {
 }
 /** Optional placement: the cue ball is still on the table and may be played from exactly where it lies. */
 export function isCueLie(state: GameState, point: Point): boolean {
-  const cue = state.balls[0];
+  const cue = state.balls[cueBallId(state)];
   return !cue.pocketed && point.x === cue.x && point.z === cue.z;
 }
 /** Foul snooker test (EPA): the player cannot hit both extreme edges of any ball they are on in a straight line. Other
  * balls, blocks and portals block, and jaws and pocket mouths within JAW_SNOOKER_RANGE of the cue ball; straight
  * cushions and balls the player is on never do, and a ball already touching the cue ball is never snookered.
+ * Snooker reuses the same test for its free ball (WPBSA Section 2 Rule 16), passing its own balls on.
  * ponytail: each edge is one ray aimed just inside the extreme (6.3 / 6), so a blocker grazing the very rim is missed. */
-export function snookered(state: GameState, player: 0 | 1): boolean {
-  const cue = state.balls[0];
+export function snookered(
+  state: GameState,
+  player: 0 | 1,
+  targets: readonly Ball[] = legalTargets({ ...state, freeShot: false }, player),
+): boolean {
+  const cue = state.balls[cueBallId(state, player)];
   if (cue.pocketed) return false;
-  const targets = legalTargets({ ...state, freeShot: false }, player);
+  const radius = tableOf(state).radius;
   const reaches = (angle: number) => {
     const contact = firstTableContact(state, cue, angle, 0, true);
     return contact.kind === 'ball' && targets.some((ball) => ball.id === contact.id);
@@ -257,30 +304,37 @@ export function snookered(state: GameState, player: 0 | 1): boolean {
     targets.length > 0 &&
     !targets.some((target) => {
       const gap = distance(cue, target);
-      if (gap <= TABLE.radius * 2 + 1e-3) return true;
+      if (gap <= radius * 2 + 1e-3) return true;
       const centre = Math.atan2(target.z - cue.z, target.x - cue.x),
-        edge = Math.asin(((TABLE.radius * 2) / gap) * (6 / 6.3));
+        edge = Math.asin(((radius * 2) / gap) * (6 / 6.3));
       return reaches(centre - edge) && reaches(centre + edge);
     })
   );
 }
-/** Behind the head string. A kitchen with no clear spot opens the whole table only for a lost cue ball; an optional
- * placement then has just its lie left. */
+/** Behind the head string, or inside the D for a mode with one. A placement zone with no clear spot opens the whole
+ * table only for a lost cue ball; an optional placement then has just its lie left. */
 export function inPlacementZone(state: GameState, point: Point, kitchen = kitchenPlacement(state)): boolean {
-  return point.x <= HEAD_STRING_X + 1e-9 || (!kitchen && state.balls[0].pocketed);
+  return inZone(tableOf(state).placement, point) || (!kitchen && state.balls[cueBallId(state)].pocketed);
 }
 /** What an optional placement offers: 'kitchen' when the cue ball may move behind the head string, 'lie' when the
  * kitchen has no clear spot so only playing from where it lies remains, null when placement is not optional. */
 export function optionalPlacementChoice(state: GameState): 'kitchen' | 'lie' | null {
   return optionalPlacement(state) ? (kitchenPlacement(state) ? 'kitchen' : 'lie') : null;
 }
-/** First spot a human could place the cue ball, scanning away from the head string: into the kitchen, or across the rest of the table. */
+/** First spot a human could place the cue ball, scanning away from the head string: into the placement zone, or across the rest of the table. */
 export function firstPlacementSpot(state: GameState, kitchen: boolean): Point | null {
-  for (let column = 0; column <= 85; column++) {
-    const x = kitchen ? HEAD_STRING_X - column * 0.1 : HEAD_STRING_X + (column + 1) * 0.1;
-    if (Math.abs(x) > TABLE.halfWidth) break;
-    for (let row = -26; row <= 26; row++)
-      if (isClearBallSpot(state, { x, z: row * 0.1 }, 0, 'placement')) return { x, z: row * 0.1 };
+  const spec = tableOf(state),
+    zone = spec.placement;
+  const rows = Math.floor((spec.halfDepth - spec.radius - BALL_CLEARANCE.placement.edge) / 0.1);
+  const columns = Math.ceil((spec.halfWidth * 2) / 0.1);
+  for (let column = 0; column <= columns; column++) {
+    const x = kitchen ? zone.headStringX - column * 0.1 : zone.headStringX + (column + 1) * 0.1;
+    if (Math.abs(x) > spec.halfWidth) break;
+    for (let row = -rows; row <= rows; row++) {
+      const point = { x, z: row * 0.1 };
+      if ((!kitchen || inZone(zone, point)) && isClearBallSpot(state, point, cueBallId(state), 'placement'))
+        return point;
+    }
   }
   return null;
 }
@@ -290,22 +344,23 @@ export function isClearBallSpot(
   ignoreBall: number,
   policy: BallClearancePolicy,
 ): boolean {
-  const rule = BALL_CLEARANCE[policy];
+  const rule = BALL_CLEARANCE[policy],
+    spec = tableOf(state);
   return (
     Number.isFinite(point.x) &&
     Number.isFinite(point.z) &&
-    Math.abs(point.x) <= TABLE.halfWidth - TABLE.radius - rule.edge &&
-    Math.abs(point.z) <= TABLE.halfDepth - TABLE.radius - rule.edge &&
-    !POCKETS.some((pocket) => distance(point, pocket) < rule.pocket) &&
-    !obstructionAt(state.arcade, point.x, point.z, TABLE.radius + rule.block) &&
+    Math.abs(point.x) <= spec.halfWidth - spec.radius - rule.edge &&
+    Math.abs(point.z) <= spec.halfDepth - spec.radius - rule.edge &&
+    !spec.pockets.some((pocket) => distance(point, pocket) < spec.pocketRadius + rule.pocketGap) &&
+    !obstructionAt(state.arcade, point.x, point.z, spec.radius + rule.block) &&
     !state.balls.some(
-      (ball) => ball.id !== ignoreBall && !ball.pocketed && distance(point, ball) < TABLE.radius * 2 + rule.ball,
+      (ball) => ball.id !== ignoreBall && !ball.pocketed && distance(point, ball) < spec.radius * 2 + rule.ball,
     ) &&
     !(state.arcade?.hazards ?? []).some(
       (hazard) =>
         rule.hazard !== 'none' &&
         (rule.hazard === 'all' || ['portal', 'ramp', 'electric'].includes(hazard.kind)) &&
-        distance(point, hazard) < hazard.radius + TABLE.radius + rule.hazardGap,
+        distance(point, hazard) < hazard.radius + spec.radius + rule.hazardGap,
     )
   );
 }

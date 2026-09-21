@@ -18,7 +18,14 @@ export type RuleSet = 'old' | 'new';
 /** `ball-in-hand` places the cue ball: mandatory while it is off the table, optional (it may be shot from where it
  * lies instead) while it is still on the table. `choose-group` waits for the shooter to pick solids or stripes. */
 export type Phase = 'ready' | 'rolling' | 'ball-in-hand' | 'choose-group' | 'over';
-export type ArenaLayout = 'crossfire' | 'fortress' | 'gauntlet';
+/** Which game is being played. Absent means eight-ball, so states written before modes existed still load. */
+/** Modes settled by the shared cue-sports engine: the simulation produces a `ShotResult` and the mode
+ * judges it. These are the modes `MODES` in `./modes` can hold. */
+export type CueSportsModeId = 'eight-ball' | 'snooker' | 'billiards';
+/** Every mode, including ones that are not cue sports. The zombie mode owns its own physics and has no
+ * turns, fouls or pockets, so it is named here but deliberately absent from the cue-sports registry. */
+export type GameModeId = CueSportsModeId | 'zombie';
+export type ArenaLayout = 'crossfire' | 'fortress' | 'gauntlet' | 'riptide' | 'livewire' | 'blackout';
 export type HazardKind = 'ramp' | 'portal' | 'electric' | 'water' | 'slime' | 'smoke';
 export interface Hazard {
   id: number;
@@ -87,6 +94,25 @@ export interface Obstacle {
   maxHp: number;
   material: 'wood' | 'steel' | 'hex';
 }
+/** A scorch the Overdrive cue ball burned into the cloth. `heat` 0..1 is how fresh and fierce it is: it is both
+ * the look of the mark and how much it drags on any ball that crosses it. Scorches outlive the shot that made them. */
+export interface ScorchMark {
+  id: number;
+  x: number;
+  z: number;
+  radius: number;
+  heat: number;
+  /** Heading of the ball that burned it, in radians. The renderer stretches each mark along this so a
+   * trail reads as one dragged scar rather than a string of beads. Absent on marks laid at a standstill. */
+  angle?: number;
+}
+/** Ice a frozen cue ball left behind. `life` 0..1 is how much of it has not evaporated yet. */
+export interface FrostMark {
+  id: number;
+  x: number;
+  z: number;
+  life: number;
+}
 export interface PlayerBuffs {
   overdrive: number;
   frozen: number;
@@ -103,6 +129,10 @@ export interface ArcadeState {
   obstacles: Obstacle[];
   hazards: Hazard[];
   pickups: Pickup[];
+  /** Scorch marks burned by Overdrive, newest last. Capped, oldest dropped: see MARK_LIMIT in ./arcade. */
+  burns?: ScorchMark[];
+  /** Ice dropped by a frozen cue ball, newest last. Same cap, same ordering. */
+  frost?: FrostMark[];
   scratchStreak: [number, number];
   potStreak: [number, number];
   scores: [number, number];
@@ -121,7 +151,32 @@ export interface ArcadeState {
     tipY?: number;
   };
 }
+/** Snooker's own bookkeeping, attached like `arcade` is. Frame scores, the red/colour alternation and the free ball
+ * have no eight-ball equivalent, so they live here rather than widening GameState for every mode. */
+export interface SnookerState {
+  scores: [number, number];
+  /** The striker is on a colour, having just potted a red. False means on a red, or on the next colour of the clearance. */
+  onColour: boolean;
+  /** A free ball is on: the striker was snookered on every ball on after the opponent's foul (WPBSA Section 2 Rule 16). */
+  freeBall: boolean;
+  /** The frame was conceded by this player (WPBSA Section 3 Rule 15). */
+  conceded: 0 | 1 | null;
+  /** The black was respotted because the frame finished level: the next score or foul decides it (WPBSA Section 4 Rule 4). */
+  decider: boolean;
+}
+/** The horde's own bookkeeping, attached like `arcade` and `snooker` are. A run counts waves rather than racks, and
+ * `arcade.level` is pinned at 1 on purpose, so the wave has nowhere else to live. Kills, combo and score ride along
+ * so the HUD and the end-of-run dialog read one run record instead of the lossy arcade mapping beside it. */
+export interface HordeState {
+  /** The wave being fought, from 1. Waves survived is `wave - 1`. */
+  wave: number;
+  kills: number;
+  /** Kills in the shot just taken; reset when the next shot is fired. */
+  combo: number;
+  score: number;
+}
 export interface GameOptions {
+  mode?: GameModeId;
   layout?: ArenaLayout;
   level?: number;
   format?: GameFormat;
@@ -165,7 +220,11 @@ export interface GameState {
   foul: boolean;
   chalked: [boolean, boolean];
   lastShot?: Shot;
+  /** Absent means eight-ball. */
+  mode?: GameModeId;
   arcade?: ArcadeState;
+  snooker?: SnookerState;
+  horde?: HordeState;
   /** Engine continuation included by snapshot(), so a rolling arrangement can resume. */
   simulation?: SimulationContinuation;
 }
@@ -178,6 +237,10 @@ export interface Shot {
 }
 export interface ShotResult {
   firstContact: number | null;
+  /** Every object ball the cue ball struck, in contact order. Eight-ball and snooker judge a shot by
+   * `firstContact` alone, but an English Billiards cannon is contact with BOTH object balls, so a mode
+   * that scores cannons cannot be settled without this. Optional: fixtures and older callers omit it. */
+  contacts?: number[];
   potted: number[];
   railAfterContact: boolean;
   breakRails: number[];
@@ -190,6 +253,8 @@ export interface SimulationContinuation {
   stillTime: number;
   rollTime: number;
   portalRewardPending: boolean;
+  /** Pockets the ward has turned a ball away from during this shot, so a shielded ball cannot ping-pong forever. */
+  wardDeflects: number;
   pickupDraws: number;
   nextPickupAt: number;
   nextPickupId: number;
@@ -294,9 +359,16 @@ export function initialState(seed: string, format: GameFormat = 'singles', rules
   };
 }
 export const isBreakShot = (state: GameState): boolean => state.shotCount === 0 || state.rebreak;
+/** Which ball the striker strikes. Every mode here has a single cue ball at index 0 except English Billiards, where
+ * each side owns one: plain White for player 0, Yellow for player 1 (see `modes/billiards.ts`, whose `cueBallOf`
+ * is this same branch). Anything that means "the striker's cue ball" must ask here rather than assume `balls[0]`;
+ * anything that means "the entity at index 0" (a collision index, say) must not. `player` is explicit for the
+ * callers that judge a shot on someone else's behalf — the AI and the settlement's `context.shooter`. */
+export const cueBallId = (state: Pick<GameState, 'mode' | 'turn'>, player: 0 | 1 = state.turn): number =>
+  state.mode === 'billiards' && player === 1 ? 2 : 0;
 /** Optional placement: ball in hand while the cue ball is still on the table, so it may also be shot from where it lies. */
-export const optionalPlacement = (state: Pick<GameState, 'phase' | 'balls'>): boolean =>
-  state.phase === 'ball-in-hand' && !state.balls[0].pocketed;
+export const optionalPlacement = (state: Pick<GameState, 'phase' | 'balls' | 'mode' | 'turn'>): boolean =>
+  state.phase === 'ball-in-hand' && !state.balls[cueBallId(state)].pocketed;
 /** Balls the shooter may hit first. A free shot or free ball allows any ball. */
 export function legalTargets(state: GameState, player = state.turn): Ball[] {
   const active = state.balls.filter((b) => !b.pocketed && b.id !== 0);

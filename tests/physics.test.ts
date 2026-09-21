@@ -249,25 +249,19 @@ test('ball-in-hand rejects live obstacles and accepts clear felt', () => {
   }
 });
 
-test('queued Heavy cue adds drag for one shot and Deadeye is consumed into that shot’s preview state', () => {
+test('queued Heavy cue adds drag for one shot', () => {
   const speeds: number[] = [];
   for (const affected of [false, true]) {
     const game = new PoolGame(`queued-status-${affected}`);
     try {
       fixture(game, { 0: { x: -2, z: 0 }, 1: { x: 3, z: 0 } });
-      if (affected) {
+      if (affected)
         edit(game, (state) => {
           state.arcade!.buffs[0].sticky = 1;
         });
-        edit(game, (state) => {
-          state.arcade!.buffs[0].focus = 1;
-        });
-      }
       game.shoot({ angle: 0, power: 0.2 });
       assert.equal(game.state.arcade!.activeShot.sticky, affected);
-      assert.equal(game.state.arcade!.activeShot.focus, affected);
       assert.equal(game.state.arcade!.buffs[0].sticky, 0);
-      assert.equal(game.state.arcade!.buffs[0].focus, 0);
       for (let step = 0; step < 24; step++) game.step();
       speeds.push(Math.hypot(game.state.balls[0].vx, game.state.balls[0].vz));
     } finally {
@@ -277,7 +271,7 @@ test('queued Heavy cue adds drag for one shot and Deadeye is consumed into that 
   assert.ok(speeds[1] < speeds[0] - 0.2, 'Heavy cue meaningfully increases cloth drag');
 });
 
-test('scratch shield restores a pocketed cue, while an unshielded scratch leaves it pocketed', () => {
+test('the ward turns the cue ball away from the pocket, while an unshielded scratch drops', () => {
   for (const shielded of [false, true]) {
     const game = new PoolGame(`shield-${shielded}`);
     try {
@@ -294,18 +288,31 @@ test('scratch shield restores a pocketed cue, while an unshielded scratch leaves
       game.onEvent = (event) => events.push(event);
       game.shoot({ angle: -Math.PI / 2, power: 0.2 });
       settle(game);
-      assert.ok(events.some((event) => event.kind === 'pocket' && event.ball === 0));
+      assert.equal(
+        events.some((event) => event.kind === 'pocket' && event.ball === 0),
+        !shielded,
+      );
+      assert.equal(
+        events.some((event) => event.power === 'ward' && event.ball === 0),
+        shielded,
+        'a turned-away ball announces the shield that saved it',
+      );
       assert.equal(game.state.balls[0].pocketed, !shielded);
-      if (shielded)
+      if (shielded) {
         assert.ok(!obstructionAt(game.state.arcade, game.state.balls[0].x, game.state.balls[0].z, TABLE.radius));
-      assert.equal(game.state.arcade!.buffs[0].ward, 0, 'shield is consumed by this shot');
+        assert.ok(
+          Math.hypot(game.state.balls[0].x, game.state.balls[0].z + 2.95) > 0.3,
+          'the saved ball is left outside the pocket mouth, not sitting in it',
+        );
+      }
+      assert.equal(game.state.arcade!.buffs[0].ward, 0, 'a shield that saved a scratch does not re-arm');
     } finally {
       game.dispose();
     }
   }
 });
 
-test('scratch shield never rescues a scratch when the eight is also pocketed', () => {
+test('the ward shields the black too, and the same stroke loses the rack once the shield is spent', () => {
   const game = new PoolGame('eight-shield');
   try {
     fixture(game, { 0: { x: 0, z: -2.4 }, 8: { x: 0, z: 2.4 } });
@@ -318,6 +325,27 @@ test('scratch shield never rescues a scratch when the eight is also pocketed', (
     edit(game, (state) => {
       state.arcade!.buffs[0].ward = 1;
     });
+    game.shoot({ angle: -Math.PI / 2, power: 0.2 });
+    edit(game, (state) => {
+      state.balls[8].vz = 3;
+    });
+    settle(game);
+    assert.notEqual(game.state.phase, 'over', 'a shielded black cannot lose the rack');
+    assert.equal(game.state.winner, null);
+    assert.equal(game.state.balls[0].pocketed, false);
+    assert.equal(game.state.balls[8].pocketed, false);
+    // Same stroke, no shield left: both drop and the rack is lost.
+    edit(game, (state) => {
+      state.turn = 0;
+      state.phase = 'ready';
+    });
+    edit(game, (state) => {
+      Object.assign(state.balls[0], { x: 0, z: -2.4, vx: 0, vz: 0 });
+    });
+    edit(game, (state) => {
+      Object.assign(state.balls[8], { x: 0, z: 2.4, vx: 0, vz: 0 });
+    });
+    assert.equal(game.state.arcade!.buffs[0].ward, 0);
     game.shoot({ angle: -Math.PI / 2, power: 0.2 });
     edit(game, (state) => {
       state.balls[8].vz = 3;

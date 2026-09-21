@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { TABLE } from '../simulation/types';
-import { HEAD_STRING_X, TABLE_RAILS, TABLE_NOSES } from '../simulation/table-geometry';
+import { nosesOf, railsOf } from '../simulation/table-geometry';
+import { EIGHT_BALL_TABLE, type TableSpec } from '../simulation/modes/table';
 import { canvasTexture } from './materials';
 import {
   buildPocketDetails,
@@ -19,12 +20,17 @@ export function enableTableShadows(object: THREE.Object3D) {
     if (child instanceof THREE.Mesh) child.layers.enable(TABLE_SHADOW_LAYER);
   });
 }
-// Cushion noses stand on the playing edge (TABLE_RAILS); the cloth runs a ball radius beneath them.
-export const CLOTH_HALF_WIDTH = TABLE.halfWidth + TABLE.radius,
-  CLOTH_HALF_DEPTH = TABLE.halfDepth + TABLE.radius;
-// Wooden rail caps begin just beyond the cloth and cover the cushion backs.
-const SIDE_CAP_Z = CLOTH_HALF_DEPTH + 0.26,
-  END_CAP_X = CLOTH_HALF_WIDTH + 0.23;
+/** Every cabinet measurement below is a pub-table one scaled onto the mode's slate: the cloth reaches a ball radius
+ * past the cushion faces, and the timber around it keeps the same proportions. Both scales are exactly 1 on the
+ * eight-ball table, so it is drawn from the identical numbers it always was. */
+function cabinetOf(spec: TableSpec) {
+  return {
+    clothHalfWidth: spec.halfWidth + spec.radius,
+    clothHalfDepth: spec.halfDepth + spec.radius,
+    sx: spec.halfWidth / TABLE.halfWidth,
+    sz: spec.halfDepth / TABLE.halfDepth,
+  };
+}
 
 export type TableModelSurfaces = Pick<
   TableSurfaces,
@@ -52,10 +58,43 @@ export function drawTableTextures(balls: readonly THREE.Texture[]): TableTexture
 export class TableModel {
   /** Every scene child this model added: the only objects that may block the table controls. */
   readonly occluders: THREE.Object3D[] = [];
-  readonly chalkControls: THREE.Object3D[];
-  readonly pocketDetails: ReturnType<typeof buildPocketDetails>;
-  readonly details: TableDetails;
-  constructor(scene: THREE.Scene, surfaces: TableModelSurfaces, textures: TableTextures) {
+  chalkControls: THREE.Object3D[] = [];
+  pocketDetails!: ReturnType<typeof buildPocketDetails>;
+  details!: TableDetails;
+  private spec!: TableSpec;
+  constructor(
+    private readonly scene: THREE.Scene,
+    private readonly surfaces: TableModelSurfaces,
+    private readonly textures: TableTextures,
+    spec: TableSpec = EIGHT_BALL_TABLE,
+  ) {
+    this.build(spec);
+  }
+  /** Redraw for a mode whose slate differs; the same table is left alone. */
+  sync(spec: TableSpec): void {
+    if (spec === this.spec) return;
+    this.clear();
+    this.build(spec);
+  }
+  /** Drops the drawn table. Materials and textures belong to the caller and outlive it. */
+  private clear(): void {
+    this.details.dispose();
+    this.pocketDetails.dispose();
+    for (const object of this.occluders) {
+      object.removeFromParent();
+      object.traverse((child) => {
+        if (child instanceof THREE.Mesh) child.geometry.dispose();
+      });
+    }
+    this.occluders.length = 0;
+  }
+  private build(spec: TableSpec) {
+    this.spec = spec;
+    const { scene, surfaces, textures } = this;
+    const { clothHalfWidth, clothHalfDepth, sx, sz } = cabinetOf(spec);
+    // Wooden rail caps begin just beyond the cloth and cover the cushion backs.
+    const sideCapZ = clothHalfDepth + 0.26 * sz,
+      endCapX = clothHalfWidth + 0.23 * sx;
     const { walnut, sideWood, darkWood, brass, cloth, cushion } = surfaces;
     const add = <T extends THREE.Object3D>(object: T) => {
       scene.add(object);
@@ -90,7 +129,7 @@ export class TableModel {
       y: number,
       round: number,
     ) => {
-      solid(createPocketedSlabGeometry(width, depth, thickness, round), material).position.y = y;
+      solid(createPocketedSlabGeometry(width, depth, thickness, round, spec), material).position.y = y;
     };
     const notchedPanel = (
       width: number,
@@ -103,7 +142,7 @@ export class TableModel {
       round: number,
     ) => {
       const mesh = solid(
-        createPocketedPanelGeometry(width, depth, height, x, z, round, y + height / 2 < 0 ? 'throat' : 'mouth'),
+        createPocketedPanelGeometry(width, depth, height, x, z, round, y + height / 2 < 0 ? 'throat' : 'mouth', spec),
         material,
       );
       mesh.position.set(x, y, z);
@@ -114,21 +153,21 @@ export class TableModel {
       mesh.scale.set(0.8, 0.18, 1.5);
       mesh.position.set(x, 0.232, z);
     };
-    slab(12.98, 0.5, 7.23, darkWood, -0.42, 0.22);
-    slab(12.9, 0.055, 7.16, brass, -0.22, 0.2);
-    slab(12.84, 0.27, 7.1, walnut, -0.18, 0.18);
+    slab(12.98 * sx, 0.5, 7.23 * sz, darkWood, -0.42, 0.22 * sx);
+    slab(12.9 * sx, 0.055, 7.16 * sz, brass, -0.22, 0.2 * sx);
+    slab(12.84 * sx, 0.27, 7.1 * sz, walnut, -0.18, 0.18 * sx);
     // Separate shell panels leave a real opening into the return mechanism.
-    notchedPanel(12.42, 1.04, 0.32, sideWood, 0, -0.88, -3.165, 0.06);
-    for (const x of [-6.05, 6.05]) notchedPanel(0.32, 1.04, 6.33, sideWood, x, -0.88, 0, 0.06);
-    notchedPanel(12.42, 0.3, 0.32, sideWood, 0, -0.51, 3.165, 0.04);
-    box(12.42, 0.2, 0.32, sideWood, 0, -1.3, 3.165, 0.04);
-    notchedPanel(2.39, 0.54, 0.32, sideWood, -5.015, -0.94, 3.165, 0.025);
-    notchedPanel(3.89, 0.54, 0.32, sideWood, 4.265, -0.94, 3.165, 0.025);
-    slab(12.46, 0.055, 6.69, brass, -1.3, 0.07);
+    notchedPanel(12.42 * sx, 1.04, 0.32 * sz, sideWood, 0, -0.88, -3.165 * sz, 0.06 * sx);
+    for (const x of [-6.05, 6.05]) notchedPanel(0.32 * sx, 1.04, 6.33 * sz, sideWood, x * sx, -0.88, 0, 0.06 * sx);
+    notchedPanel(12.42 * sx, 0.3, 0.32 * sz, sideWood, 0, -0.51, 3.165 * sz, 0.04 * sx);
+    box(12.42 * sx, 0.2, 0.32 * sz, sideWood, 0, -1.3, 3.165 * sz, 0.04 * sx);
+    notchedPanel(2.39 * sx, 0.54, 0.32 * sz, sideWood, -5.015 * sx, -0.94, 3.165 * sz, 0.025 * sx);
+    notchedPanel(3.89 * sx, 0.54, 0.32 * sz, sideWood, 4.265 * sx, -0.94, 3.165 * sz, 0.025 * sx);
+    slab(12.46 * sx, 0.055, 6.69 * sz, brass, -1.3, 0.07 * sx);
     for (const sign of [-1, 1]) {
       for (const x of sign > 0 ? [-4.8, 4.8] : [-4.8, -2.4, 0, 2.4, 4.8])
-        box(sign > 0 && x < 0 ? 1.94 : 2.16, 0.61, 0.04, darkWood, x, -0.91, sign * 3.337, 0.055);
-      box(11.94, 0.025, 0.03, brass, 0, -0.55, sign * 3.364, 0.008);
+        box((sign > 0 && x < 0 ? 1.94 : 2.16) * sx, 0.61, 0.04 * sz, darkWood, x * sx, -0.91, sign * 3.337 * sz, 0.055 * sx);
+      box(11.94 * sx, 0.025, 0.03 * sz, brass, 0, -0.55, sign * 3.364 * sz, 0.008 * sx);
     }
     const legProfile = [
       [0.43, 0],
@@ -140,57 +179,61 @@ export class TableModel {
       [0.36, 1.91],
       [0.46, 2.16],
       [0.46, 2.28],
-    ].map(([radius, y]) => new THREE.Vector2(radius, y));
+    ].map(([radius, y]) => new THREE.Vector2(radius * sx, y));
     const legGeometry = new THREE.LatheGeometry(legProfile, 48);
     for (const x of [-4.68, 4.68])
       for (const z of [-2.35, 2.35]) {
-        solid(legGeometry, walnut).position.set(x, -3.5, z);
-        const foot = add(new THREE.Mesh(new THREE.CylinderGeometry(0.43, 0.47, 0.1, 40), brass));
-        foot.position.set(x, -3.55, z);
+        solid(legGeometry, walnut).position.set(x * sx, -3.5, z * sz);
+        const foot = add(new THREE.Mesh(new THREE.CylinderGeometry(0.43 * sx, 0.47 * sx, 0.1, 40), brass));
+        foot.position.set(x * sx, -3.55, z * sz);
         foot.castShadow = true;
-        const collar = add(new THREE.Mesh(new THREE.TorusGeometry(0.355, 0.022, 8, 40), brass));
+        const collar = add(new THREE.Mesh(new THREE.TorusGeometry(0.355 * sx, 0.022 * sx, 8, 40), brass));
         collar.rotation.x = -Math.PI / 2;
-        collar.position.set(x, -1.68, z);
+        collar.position.set(x * sx, -1.68, z * sz);
       }
-    for (const z of [-2.35, 2.35]) box(9.3, 0.18, 0.23, walnut, 0, -2.55, z, 0.04);
-    for (const x of [-4.68, 4.68]) box(0.23, 0.18, 4.7, walnut, x, -2.55, 0, 0.04);
+    for (const z of [-2.35, 2.35]) box(9.3 * sx, 0.18, 0.23 * sz, walnut, 0, -2.55, z * sz, 0.04 * sx);
+    for (const x of [-4.68, 4.68]) box(0.23 * sx, 0.18, 4.7 * sz, walnut, x * sx, -2.55, 0, 0.04 * sx);
     // A shaped cloth surface leaves actual openings at the pockets.
-    const bedGeo = createPocketedClothGeometry(CLOTH_HALF_WIDTH * 2, CLOTH_HALF_DEPTH * 2);
+    const bedGeo = createPocketedClothGeometry(clothHalfWidth * 2, clothHalfDepth * 2, spec);
     const uv = bedGeo.attributes.uv,
       pos = bedGeo.attributes.position;
     for (let i = 0; i < uv.count; i++)
       uv.setXY(
         i,
-        (pos.getX(i) + CLOTH_HALF_WIDTH) / (CLOTH_HALF_WIDTH * 2),
-        (pos.getZ(i) + CLOTH_HALF_DEPTH) / (CLOTH_HALF_DEPTH * 2),
+        (pos.getX(i) + clothHalfWidth) / (clothHalfWidth * 2),
+        (pos.getZ(i) + clothHalfDepth) / (clothHalfDepth * 2),
       );
     const bed = add(new THREE.Mesh(bedGeo, cloth));
     bed.name = 'Cloth bed';
     bed.receiveShadow = true;
     for (const sign of [-1, 1]) {
-      notchedPanel(CLOTH_HALF_WIDTH * 2 + 0.04, 0.23, 0.4, walnut, 0, 0.1, sign * SIDE_CAP_Z, 0.065).name = 'Rail cap';
-      notchedPanel(0.42, 0.23, CLOTH_HALF_DEPTH * 2 + 0.06, walnut, sign * END_CAP_X, 0.1, 0, 0.065).name = 'Rail cap';
-      box(CLOTH_HALF_WIDTH * 2 - 0.04, 0.012, 0.016, brass, 0, 0.222, sign * (SIDE_CAP_Z + 0.14), 0.005);
-      box(0.016, 0.012, CLOTH_HALF_DEPTH * 2 - 0.2, brass, sign * (END_CAP_X + 0.15), 0.222, 0, 0.005);
-      for (const x of [-4.28, -2.85, -1.42, 1.42, 2.85, 4.28]) diamond(x, sign * (SIDE_CAP_Z + 0.02));
-      for (const z of [-1.45, 0, 1.45]) diamond(sign * (END_CAP_X - 0.01), z);
+      notchedPanel(clothHalfWidth * 2 + 0.04 * sx, 0.23, 0.4 * sz, walnut, 0, 0.1, sign * sideCapZ, 0.065 * sx).name =
+        'Rail cap';
+      notchedPanel(0.42 * sx, 0.23, clothHalfDepth * 2 + 0.06 * sz, walnut, sign * endCapX, 0.1, 0, 0.065 * sx).name =
+        'Rail cap';
+      box(clothHalfWidth * 2 - 0.04 * sx, 0.012, 0.016 * sz, brass, 0, 0.222, sign * (sideCapZ + 0.14 * sz), 0.005);
+      box(0.016 * sx, 0.012, clothHalfDepth * 2 - 0.2 * sz, brass, sign * (endCapX + 0.15 * sx), 0.222, 0, 0.005);
+      for (const x of [-4.28, -2.85, -1.42, 1.42, 2.85, 4.28]) diamond(x * sx, sign * (sideCapZ + 0.02 * sz));
+      for (const z of [-1.45, 0, 1.45]) diamond(sign * (endCapX - 0.01 * sx), z * sz);
     }
-    for (const rail of TABLE_RAILS)
+    for (const rail of railsOf(spec))
       box(rail.halfWidth * 2, 0.16, rail.halfDepth * 2, cushion, rail.x, 0.073, rail.z, 0.075).name = 'Cushion';
-    for (const jaw of TABLE_NOSES) {
+    for (const jaw of nosesOf(spec)) {
       const geometry = new THREE.SphereGeometry(jaw.radius, 24, 16);
       geometry.scale(1, 0.7, 1);
       solid(geometry, cushion).position.set(jaw.x, jaw.y - 0.03, jaw.z);
     }
-    this.pocketDetails = buildPocketDetails(scene, surfaces);
+    this.pocketDetails = buildPocketDetails(scene, surfaces, spec);
     this.occluders.push(this.pocketDetails.group);
-    // A subtle head string and the traditional baulk semicircle.
+    // A subtle head string and the traditional baulk semicircle. Snooker's D has its own radius (WPBSA 1.2).
+    const headStringX = spec.placement.headStringX,
+      dRadius = spec.placement.dRadius ?? 0.93 * sx;
     const lineMat = new THREE.LineBasicMaterial({ color: '#c1d3ab', transparent: true, opacity: 0.2 });
     add(
       new THREE.Line(
         new THREE.BufferGeometry().setFromPoints([
-          new THREE.Vector3(HEAD_STRING_X, 0.008, -TABLE.halfDepth + 0.03),
-          new THREE.Vector3(HEAD_STRING_X, 0.008, TABLE.halfDepth - 0.03),
+          new THREE.Vector3(headStringX, 0.008, -spec.halfDepth + 0.03 * sz),
+          new THREE.Vector3(headStringX, 0.008, spec.halfDepth - 0.03 * sz),
         ]),
         lineMat,
       ),
@@ -198,10 +241,10 @@ export class TableModel {
     const arc: THREE.Vector3[] = [];
     for (let i = 0; i <= 60; i++) {
       const a = Math.PI / 2 + (i / 60) * Math.PI;
-      arc.push(new THREE.Vector3(HEAD_STRING_X + Math.cos(a) * 0.93, 0.008, Math.sin(a) * 0.93));
+      arc.push(new THREE.Vector3(headStringX + Math.cos(a) * dRadius, 0.008, Math.sin(a) * dRadius));
     }
     add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(arc), lineMat));
-    for (const x of [HEAD_STRING_X, 2.55]) {
+    for (const x of [headStringX, 2.55 * sx]) {
       const spot = add(
         new THREE.Mesh(
           new THREE.CircleGeometry(0.023, 16),
@@ -213,21 +256,21 @@ export class TableModel {
     }
     const plaque = add(
       new THREE.Mesh(
-        new THREE.PlaneGeometry(1.28, 0.16),
+        new THREE.PlaneGeometry(1.28 * sx, 0.16 * sz),
         new THREE.MeshStandardMaterial({ map: textures.plaque, metalness: 0.45, roughness: 0.4 }),
       ),
     );
     plaque.rotation.x = -Math.PI / 2;
-    plaque.position.set(2.17, 0.23, SIDE_CAP_Z + 0.03);
+    plaque.position.set(2.17 * sx, 0.23, sideCapZ + 0.03 * sz);
     // Chalk rests on the rail, away from the shot surface.
     const chalk = box(
       0.23,
       0.18,
       0.23,
       new THREE.MeshStandardMaterial({ color: '#bfa975', roughness: 0.9 }),
-      -4.78,
+      -4.78 * sx,
       0.32,
-      SIDE_CAP_Z - 0.02,
+      sideCapZ - 0.02 * sz,
       0.012,
     );
     const chalkTop = box(
@@ -235,9 +278,9 @@ export class TableModel {
       0.014,
       0.19,
       new THREE.MeshStandardMaterial({ color: '#457e88', roughness: 1 }),
-      -4.78,
+      -4.78 * sx,
       0.417,
-      SIDE_CAP_Z - 0.02,
+      sideCapZ - 0.02 * sz,
       0.006,
     );
     chalk.userData.tableControl = 'chalk';

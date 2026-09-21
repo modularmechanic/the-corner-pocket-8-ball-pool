@@ -9,6 +9,9 @@ export interface RenderBudget {
   readonly shadowLights: 1 | 3;
   readonly shadowSize: number;
   readonly reflectionSize: 128 | 256;
+  /** Real refraction through the pub glassware. Off below the top tiers: it costs a full
+   * scene-colour pass every frame, where alpha glass costs nothing. */
+  readonly glassTransmission: boolean;
 }
 
 const AUTO_BUDGETS: readonly RenderBudget[] = [
@@ -20,6 +23,7 @@ const AUTO_BUDGETS: readonly RenderBudget[] = [
     shadowLights: 3,
     shadowSize: 1024,
     reflectionSize: 128,
+    glassTransmission: true,
   },
   {
     tier: 'balanced',
@@ -29,6 +33,7 @@ const AUTO_BUDGETS: readonly RenderBudget[] = [
     shadowLights: 3,
     shadowSize: 1024,
     reflectionSize: 128,
+    glassTransmission: false,
   },
   {
     tier: 'fast',
@@ -38,8 +43,18 @@ const AUTO_BUDGETS: readonly RenderBudget[] = [
     shadowLights: 1,
     shadowSize: 768,
     reflectionSize: 128,
+    glassTransmission: false,
   },
-  { tier: 'light', maxDpr: 1, pixels: 2_073_600, bloom: false, shadowLights: 1, shadowSize: 512, reflectionSize: 128 },
+  {
+    tier: 'light',
+    maxDpr: 1,
+    pixels: 2_073_600,
+    bloom: false,
+    shadowLights: 1,
+    shadowSize: 512,
+    reflectionSize: 128,
+    glassTransmission: false,
+  },
   {
     tier: 'minimum',
     maxDpr: 0.75,
@@ -48,6 +63,7 @@ const AUTO_BUDGETS: readonly RenderBudget[] = [
     shadowLights: 1,
     shadowSize: 512,
     reflectionSize: 128,
+    glassTransmission: false,
   },
 ];
 
@@ -68,6 +84,7 @@ export function graphicsBudget(quality: RenderQuality, tier = 1, mobile = false)
       shadowLights: 1,
       shadowSize: 512,
       reflectionSize: 128,
+      glassTransmission: false,
     };
   if (quality === 'ultra')
     return {
@@ -78,6 +95,7 @@ export function graphicsBudget(quality: RenderQuality, tier = 1, mobile = false)
       shadowLights: 3,
       shadowSize: 2048,
       reflectionSize: 256,
+      glassTransmission: true,
     };
   return {
     tier: quality,
@@ -87,6 +105,7 @@ export function graphicsBudget(quality: RenderQuality, tier = 1, mobile = false)
     shadowLights: 3,
     shadowSize: 1024,
     reflectionSize: 256,
+    glassTransmission: true,
   };
 }
 

@@ -11,3 +11,9 @@ corner-pocket-first.png
 .claude/worktrees/
 plans/
 scripts/
+
+# Frozen local build for playtesting; never released.
+play-snapshot/
+
+# Lightmap bake intermediates (large GLB of the exported room)
+tools/bake-lighting/.cache/

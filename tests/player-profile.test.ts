@@ -65,6 +65,7 @@ test('corrupt or unavailable storage falls back to typed defaults', () => {
     camera: 'angled',
     cue: 'ash-house',
     name: 'Player',
+    game: 'eight-ball',
   });
   assert.deepEqual(profile.records, []);
   const throwing: ProfileStorage = {

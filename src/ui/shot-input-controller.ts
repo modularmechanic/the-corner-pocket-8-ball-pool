@@ -171,7 +171,7 @@ export class ShotInputController {
     return context.canAct ? context.optionalPlacement : null;
   }
   /** A table view as this device plays it (see phase); the match state itself never changes. */
-  played<T extends Pick<GameState, 'phase' | 'balls'>>(view: T): T {
+  played<T extends Pick<GameState, 'phase' | 'balls' | 'mode' | 'turn'>>(view: T): T {
     return optionalPlacement(view) && !this.placing ? { ...view, phase: 'ready' } : view;
   }
   /** "Click to take the cue": the cue view is waiting for a click to lock the pointer. */

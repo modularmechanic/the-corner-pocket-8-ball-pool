@@ -1,6 +1,18 @@
 import * as THREE from 'three';
 import type { PropInstaller } from './asset-installer';
 
+/** What a dim pub should catch: metal of any finish, and glass or lacquer smooth enough to
+ * hold a highlight. Rough non-metals are left alone on purpose — an environment map also adds
+ * ambient irradiance to them, so sweeping in plaster, tile and wood would lift the whole room
+ * rather than give the bottles and the brass something to reflect. */
+export function catchesRoom(material: THREE.Material | null | undefined): material is THREE.MeshStandardMaterial {
+  if (!(material instanceof THREE.MeshStandardMaterial)) return false;
+  if (material.metalness >= 0.5) return true;
+  const physical = material as Partial<THREE.MeshPhysicalMaterial>;
+  const glassy = material.transparent || (physical.transmission ?? 0) > 0 || (physical.clearcoat ?? 0) >= 0.5;
+  return glassy && material.roughness <= 0.3;
+}
+
 /** A filtered reflection of the actual enclosed pub, shared by the polished balls.
  * Capture once the table is built, once more when the pub is settled (or has had long
  * enough, if a prop never answers), then only after later prop swaps; never render six
@@ -24,6 +36,13 @@ export class RoomReflections {
     private staticObjects: () => THREE.Object3D[],
     private enclose: (capture: () => void) => void,
     private props: Pick<PropInstaller, 'revision' | 'settled'>,
+    /** Roots swept for reflective materials at every capture. Props load long after the room is
+     * built, so this is how a bottle, a keg or a framed print gets an envMap: the sweep runs
+     * again on the capture their arrival already triggers. */
+    private reflective: () => Iterable<THREE.Object3D> = () => [],
+    /** Where the probe stands. Table height suits the balls, which mostly see cloth; the room's
+     * own fittings need one at standing height or they reflect nothing but baize. */
+    probeHeight = 0.42,
   ) {
     this.cube = new THREE.WebGLCubeRenderTarget(this.resolution, {
       type: renderer.extensions.has('EXT_color_buffer_float') ? THREE.HalfFloatType : THREE.UnsignedByteType,
@@ -32,7 +51,7 @@ export class RoomReflections {
       magFilter: THREE.LinearFilter,
     });
     this.camera = new THREE.CubeCamera(0.06, 95, this.cube);
-    this.camera.position.set(0, 0.42, 0);
+    this.camera.position.set(0, probeHeight, 0);
     this.pmrem = new THREE.PMREMGenerator(renderer);
     props.settled().then(() => {
       this.settled = true;
@@ -96,6 +115,13 @@ export class RoomReflections {
         this.camera.update(renderer, this.scene);
       });
       const next = this.pmrem.fromCubemap(this.cube.texture);
+      for (const root of this.reflective())
+        root.traverse((object) => {
+          const mesh = object as THREE.Mesh;
+          if (!mesh.isMesh) return;
+          for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material])
+            if (catchesRoom(material)) this.consumers.add(material);
+        });
       for (const material of this.consumers) {
         const first = !material.envMap;
         material.envMap = next.texture;

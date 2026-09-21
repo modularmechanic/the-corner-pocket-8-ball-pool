@@ -1,11 +1,16 @@
 import * as THREE from 'three';
-import { POCKETS, TABLE } from '../simulation/types';
-import { TABLE_NOSES } from '../simulation/table-geometry';
+import { TABLE } from '../simulation/types';
+import { nosesOf } from '../simulation/table-geometry';
+import { EIGHT_BALL_TABLE, type TablePoint, type TableSpec } from '../simulation/modes/table';
 import type { TableSurfaces } from './table-surfaces';
 
 // The visible aperture is slightly wider than the simulated capture circle.
 // No trim crosses this radius; the only cap sits below the full pocket throat.
-export const POCKET_APERTURE = TABLE.pocketRadius + 0.012;
+export const apertureOf = (spec: TableSpec) => spec.pocketRadius + 0.012;
+export const POCKET_APERTURE = apertureOf(EIGHT_BALL_TABLE);
+/** Every piece of pocket hardware is a pool-table measurement times the mode's mouth scale, so a tighter
+ * snooker pocket takes its whole casting in with it. One for the eight-ball table, hence unchanged there. */
+const mouthScale = (spec: TableSpec) => spec.pocketRadius / TABLE.pocketRadius;
 const THROAT_CLEARANCE = 0.342;
 type PocketMaterials = Pick<TableSurfaces, 'brass' | 'leather' | 'rubber' | 'pocketVoid'>;
 
@@ -38,27 +43,12 @@ function insidePolygon(point: THREE.Vector2, polygon: THREE.Vector2[]): boolean 
   return inside;
 }
 
-/** Subtract an aperture touching an outline edge. A Three Shape hole must be
- * wholly inside its outer contour; edge openings instead belong to that contour.
- * Current table panels have one connected piece after each circular notch. */
-function notchCircle(
-  polygon: THREE.Vector2[],
-  center: THREE.Vector2,
-  radius: number,
-): { outline: THREE.Vector2[]; hole: boolean } {
-  const radiusSquared = radius * radius;
-  const start = polygon.findIndex((point) => point.distanceToSquared(center) > radiusSquared + 1e-9);
-  if (start < 0) return { outline: [], hole: false };
-  const points = [...polygon.slice(start), ...polygon.slice(0, start)];
-  const outline: THREE.Vector2[] = [],
-    push = (point: THREE.Vector2) => {
-      if (!outline.length || outline[outline.length - 1].distanceToSquared(point) > 1e-16) outline.push(point.clone());
-    };
-  let entered: THREE.Vector2 | null = null,
-    crossings = 0;
-  for (let index = 0; index < points.length; index++) {
-    const from = points[index],
-      to = points[(index + 1) % points.length],
+/** Every sub-segment of the polygon, cut at the circle, with the ones inside it flagged. */
+function splitAtCircle(polygon: THREE.Vector2[], center: THREE.Vector2, radiusSquared: number) {
+  const pieces: { from: THREE.Vector2; to: THREE.Vector2; inside: boolean }[] = [];
+  for (let index = 0; index < polygon.length; index++) {
+    const from = polygon[index],
+      to = polygon[(index + 1) % polygon.length],
       direction = to.clone().sub(from),
       offset = from.clone().sub(center);
     const a = direction.lengthSq(),
@@ -68,40 +58,131 @@ function notchCircle(
       splits = [0, 1];
     if (discriminant > 1e-12 && a > 1e-12) {
       const root = Math.sqrt(discriminant);
-      for (const t of [(-b - root) / (2 * a), (-b + root) / (2 * a)])
-        if (t > 1e-8 && t < 1 - 1e-8) {
-          splits.push(t);
-          crossings++;
-        }
+      for (const t of [(-b - root) / (2 * a), (-b + root) / (2 * a)]) if (t > 1e-8 && t < 1 - 1e-8) splits.push(t);
     }
     splits.sort((left, right) => left - right);
-    for (let i = 1; i < splits.length; i++) {
-      const begin = from.clone().addScaledVector(direction, splits[i - 1]),
-        end = from.clone().addScaledVector(direction, splits[i]);
-      const middle = from.clone().addScaledVector(direction, (splits[i - 1] + splits[i]) / 2);
-      if (middle.distanceToSquared(center) < radiusSquared - 1e-10) {
-        entered ??= begin;
-        continue;
-      }
-      if (entered) {
-        const beginAngle = Math.atan2(entered.y - center.y, entered.x - center.x),
-          endAngle = Math.atan2(begin.y - center.y, begin.x - center.x);
-        let sweep = endAngle - beginAngle;
-        while (sweep >= 0) sweep -= Math.PI * 2;
-        const steps = Math.max(2, Math.ceil((Math.abs(sweep) / (Math.PI * 2)) * 128));
-        push(entered);
-        for (let step = 1; step <= steps; step++) {
-          const angle = beginAngle + (sweep * step) / steps;
-          push(new THREE.Vector2(center.x + Math.cos(angle) * radius, center.y + Math.sin(angle) * radius));
-        }
-        entered = null;
-      }
-      push(begin);
-      push(end);
+    for (let i = 1; i < splits.length; i++)
+      pieces.push({
+        from: from.clone().addScaledVector(direction, splits[i - 1]),
+        to: from.clone().addScaledVector(direction, splits[i]),
+        inside:
+          from
+            .clone()
+            .addScaledVector(direction, (splits[i - 1] + splits[i]) / 2)
+            .distanceToSquared(center) <
+          radiusSquared - 1e-10,
+      });
+  }
+  return pieces;
+}
+/** Drops points repeated back to back, including across the closing seam. */
+function tidy(points: THREE.Vector2[]): THREE.Vector2[] {
+  const outline = points.filter(
+    (point, index) => index === 0 || point.distanceToSquared(points[index - 1]) > 1e-16,
+  );
+  if (outline.length > 1 && outline[0].distanceToSquared(outline[outline.length - 1]) < 1e-16) outline.pop();
+  return outline;
+}
+const area = (polygon: THREE.Vector2[]) =>
+  Math.abs(
+    polygon.reduce((sum, point, index) => {
+      const next = polygon[(index + 1) % polygon.length];
+      return sum + point.x * next.y - next.x * point.y;
+    }, 0),
+  );
+
+/** Subtract an aperture touching an outline edge. A Three Shape hole must be wholly inside its outer contour;
+ * edge openings instead belong to that contour. A mouth that cuts two edges without swallowing the corner
+ * between them (a tighter snooker pocket near a cloth corner) leaves a scrap of panel beyond it, which is
+ * dropped: what stays is the largest piece, as on a real table where the pocket opens the corner. */
+function notchCircle(
+  polygon: THREE.Vector2[],
+  center: THREE.Vector2,
+  radius: number,
+): { outline: THREE.Vector2[]; hole: boolean } {
+  const radiusSquared = radius * radius;
+  const start = polygon.findIndex((point) => point.distanceToSquared(center) > radiusSquared + 1e-9);
+  if (start < 0) return { outline: [], hole: false };
+  const segments = splitAtCircle(polygon, center, radiusSquared);
+  const angleAt = (point: THREE.Vector2) => Math.atan2(point.y - center.y, point.x - center.x);
+  // Where the outline crosses the circle. An arc between two of them may not jump over a third.
+  const crossings = segments
+    .filter((segment, index) => segment.inside !== segments[(index + 1) % segments.length].inside)
+    .map((segment) => angleAt(segment.to));
+  if (!crossings.length)
+    return {
+      outline: tidy([...polygon.slice(start), ...polygon.slice(0, start)].map((point) => point.clone())),
+      hole: insidePolygon(center, polygon),
+    };
+  /** The arc from `entry` back round to the run's start: the one that stays inside the panel. */
+  const arc = (entry: THREE.Vector2, exit: THREE.Vector2) => {
+    const beginAngle = angleAt(entry),
+      endAngle = angleAt(exit);
+    const turn = (angle: number, negative: boolean) => {
+      let value = angle - beginAngle;
+      while (value >= (negative ? 0 : Math.PI * 2)) value -= Math.PI * 2;
+      while (value < (negative ? -Math.PI * 2 : 0)) value += Math.PI * 2;
+      return value;
+    };
+    const clear = (sweep: number) =>
+      !crossings.some((angle) => {
+        const offset = turn(angle, sweep < 0);
+        return Math.abs(offset) > 1e-9 && Math.abs(offset) < Math.abs(sweep) - 1e-9;
+      });
+    const clockwise = turn(endAngle, true),
+      counter = clockwise + Math.PI * 2;
+    let sweep = clockwise;
+    if (clear(clockwise) !== clear(counter)) sweep = clear(clockwise) ? clockwise : counter;
+    else if (
+      !insidePolygon(
+        new THREE.Vector2(
+          center.x + Math.cos(beginAngle + clockwise / 2) * radius,
+          center.y + Math.sin(beginAngle + clockwise / 2) * radius,
+        ),
+        polygon,
+      )
+    )
+      sweep = counter;
+    const steps = Math.max(2, Math.ceil((Math.abs(sweep) / (Math.PI * 2)) * 128));
+    return Array.from(
+      { length: steps },
+      (_, step) =>
+        new THREE.Vector2(
+          center.x + Math.cos(beginAngle + (sweep * (step + 1)) / steps) * radius,
+          center.y + Math.sin(beginAngle + (sweep * (step + 1)) / steps) * radius,
+        ),
+    );
+  };
+  // Each run of outline still outside the circle closes into its own piece.
+  const first = segments.findIndex(
+    (segment, index) => !segment.inside && segments[(index + segments.length - 1) % segments.length].inside,
+  );
+  const pieces: THREE.Vector2[][] = [];
+  let run: THREE.Vector2[] | null = null;
+  const push = (point: THREE.Vector2) => {
+    if (!run!.length || run![run!.length - 1].distanceToSquared(point) > 1e-16) run!.push(point.clone());
+  };
+  for (let step = 0; step < segments.length; step++) {
+    const segment = segments[(first + step) % segments.length];
+    if (!segment.inside) {
+      run ??= [];
+      push(segment.from);
+      push(segment.to);
+    } else if (run) {
+      for (const point of arc(run[run.length - 1], run[0])) push(point);
+      pieces.push(run);
+      run = null;
     }
   }
-  if (outline.length > 1 && outline[0].distanceToSquared(outline[outline.length - 1]) < 1e-16) outline.pop();
-  return { outline, hole: crossings === 0 && insidePolygon(center, polygon) };
+  if (run) {
+    for (const point of arc(run[run.length - 1], run[0])) push(point);
+    pieces.push(run);
+  }
+  const outline = pieces.sort((left, right) => area(right) - area(left))[0] ?? [];
+  // Keep the historic starting vertex so an unsplit panel comes out point for point as it always did.
+  const rotation = outline.findIndex((point) => point.distanceToSquared(polygon[start]) < 1e-16);
+  if (rotation > 0) outline.push(...outline.splice(0, rotation));
+  return { outline: tidy(outline), hole: false };
 }
 
 function pocketedOutline(
@@ -110,12 +191,13 @@ function pocketedOutline(
   x: number,
   z: number,
   rounding: number,
-  aperture = POCKET_APERTURE,
+  aperture: number,
+  pockets: readonly TablePoint[],
 ): THREE.Shape {
   let outline = roundedOutline(width, depth, rounding).getPoints(8);
   outline.pop();
   const holes: THREE.Path[] = [];
-  for (const pocket of POCKETS) {
+  for (const pocket of pockets) {
     const center = new THREE.Vector2(pocket.x - x, z - pocket.z);
     const cut = notchCircle(outline, center, aperture);
     outline = cut.outline;
@@ -138,8 +220,9 @@ export function createPocketedSlabGeometry(
   depth: number,
   thickness: number,
   rounding = 0.12,
+  spec: TableSpec = EIGHT_BALL_TABLE,
 ): THREE.ExtrudeGeometry {
-  return createPocketedPanelGeometry(width, depth, thickness, 0, 0, rounding, 'throat');
+  return createPocketedPanelGeometry(width, depth, thickness, 0, 0, rounding, 'throat', spec);
 }
 
 /** A cap or apron panel, with edge notches where the circular pocket meets it. */
@@ -151,6 +234,7 @@ export function createPocketedPanelGeometry(
   z: number,
   rounding = 0.04,
   opening: 'mouth' | 'throat' = 'mouth',
+  spec: TableSpec = EIGHT_BALL_TABLE,
 ): THREE.ExtrudeGeometry {
   // Below the bed, leave room for the thickness of the leather/rubber sleeve;
   // otherwise a slab's inner wooden wall sits in front of the leather lining.
@@ -160,7 +244,8 @@ export function createPocketedPanelGeometry(
     x,
     z,
     rounding,
-    opening === 'throat' ? THROAT_CLEARANCE : POCKET_APERTURE,
+    opening === 'throat' ? THROAT_CLEARANCE * mouthScale(spec) : apertureOf(spec),
+    spec.pockets,
   );
   const geometry = new THREE.ExtrudeGeometry(shape, {
     depth: thickness,
@@ -187,8 +272,12 @@ export function createPocketedPanelGeometry(
   return geometry;
 }
 
-export function createPocketedClothGeometry(width: number, depth: number): THREE.ShapeGeometry {
-  const geometry = new THREE.ShapeGeometry(pocketedOutline(width, depth, 0, 0, 0), 40);
+export function createPocketedClothGeometry(
+  width: number,
+  depth: number,
+  spec: TableSpec = EIGHT_BALL_TABLE,
+): THREE.ShapeGeometry {
+  const geometry = new THREE.ShapeGeometry(pocketedOutline(width, depth, 0, 0, 0, apertureOf(spec), spec.pockets), 40);
   geometry.rotateX(-Math.PI / 2);
   return geometry;
 }
@@ -211,7 +300,14 @@ function annulus(inner: number, outer: number, start: number, length: number, he
 
 /** Six open pocket assemblies. Geometry is owned here, surface materials remain
  * owned by createTableSurfaces. Parent may enable its table-shadow layer on group. */
-export function buildPocketDetails(scene: THREE.Scene, surfaces: PocketMaterials) {
+export function buildPocketDetails(
+  scene: THREE.Scene,
+  surfaces: PocketMaterials,
+  spec: TableSpec = EIGHT_BALL_TABLE,
+) {
+  const aperture = apertureOf(spec),
+    k = mouthScale(spec),
+    noses = nosesOf(spec);
   const group = new THREE.Group();
   group.name = 'Leather-lined pocket castings';
   scene.add(group);
@@ -239,38 +335,42 @@ export function buildPocketDetails(scene: THREE.Scene, surfaces: PocketMaterials
   const throat = own(
     new THREE.LatheGeometry(
       [
-        new THREE.Vector2(0.278, -0.82),
-        new THREE.Vector2(0.287, -0.66),
-        new THREE.Vector2(0.3, -0.43),
-        new THREE.Vector2(0.316, -0.23),
-        new THREE.Vector2(POCKET_APERTURE, -0.06),
-        new THREE.Vector2(POCKET_APERTURE, -0.014),
+        new THREE.Vector2(0.278 * k, -0.82),
+        new THREE.Vector2(0.287 * k, -0.66),
+        new THREE.Vector2(0.3 * k, -0.43),
+        new THREE.Vector2(0.316 * k, -0.23),
+        new THREE.Vector2(aperture, -0.06),
+        new THREE.Vector2(aperture, -0.014),
       ],
       64,
     ),
   );
   const sleeve = own(
     new THREE.LatheGeometry(
-      [new THREE.Vector2(0.298, -0.85), new THREE.Vector2(0.324, -0.39), new THREE.Vector2(0.334, -0.12)],
+      [
+        new THREE.Vector2(0.298 * k, -0.85),
+        new THREE.Vector2(0.324 * k, -0.39),
+        new THREE.Vector2(0.334 * k, -0.12),
+      ],
       64,
     ),
   );
-  const voidGeometry = own(new THREE.CircleGeometry(0.283, 48));
+  const voidGeometry = own(new THREE.CircleGeometry(0.283 * k, 48));
   voidGeometry.rotateX(-Math.PI / 2);
-  const rubberLip = own(new THREE.TorusGeometry(POCKET_APERTURE + 0.012, 0.011, 8, 64));
+  const rubberLip = own(new THREE.TorusGeometry(aperture + 0.012 * k, 0.011 * k, 8, 64));
   rubberLip.rotateX(-Math.PI / 2);
   const rivetGeometry = own(new THREE.SphereGeometry(0.012, 10, 8));
   rivetGeometry.scale(1, 0.42, 1);
   const stitchGeometry = own(new THREE.CylinderGeometry(0.0018, 0.0018, 0.012, 4));
   stitchGeometry.rotateZ(Math.PI / 2);
-  const cornerCasting = own(annulus(0.385, 0.565, -Math.PI * 0.45, Math.PI * 0.9, 0.06));
-  const cornerLeather = own(annulus(POCKET_APERTURE + 0.013, 0.413, -Math.PI * 0.53, Math.PI * 1.06, 0.022));
-  const middleCasting = own(annulus(0.37, 0.505, -Math.PI * 0.51, Math.PI * 1.02, 0.05));
-  const middleLeather = own(annulus(POCKET_APERTURE + 0.013, 0.405, -Math.PI * 0.56, Math.PI * 1.12, 0.021));
+  const cornerCasting = own(annulus(0.385 * k, 0.565 * k, -Math.PI * 0.45, Math.PI * 0.9, 0.06));
+  const cornerLeather = own(annulus(aperture + 0.013 * k, 0.413 * k, -Math.PI * 0.53, Math.PI * 1.06, 0.022));
+  const middleCasting = own(annulus(0.37 * k, 0.505 * k, -Math.PI * 0.51, Math.PI * 1.02, 0.05));
+  const middleLeather = own(annulus(aperture + 0.013 * k, 0.405 * k, -Math.PI * 0.56, Math.PI * 1.12, 0.021));
   // The inside of the raised rear jaw is rubber, not the cut wooden rail.
   // Keep the cloth-facing half open so the ball has an unobstructed entry.
-  const rearFacing = own(annulus(POCKET_APERTURE, 0.345, -Math.PI * 0.5, Math.PI, 0.215));
-  const jawSeam = own(new THREE.TorusGeometry(TABLE_NOSES[0].radius + 0.001, 0.0024, 4, 16, Math.PI * 0.72));
+  const rearFacing = own(annulus(aperture, 0.345 * k, -Math.PI * 0.5, Math.PI, 0.215));
+  const jawSeam = own(new THREE.TorusGeometry(noses[0].radius + 0.001, 0.0024, 4, 16, Math.PI * 0.72));
   jawSeam.rotateX(-Math.PI / 2);
   const stitches: THREE.Matrix4[] = [],
     rivets: THREE.Matrix4[] = [];
@@ -278,8 +378,8 @@ export function buildPocketDetails(scene: THREE.Scene, surfaces: PocketMaterials
   const capTop = 0.1 + 0.23 / 2;
   // Shared noses define the hardware's seam endpoints. It never
   // supplies new colliders or moves a jaw away from the shared table geometry.
-  for (const [index, pocket] of POCKETS.entries()) {
-    const corner = Math.abs(pocket.x) > TABLE.halfWidth / 2;
+  for (const [index, pocket] of spec.pockets.entries()) {
+    const corner = Math.abs(pocket.x) > spec.halfWidth / 2;
     const side = Math.sign(pocket.z),
       outward = corner ? Math.atan2(side, Math.sign(pocket.x)) : (side * Math.PI) / 2;
     const assembly = new THREE.Group();
@@ -313,7 +413,11 @@ export function buildPocketDetails(scene: THREE.Scene, surfaces: PocketMaterials
     const stitchCount = corner ? 29 : 31;
     for (let i = 0; i < stitchCount; i++) {
       const angle = outward - Math.PI * 0.5 + ((i + 0.5) / stitchCount) * Math.PI;
-      transform.position.set(pocket.x + Math.cos(angle) * 0.362, capTop + 0.025, pocket.z + Math.sin(angle) * 0.362);
+      transform.position.set(
+        pocket.x + Math.cos(angle) * 0.362 * k,
+        capTop + 0.025,
+        pocket.z + Math.sin(angle) * 0.362 * k,
+      );
       transform.rotation.set(0, -angle - Math.PI / 2, 0);
       transform.scale.set(1, 1, 1);
       transform.updateMatrix();
@@ -322,9 +426,9 @@ export function buildPocketDetails(scene: THREE.Scene, surfaces: PocketMaterials
     for (const offset of [-0.85, 0, 0.85]) {
       const angle = outward + offset;
       transform.position.set(
-        pocket.x + Math.cos(angle) * (corner ? 0.49 : 0.452),
+        pocket.x + Math.cos(angle) * (corner ? 0.49 : 0.452) * k,
         capTop + (corner ? 0.061 : 0.051),
-        pocket.z + Math.sin(angle) * (corner ? 0.49 : 0.452),
+        pocket.z + Math.sin(angle) * (corner ? 0.49 : 0.452) * k,
       );
       transform.rotation.set(0, 0, 0);
       transform.scale.set(1, 1, 1);
@@ -332,10 +436,13 @@ export function buildPocketDetails(scene: THREE.Scene, surfaces: PocketMaterials
       rivets.push(transform.matrix.clone());
     }
     // Dark seam lines behind the physical noses reveal separate cushion pieces.
-    const jaws = TABLE_NOSES.filter(
+    // A jaw belongs to a corner pocket when it stands on the outer half of the end rail, to a middle otherwise.
+    const jaws = noses.filter(
       (jaw) =>
         Math.sign(jaw.z) === side &&
-        (corner ? Math.abs(jaw.x) > 5 && Math.sign(jaw.x) === Math.sign(pocket.x) : Math.abs(jaw.x) < 1),
+        (corner
+          ? Math.abs(jaw.x) > spec.halfWidth / 2 && Math.sign(jaw.x) === Math.sign(pocket.x)
+          : Math.abs(jaw.x) < spec.halfWidth / 2),
     );
     for (const jaw of jaws) {
       const seam = add(group, jawSeam, surfaces.rubber, jaw.y, 'Cushion facing seam');
