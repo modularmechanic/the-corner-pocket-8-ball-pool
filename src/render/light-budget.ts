@@ -1,13 +1,15 @@
 import * as THREE from 'three';
 import type { RenderBudget, RenderQuality } from './performance';
 import { applyBakedLighting } from './baked-lighting';
+import { useBoundedLighting } from './lighting-shader';
 
 type Practical = THREE.PointLight | THREE.RectAreaLight;
 interface Source {
   light: Practical;
-  visible: boolean;
+  layers: number;
   position: THREE.Vector3;
   rotation: THREE.Quaternion;
+  available: boolean;
   score: number;
 }
 interface Slot {
@@ -22,19 +24,17 @@ export function practicalLightLimits(
   tier: RenderBudget['tier'],
 ): Readonly<{ points: number; areas: number }> {
   if (quality === 'ultra') return { points: 12, areas: 4 };
-  if (quality === 'high') return { points: 8, areas: 3 };
-  if (quality === 'performance' || tier === 'minimum' || tier === 'light') return { points: 3, areas: 1 };
-  if (tier === 'fast') return { points: 4, areas: 2 };
-  return { points: 6, areas: 2 };
+  if (quality === 'veryHigh') return { points: 6, areas: 2 };
+  if (quality === 'high') return { points: 4, areas: 2 };
+  if (quality === 'performance' || tier === 'minimum' || tier === 'light') return { points: 2, areas: 1 };
+  if (tier === 'fast') return { points: 3, areas: 1 };
+  return { points: 4, areas: 2 };
 }
 
-/** Set true to restore camera-driven light pooling. Off: every authored practical stays lit, which is
- * what the room is authored for. Left as one switch so the pooling can be measured again rather than
- * rediscovered from scratch if the light count ever becomes a real frame-rate problem. */
-const POOLED = false;
-
-/** Fixed-size light pools bound fragment shader loops. Sources retain their
- * positions/colors/intensities for pub animation and full reflection captures. */
+/** Re-emit nearby practicals from a bounded set of shader lights. Authored lights
+ * retain their animation and visibility; their layer masks are reserved by this
+ * controller until disposal, and temporarily restored for full-room reflections.
+ * Table spotlights and emissive fixture meshes are independent of this pool. */
 export class PracticalLightBudget {
   private sources = new Map<Practical, Source>();
   private list: Source[] = [];
@@ -43,15 +43,16 @@ export class PracticalLightBudget {
   private areas: Slot[] = [];
   private slots: Slot[] = [];
   private ambient = new THREE.AmbientLight('#eadfcf', 0.025);
-  private limits = { points: 6, areas: 2 };
-  private shaderCounts = { points: 6, areas: 2 };
+  private limits = { points: 4, areas: 2 };
   private elapsed = Infinity;
-  private discovery = Infinity;
+  private discovery = 0;
+  private revision: number | undefined;
   private flash = false;
   private frustum = new THREE.Frustum();
   private projection = new THREE.Matrix4();
   private sphere = new THREE.Sphere();
   private scale = new THREE.Vector3();
+  private cameraPosition = new THREE.Vector3();
   constructor(private scene: THREE.Scene) {
     this.group.name = 'adaptive-practical-lights';
     this.group.add(this.ambient);
@@ -70,21 +71,15 @@ export class PracticalLightBudget {
     this.configure('auto', 'balanced');
     this.discover();
   }
-  /** Visible slots follow the quality ceiling, never the adaptive tier: three keys
-   * programs on light counts, so a tier change only fades slots in or out.
-   * ponytail: lower tiers still pay the zero-intensity slots' (and zero-intensity table
-   * shadows') per-pixel shader cost; toggle counts per tier and prewarm each variant at load if that matters. */
-  configure(quality: RenderQuality, tier: RenderBudget['tier'], ceiling: RenderBudget['tier'] = tier): void {
-    const active = practicalLightLimits(quality, tier),
-      slots = practicalLightLimits(quality, ceiling);
-    this.shaderCounts = slots;
+  /** Hide excess slots, not just their intensity: zero-intensity visible lights
+   * still expand Three's shader loops. Counts stay fixed during camera movement. */
+  configure(quality: RenderQuality, tier: RenderBudget['tier']): void {
+    this.limits = practicalLightLimits(quality, tier);
     this.elapsed = Infinity;
-    this.limits = { points: Math.min(active.points, slots.points), areas: Math.min(active.areas, slots.areas) };
-    for (const slot of this.slots) this.show(slot, false);
-    this.ambient.intensity =
-      this.limits.points === 3 ? 0.035 : this.limits.points === 4 ? 0.025 : this.limits.points === 6 ? 0.015 : 0;
+    this.points.forEach((slot, i) => this.show(slot, i < this.limits.points));
+    this.areas.forEach((slot, i) => this.show(slot, i < this.limits.areas));
+    this.ambient.intensity = this.limits.points <= 2 ? 0.035 : this.limits.points <= 4 ? 0.025 : 0.015;
   }
-  /** A hidden slot forgets its source, so raising the ceiling fades in instead of popping a stale light. */
   private show(slot: Slot, visible: boolean): void {
     slot.light.visible = visible;
     if (!visible) {
@@ -96,62 +91,69 @@ export class PracticalLightBudget {
   }
   private discover(): void {
     this.scene.traverse((object) => {
+      if (object instanceof THREE.Mesh)
+        for (const material of Array.isArray(object.material) ? object.material : [object.material])
+          useBoundedLighting(material);
       if (
         !(object instanceof THREE.PointLight || object instanceof THREE.RectAreaLight) ||
         object.parent === this.group ||
         this.sources.has(object)
       )
         return;
-      object.updateWorldMatrix(true, false);
-      const source = {
+      const source: Source = {
         light: object,
-        visible: object.visible,
+        layers: object.layers.mask,
         position: new THREE.Vector3(),
         rotation: new THREE.Quaternion(),
+        available: false,
         score: 0,
       };
       this.sources.set(object, source);
       this.list.push(source);
-      // Pooling hides the authored light and re-emits it from a slot. Unpooled, it renders directly.
-      if (POOLED) object.visible = false;
+      object.layers.disableAll();
     });
-    // The room's baked indirect light belongs to the same pass for the same reason: the pub is built
-    // after this budget exists and keeps arriving as props settle, so both have to be picked up by a
-    // rescan rather than at construction. Already-bound materials are skipped.
     applyBakedLighting(this.scene);
     this.discovery = 0;
+    this.elapsed = Infinity;
   }
-  update(camera: THREE.Camera, dt: number): void {
+  /** A supplied asset revision avoids recurring full-scene scans after loading.
+   * Callers without a revision retain periodic discovery for dynamically added lights. */
+  update(camera: THREE.Camera, dt: number, revision?: number): void {
     this.discovery += dt;
-    // Only picks up practicals added after startup, so they are lit too; nothing is selected or swapped.
-    if (this.discovery >= 2) this.discover();
-    if (!POOLED) return;
+    if (revision !== undefined ? revision !== this.revision : this.discovery >= 2) {
+      this.discover();
+      this.revision = revision;
+    }
     this.elapsed += dt;
+    camera.updateWorldMatrix(true, false);
+    this.cameraPosition.setFromMatrixPosition(camera.matrixWorld);
     this.projection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     this.frustum.setFromProjectionMatrix(this.projection);
     let flash = false;
     for (const source of this.list) {
       const light = source.light;
-      // The renderer refreshes world matrices every frame; only relocated flashes need theirs now.
-      if (light.userData.performanceFlash) light.updateWorldMatrix(true, false);
+      light.updateWorldMatrix(true, false);
       if (light instanceof THREE.RectAreaLight)
         light.matrixWorld.decompose(source.position, source.rotation, this.scale);
       else source.position.setFromMatrixPosition(light.matrixWorld);
-      let visible = source.visible;
-      for (let parent = light.parent; parent; parent = parent.parent)
-        if (!parent.visible) {
-          visible = false;
-          break;
-        }
+      let visible = light.visible && (source.layers & camera.layers.mask) !== 0;
+      let root: THREE.Object3D = light;
+      while (root.parent) {
+        root = root.parent;
+        if (!root.visible) visible = false;
+      }
+      source.available = visible && root === this.scene;
+      // An emitter behind the camera can still illuminate visible surfaces. Cull
+      // its influence volume rather than the tiny fixture itself.
       const radius =
-        light instanceof THREE.PointLight ? light.distance || 35 : Math.max(light.width, light.height) * 0.65 + 7;
+        light instanceof THREE.PointLight ? light.distance || Infinity : Math.max(light.width, light.height) * 0.65 + 7;
       this.sphere.set(source.position, radius);
-      const distance = source.position.distanceTo(camera.position);
+      const distanceSq = source.position.distanceToSquared(this.cameraPosition);
       const area = light instanceof THREE.RectAreaLight ? Math.sqrt(light.width * light.height) : 1;
       const transient = !!light.userData.performanceFlash && light.intensity > 0.02;
       source.score =
-        visible && light.intensity > 0.001 && this.frustum.intersectsSphere(this.sphere)
-          ? ((light.intensity * area) / (3 + distance * distance)) * (transient ? 8 : 1)
+        source.available && light.intensity > 0.001 && this.frustum.intersectsSphere(this.sphere)
+          ? ((light.intensity * area) / (3 + distanceSq)) * (transient ? 8 : 1)
           : 0;
       if (transient && source.score > 0) flash = true;
     }
@@ -180,7 +182,7 @@ export class PracticalLightBudget {
       slot.light.position.copy(source.position);
       slot.light.quaternion.copy(source.rotation);
       slot.light.color.copy(source.light.color);
-      slot.light.intensity = source.light.intensity * slot.fade;
+      slot.light.intensity = source.available ? source.light.intensity * slot.fade : 0;
       if (slot.light instanceof THREE.PointLight && source.light instanceof THREE.PointLight) {
         slot.light.distance = source.light.distance;
         slot.light.decay = source.light.decay;
@@ -205,42 +207,28 @@ export class PracticalLightBudget {
     const available = selected.filter((source) => !retained.has(source));
     for (const slot of slots.slice(0, count))
       if (!slot.target || !retained.has(slot.target)) slot.target = available.shift() ?? null;
-    // Slots above the tier's allowance stay in the shader and fade to zero intensity.
     for (const slot of slots.slice(count)) slot.target = null;
   }
-  /** Unpooled the room's practicals are already the lights, so a capture only has to stand the proxy
-   * group down and shoot. Pooled, the originals are hidden and have to be switched on for the capture
-   * and back off after — and restored to what they were at that moment, not to a stale snapshot, so a
-   * light the game had just turned off is not switched back on. */
+  /** Capture every authored practical without duplicating the pool or changing
+   * visibility set by animations. Restore masks and group state even on failure. */
   withFullLighting(capture: () => void): void {
-    const pooled = this.group.visible;
-    const restore = POOLED ? this.list.map((source) => source.light.visible) : null;
+    const visible = this.group.visible;
+    const masks = this.list.map((source) => source.light.layers.mask);
     try {
       this.group.visible = false;
-      if (POOLED) for (const source of this.list) source.light.visible = source.visible;
+      for (const source of this.list) source.light.layers.mask = source.layers;
       capture();
     } finally {
-      this.group.visible = pooled;
-      if (restore) this.list.forEach((source, index) => (source.light.visible = restore[index]));
+      this.group.visible = visible;
+      this.list.forEach((source, index) => (source.light.layers.mask = masks[index]));
     }
   }
-  /** Practical lights the fragment shaders actually compile for. Pooled, that is the fixed slot count,
-   * constant across adaptive tiers. Unpooled, it is however many authored practicals are switched on,
-   * which is the number worth watching: it is what the room costs per pixel. */
+  /** Actual shader slots, including those temporarily faded to zero. */
   getCounts(): Readonly<{ pointLights: number; areaLights: number }> {
-    if (POOLED) return Object.freeze({ pointLights: this.shaderCounts.points, areaLights: this.shaderCounts.areas });
-    let pointLights = 0,
-      areaLights = 0;
-    for (const { light } of this.list) {
-      if (!light.visible || light.intensity <= 0.0001) continue;
-      if (light instanceof THREE.PointLight) pointLights++;
-      else areaLights++;
-    }
-    return Object.freeze({ pointLights, areaLights });
+    return Object.freeze({ pointLights: this.limits.points, areaLights: this.limits.areas });
   }
   dispose(): void {
-    // Only pooling ever hid them; unpooled they are untouched and must stay as the room left them.
-    if (POOLED) for (const source of this.list) source.light.visible = source.visible;
+    for (const source of this.list) source.light.layers.mask = source.layers;
     this.sources.clear();
     this.list = [];
     this.group.removeFromParent();

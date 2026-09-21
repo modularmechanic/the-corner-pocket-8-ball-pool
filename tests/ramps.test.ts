@@ -2,8 +2,8 @@ import { before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { arrangeBalls } from './arrangements';
 import { PoolGame, initPhysics } from '../src/simulation/game';
-import { RAMP_HEIGHT, rampFrame, rampSupportAt } from '../src/simulation/arcade';
-import type { Hazard } from '../src/simulation/types';
+import { groundCentreY, RAMP_HEIGHT, rampFrame, rampSupportAt, rampToTable } from '../src/simulation/arcade';
+import { TABLE, type Hazard } from '../src/simulation/types';
 
 before(async () => {
   await initPhysics();
@@ -108,7 +108,11 @@ test('approach speed alone decides how far up the ramp a ball gets', () => {
     }
   }
   assert.ok(climbs[0] < climbs[1] && climbs[1] < climbs[2], `faster climbs higher: ${climbs.join(', ')}`);
-  assert.ok(climbs[0] < RAMP_HEIGHT && climbs[2] >= RAMP_HEIGHT, `the crest is a threshold: ${climbs.join(', ')}`);
+  // Rapier's contact solver permits sub-millimetre penetration at the ridge.
+  assert.ok(
+    climbs[0] < RAMP_HEIGHT - 0.01 && climbs[2] >= RAMP_HEIGHT - 0.001,
+    `the crest is a threshold: ${climbs.join(', ')}`,
+  );
 });
 
 test('a ball crossing the ramp at an angle is deflected by the slope, not snapped to the ramp axis', () => {
@@ -197,5 +201,56 @@ test('every approach to the ramp settles, with the ball off the wedge and on the
     } finally {
       game.dispose();
     }
+  }
+});
+
+test('shots starting on any ramp face retain their height and settle without the time limit', () => {
+  for (const yaw of [0, 0.27])
+    for (const u of [-0.3, -0.15, 0, 0.13, 0.3])
+      for (const w of [-0.15, 0, 0.15])
+        for (const angle of [0, Math.PI / 2, Math.PI]) {
+          const ramp: Hazard = { ...RAMP, x: 0, z: 0, angle: yaw };
+          const game = new PoolGame('ramp-start');
+          try {
+            const point = rampToTable(ramp, u, w);
+            const arcade = { ...game.snapshot().arcade!, hazards: [ramp] };
+            const elevation = groundCentreY(arcade, point.x, point.z) - TABLE.radius;
+            arrangeBalls(game, { 0: { ...point, elevation } }, { hazards: [ramp] });
+            assert.ok(game.shoot({ angle: angle + yaw, power: 0.03 }));
+            assert.ok(Math.abs(game.state.balls[0].elevation! - elevation) < 1e-7, 'striking preserves ramp height');
+            let steps = 0;
+            while (game.state.phase === 'rolling' && steps < 1200) {
+              game.step();
+              steps++;
+            }
+            assert.notEqual(game.state.phase, 'rolling', `settles before 10s: ${yaw}, ${u}, ${w}, ${angle}`);
+          } finally {
+            game.dispose();
+          }
+        }
+});
+
+test('a ball resting on the ramp ridge settles without being sunk into the wedge', () => {
+  const game = new PoolGame('ridge-rest');
+  try {
+    const x = RAMP.x + frame.crest;
+    const elevation = RAMP_HEIGHT;
+    arrangeBalls(game, { 0: { x: -4, z: -1 }, 1: { x, z: RAMP.z, elevation } }, { hazards: [RAMP] });
+    const state = game.snapshot();
+    delete state.simulation;
+    state.phase = 'rolling';
+    game.arrange(state);
+    let steps = 0;
+    while (game.state.phase === 'rolling' && steps < 1200) {
+      game.step();
+      steps++;
+    }
+    assert.notEqual(game.state.phase, 'rolling', 'a stationary ridge ball must not hold the turn for 28 seconds');
+    const ball = game.state.balls[1];
+    assert.equal(ball.pocketed, false);
+    if (rampSupportAt(RAMP, ball.x, ball.z).height > 0)
+      assert.ok(ball.elevation! > 0.1, 'settlement preserves contact above the ramp');
+  } finally {
+    game.dispose();
   }
 });

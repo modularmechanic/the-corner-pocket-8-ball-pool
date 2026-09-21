@@ -55,6 +55,7 @@ const QUALITY_LABELS = {
   performance: 'Performance',
   auto: 'Auto · Smooth play',
   high: 'High',
+  veryHigh: 'Very High · 2K (1440p)',
   ultra: 'Ultra · 4K',
 } satisfies Record<RenderQuality, string>;
 export const LEVEL_NAMES: readonly string[] = [

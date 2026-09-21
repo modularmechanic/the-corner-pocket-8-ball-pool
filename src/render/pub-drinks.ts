@@ -3,6 +3,7 @@ import { canvasTexture } from './materials';
 import { PUB_LAYOUT, pubFrontZ, pubSideX } from './pub-layout';
 import { disposePubObject, instancePubModel, type PubPlacement } from './pub-models';
 import type { PropInstaller } from './asset-installer';
+import { shelfBottlePositions } from './pub-bottle-layout';
 
 export const PUB_DRINK_ASSETS = {
   bottles: ['bottle-copperfin', 'bottle-northstar', 'bottle-juniper', 'bottle-redharbor', 'bottle-orchard'],
@@ -65,21 +66,6 @@ export const PUB_DRINK_LAYOUT: Omit<PubDrinksLayout, 'shelfParent'> = {
   ],
 };
 
-/** Back-row bottles are staggered behind gaps in the original front shelf row. */
-function shelfPositions(row: number): number[] {
-  const front = Array.from(
-    { length: 24 },
-    (_, i) => -7.6 + Math.floor(i / 4) * 2.8 + (i % 4) * 0.32 + ((row + (i % 4)) % 3) * 0.04,
-  );
-  const positions: number[] = [];
-  for (let i = 1; i < front.length; i++) {
-    const gap = front[i] - front[i - 1],
-      count = gap > 0.6 ? 3 : 1;
-    for (let j = 1; j <= count; j++) positions.push(front[i - 1] + (gap * j) / (count + 1));
-  }
-  return positions;
-}
-
 /** Each authored material is instanced across its placements, including the glassware. */
 export function buildPubDrinks(room: THREE.Group, installer: PropInstaller, options: Partial<PubDrinksLayout> = {}) {
   const layout = { ...PUB_DRINK_LAYOUT, ...options };
@@ -96,7 +82,7 @@ export function buildPubDrinks(room: THREE.Group, installer: PropInstaller, opti
   const bottleCounter: PubPlacement[][] = PUB_DRINK_ASSETS.bottles.map(() => []);
   const cocktails: PubPlacement[][] = PUB_DRINK_ASSETS.glasses.map(() => []);
   for (const [row, y] of layout.shelfLevels.entries())
-    for (const [i, x] of shelfPositions(row).entries()) {
+    for (const [i, x] of shelfBottlePositions(row, 'labelled').entries()) {
       bottleShelf[(i + row * 2) % 5].push({
         x,
         y,

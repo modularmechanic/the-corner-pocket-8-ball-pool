@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { shelfBottlePositions } from './pub-bottle-layout';
 import { canvasTexture } from './materials';
 import { PUB_LAYOUT, pubBackZ } from './pub-layout';
 import { PUB_SPORTS_STOOL_PLACEMENTS } from './pub-sports-props';
@@ -107,11 +108,8 @@ export function buildPubBackBar(
       return group;
     });
   for (let row = 0; row < 3; row++)
-    for (let i = 0; i < 24; i++) {
-      const cluster = Math.floor(i / 4),
-        within = i % 4;
-      const x = -7.6 + cluster * 2.8 + within * 0.32 + ((row + within) % 3) * 0.04,
-        y = shelfLevels[row] + 0.055,
+    for (const [i, x] of shelfBottlePositions(row, 'classic').entries()) {
+      const y = shelfLevels[row] + 0.055,
         kind = (i + row * 3) % PUB_PROPS.bottles.length;
       const bottle = new THREE.Mesh(
         bottleGeometry,
@@ -140,9 +138,8 @@ export function buildPubBackBar(
         rotation: (((i * 11 + row) % 7) - 3) * 0.07,
       });
     }
-  for (let i = 0; i < 8; i++) {
-    const kind = i % 4,
-      x = (i < 4 ? -6.3 : 5.6) + (i % 4) * 0.28;
+  for (const [i, x] of [-6.3, -5.55, 5.6, 6.35].entries()) {
+    const kind = i % 4;
     const bottle = new THREE.Mesh(
       bottleGeometry,
       new THREE.MeshPhysicalMaterial({ color: bottleColors[kind], roughness: 0.14, clearcoat: 1 }),
@@ -250,6 +247,11 @@ export function buildPubGlassware(
     glasses.setMatrixAt(i, matrix.makeTranslation(x, y + 0.31, pubBackZ(-10.12)));
     stems.setMatrixAt(i, matrix.makeTranslation(x, y + 0.09, pubBackZ(-10.12)));
     feet.setMatrixAt(i, matrix.makeTranslation(x, y + 0.012, pubBackZ(-10.12)));
+  }
+  for (const mesh of [glasses, stems, feet]) {
+    mesh.userData.staticInstances = true;
+    mesh.computeBoundingSphere();
+    mesh.matrixAutoUpdate = false;
   }
   shelfParent.add(glasses, stems, feet);
   const towel = new THREE.MeshStandardMaterial({ color: '#e4d9ba', roughness: 1 });

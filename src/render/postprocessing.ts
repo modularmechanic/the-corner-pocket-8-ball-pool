@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { BudgetBloomPass } from './bloom-pass';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import type { RenderBudget } from './performance';
 
@@ -35,7 +35,7 @@ export function prewarmPrograms(
 export class PoolPostprocessing {
   private composer?: EffectComposer;
   private scenePass?: RenderPass;
-  private bloom?: UnrealBloomPass;
+  private bloom?: BudgetBloomPass;
   private output?: OutputPass;
   private enabled = false;
   private sizeKey = '';
@@ -48,9 +48,11 @@ export class PoolPostprocessing {
     if (this.composer) return;
     const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 2 });
     this.composer = new EffectComposer(this.renderer, target);
+    // All following sizes are physical pixels; avoids resizing twice when DPR changes.
+    this.composer.setPixelRatio(1);
     this.scenePass = new RenderPass(this.scene, this.camera);
     // Preserve colored glass and metal detail; only the hottest practicals bloom.
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.12, 0.32, 1.5);
+    this.bloom = new BudgetBloomPass();
     this.output = new OutputPass();
     this.composer.addPass(this.scenePass);
     this.composer.addPass(this.bloom);
@@ -59,20 +61,20 @@ export class PoolPostprocessing {
   resize(width: number, height: number, budget: RenderBudget) {
     this.enabled = budget.bloom;
     const ratio = this.renderer.getPixelRatio(),
-      key = this.enabled ? `${width}:${height}:${ratio}` : 'off';
+      bloomScale = budget.tier === 'ultra' ? 1 : 0.5,
+      key = this.enabled ? `${width}:${height}:${ratio}:${bloomScale}` : 'off';
     if (key === this.sizeKey) return;
     this.sizeKey = key;
     if (!this.enabled) {
       // Release large HDR targets while direct rendering uses the canvas's MSAA.
-      this.composer?.setPixelRatio(1);
       this.composer?.setSize(1, 1);
       return;
     }
     this.initialize();
     // Match the actual canvas exactly: a second hidden resolution cap would
     // make the quality telemetry misleading and blur the output upsample.
-    this.composer!.setPixelRatio(ratio);
-    this.composer!.setSize(width, height);
+    this.bloom!.resolutionScale = bloomScale;
+    this.composer!.setSize(Math.max(1, Math.floor(width * ratio)), Math.max(1, Math.floor(height * ratio)));
   }
   /** Compile the bloom and output pass programs alongside `prewarmPrograms`, so turning bloom
    * on never compiles mid-shot. Nothing draws; the passes keep 1×1 targets until bloom is enabled.

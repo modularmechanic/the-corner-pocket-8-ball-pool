@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import type { Pickup, PowerUp, TableEvent } from '../src/simulation/types';
 import { PowerupGlow } from '../src/render/powerup-glow';
+import { LocalMatch } from '../src/match/local';
+import { initPhysics } from '../src/simulation/game';
+import { ArenaVisuals } from '../src/render/arena-visuals';
 import { POWER_CHARACTER } from '../src/render/powerup-icons';
 
 type Resource = THREE.BufferGeometry | THREE.Material | THREE.Texture;
@@ -106,6 +109,61 @@ test('a pickup runs visibly out of time, and lets go of its resources', () => {
   for (const resource of owned) assert.ok(disposed.has(resource), 'a collected pickup disposes its own art');
 });
 
+test('new-level pickups use simulation time after a long-running scene', () => {
+  const { glow } = harness();
+  const pickups = (Object.keys(POWER_CHARACTER) as PowerUp[]).map((power, id) => pickup(id, power, { expiresAt: 16 }));
+  glow.update(pickups, undefined, null, 600, 1 / 60, 0);
+  const groups = [...glow.pickups.values()].map((visual) => visual.group);
+  const fuseCount = (group: THREE.Group) =>
+    group.children.find(
+      (child) => child instanceof THREE.Mesh && Number.isFinite(child.geometry.drawRange.count),
+    ) as THREE.Mesh;
+  for (const group of groups) {
+    assert.equal(group.scale.x, 1, 'a fresh pickup starts at its authored size');
+    assert.equal(fuseCount(group).geometry.drawRange.count, 64 * 6, 'the new level starts with a full fuse');
+  }
+  glow.update(pickups, undefined, null, 660, 1 / 60, 8);
+  for (const group of groups) {
+    assert.equal(group.scale.x, 1, 'animation uptime does not expire pickups');
+    assert.equal(fuseCount(group).geometry.drawRange.count, 32 * 6, 'only simulation time drains the fuse');
+  }
+  glow.update(pickups, undefined, null, 700, 1 / 60, 15);
+  for (const group of groups) assert.ok(group.scale.x < 1 && group.scale.x >= 0.86);
+  glow.dispose();
+});
+
+test('each solid icon stays above its plinth throughout its bob and spin', () => {
+  const { glow } = harness();
+  const powers = (Object.keys(POWER_CHARACTER) as PowerUp[]).map((power, id) => pickup(id, power));
+  for (let clock = 0; clock < 10; clock += 0.1) {
+    glow.update(powers, undefined, null, clock, 1 / 60, 0);
+    for (const [id, { group }] of glow.pickups) {
+      group.updateMatrixWorld(true);
+      const icon = group.children.find((child) => child instanceof THREE.Group)!;
+      assert.ok(
+        new THREE.Box3().setFromObject(icon).min.y >= 0.04 - 1e-6,
+        `${powers[id].power} clears the plinth at ${clock}s`,
+      );
+    }
+  }
+  glow.dispose();
+});
+
+test('a stale expired pickup never inverts or expands beneath the table', () => {
+  const { glow } = harness();
+  const powers = (Object.keys(POWER_CHARACTER) as PowerUp[]).map((power, id) => pickup(id, power));
+  for (const clock of [20, 25, 60, 600, 3600]) {
+    glow.update(powers, undefined, null, clock, 1 / 60, clock);
+    for (const { group } of glow.pickups.values()) {
+      assert.ok(group.scale.x >= 0.86 && group.scale.x <= 1, `bounded positive scale at ${clock}s`);
+      const plinth = group.children[0];
+      group.updateMatrixWorld(true);
+      assert.ok(new THREE.Box3().setFromObject(plinth).min.y >= -1e-8, 'the base stays above the cloth');
+    }
+  }
+  glow.dispose();
+});
+
 test('a debuff lands the opposite way round from a buff', () => {
   const { scene, glow } = harness();
   glow.update([], undefined, null, 0, 1 / 60);
@@ -170,3 +228,46 @@ const ringOf = (meshes: THREE.Mesh[], min: number, max = Infinity) =>
       mesh.geometry.parameters.thetaSegments < max,
   ) as THREE.Mesh;
 const tone = (mesh: THREE.Mesh) => (mesh.material as THREE.MeshBasicMaterial).color;
+
+test('winning and advancing through all five levels keeps arena art aligned and pickups bounded', async () => {
+  await initPhysics();
+  const { scene, glow } = harness();
+  const arena = new ArenaVisuals(scene, { wood: () => new THREE.Texture(), smoke: () => new THREE.Texture() });
+  let next = 1;
+  const match = new LocalMatch({ seed: 'level-1', mode: 'local', nextSeed: () => `level-${++next}` });
+  try {
+    for (let level = 1; level <= 5; level++) {
+      const state = match.presentation();
+      assert.equal(state.arcade!.level, level);
+      assert.equal(state.arcade!.clock, 0);
+      arena.update(state.arcade, level * 600, 1 / 60);
+      glow.update(state.arcade!.pickups, undefined, null, level * 600, 1 / 60, state.arcade!.clock);
+      for (const pickup of state.arcade!.pickups) {
+        const group = glow.pickups.get(pickup.id)!.group;
+        assert.equal(group.visible, true);
+        assert.equal(group.scale.x, 1, `level ${level}: no scale carried over from the completed level`);
+        assert.deepEqual(group.position.toArray(), [pickup.x, 0, pickup.z]);
+      }
+      for (const obstacle of state.arcade!.obstacles) {
+        const group = arena.obstacles.get(obstacle.id)!.group;
+        assert.equal(group.visible, true, `level ${level}: every solid obstacle is drawn`);
+        const bounds = new THREE.Box3().setFromObject(group);
+        assert.ok(
+          bounds.containsPoint(new THREE.Vector3(obstacle.x, 0.2, obstacle.z)),
+          'art covers its collider centre',
+        );
+      }
+      if (level === 5) break;
+      match.update(60, { aiPaused: true });
+      const finished = match.snapshot();
+      finished.phase = 'over';
+      finished.winner = 0;
+      match.arrange(finished);
+      assert.equal(match.dispatch({ type: 'advance' }).ok, true);
+    }
+  } finally {
+    glow.dispose();
+    arena.dispose();
+    match.dispose();
+  }
+});

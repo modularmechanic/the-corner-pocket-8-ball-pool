@@ -1388,11 +1388,11 @@ body {
 .menu-resume:hover {
   background: #c4cfbf13;
 }
-/* Attract mode. The first screen is the room itself, so on the landing panel the menu's own backdrop, gradient
- * and drifting lights get out of the way and leave one scrim along the bottom for the branding to sit on. Scoped
- * to the panel attribute so it outranks the responsive `.menu-landing` rules further down the file. */
+/* The opening menu works before the first 3D frame. A static backdrop keeps the
+ * title legible without running the room tour behind interactive controls. */
 .main-menu[data-panel='landing'] {
-  background: linear-gradient(to top, #050d0af2 0%, #050d0ab8 18%, #050d0a52 40%, #050d0a1f 62%, transparent 85%);
+  background:
+    radial-gradient(ellipse at 65% 15%, #293c2c 0%, transparent 65%), linear-gradient(to top, #050d0a 0%, #101e17 100%);
 }
 .main-menu[data-panel='landing']::backdrop {
   background: transparent;

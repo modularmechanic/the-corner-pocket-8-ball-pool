@@ -39,6 +39,7 @@ import {
 import { deadeyeCinematic } from './render/deadeye-cinematic';
 import { PlayerProfile, rackOptions } from './ui/player-profile';
 import { HudWriter, type HudElement } from './ui/hud-writer';
+import { bindLandingInput } from './ui/menu-input';
 import { gameModeCopy, gameModeSupportsFormat, gameModeSupportsOpponent, gameModes } from './ui/game-modes';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -132,12 +133,9 @@ function showMenuPanel(panel: MenuPanel) {
   $('menu-landing').hidden = panel !== 'landing';
   $('menu-games').hidden = panel !== 'games';
   $('menu-setup').hidden = panel !== 'setup';
-  // The landing panel is the attract screen: the room plays behind it. One place decides the machine is idle
-  // enough to advertise, and it is here rather than in the renderer — `startAttract` refuses on its own while a
-  // rack is under way or the viewer asked for reduced motion, so this never has to know about either.
   $('main-menu').dataset.panel = panel;
-  if (panel === 'landing') scene?.startAttract();
-  else scene?.stopAttract();
+  // Menus own input immediately; the room stays still behind their controls.
+  scene?.stopAttract();
 }
 /** One card per registered game mode; iterating `gameModes()` instead of a fixed list means a mode registered
  * later shows up here without touching this function. */
@@ -249,6 +247,7 @@ function closeDialog(id: string) {
   $<HTMLDialogElement>(id).close();
 }
 function openDialog(id: string) {
+  input.releasePointerLock();
   input.cancel();
   if (!$<HTMLDialogElement>(id).open) $<HTMLDialogElement>(id).showModal();
 }
@@ -710,21 +709,9 @@ function setupUI() {
     if (!hasStarted) event.preventDefault();
   });
   $('main-menu').addEventListener('close', () => scene?.stopAttract());
-  // Nobody waits out the movie: any input on the attract screen goes straight to the game picker. Resume Game is
-  // the one control that must keep its own behaviour, so someone mid-session is never stranded; Escape stays
-  // Escape and Tab still moves focus. The prompt button does exactly what a stray key does, so it needs no
-  // exception of its own. The tour stops itself on these same events, so this only decides where the player lands.
-  const skipAttract = (event: Event) => {
-    if ($('menu-landing').hidden || !$<HTMLDialogElement>('main-menu').open) return;
-    const resume = $('menu-resume');
-    if (event instanceof KeyboardEvent) {
-      if (event.key === 'Escape' || event.key === 'Tab') return;
-      if (document.activeElement === resume && (event.key === 'Enter' || event.key === ' ')) return;
-    } else if (event.target instanceof Node && resume.contains(event.target)) return;
-    $('menu-begin').click();
-  };
-  for (const type of ['pointerdown', 'keydown', 'touchstart'] as const)
-    window.addEventListener(type, skipAttract, { capture: true, passive: true });
+  bindLandingInput($<HTMLDialogElement>('main-menu'), $('menu-landing'), $<HTMLButtonElement>('menu-begin'), () =>
+    $('menu-begin').click(),
+  );
   $('menu-resume').onclick = () => closeDialog('main-menu');
   const chooseMenuRules = () => profile.set('rules', selectedRules('menu-rules'));
   const chooseMenuGame = () => profile.set('game', menuGame);
@@ -779,7 +766,7 @@ function setupUI() {
   const resolutionNote = () => {
     const perf = scene.getPerformance();
     $('resolution-note').textContent =
-      `${Math.round(perf.fps)} FPS · ${perf.width} × ${perf.height} · ${perf.tier}. ${perf.gpuMs !== null ? `GPU ${perf.gpuMs.toFixed(1)} ms · ` : ''}${perf.drawCalls} draws. Auto adjusts effects and resolution for smooth play.`;
+      `Last scene frames: ${Math.round(perf.fps)} FPS · ${perf.width} × ${perf.height} · ${perf.tier}. CPU ${perf.cpuMs.toFixed(1)} ms · ${perf.gpuMs !== null ? `GPU ${perf.gpuMs.toFixed(1)} ms · ` : ''}${perf.drawCalls} draws · ${perf.pointLights} point / ${perf.areaLights} area lights. Auto adjusts effects and resolution for smooth play.`;
   };
   window.setInterval(() => {
     if ($<HTMLDialogElement>('settings-dialog').open) resolutionNote();
@@ -1169,7 +1156,9 @@ function frame(now: number) {
   const events = match.drainEvents();
   if (!document.hidden && elapsed <= 0.5) for (const event of events) playEvent(event);
   input.frame(dt);
-  scene.update(input.played(presentation), dt, input.canAct);
+  // Keep network/physics and DOM controls alive, but never submit expensive room
+  // renders, reflection captures or shader prewarming behind an open menu.
+  if (!document.hidden && !anyDialog()) scene.update(input.played(presentation), dt, input.canAct);
   sound.updateRolling(document.hidden ? [] : presentation.balls);
   updateUI();
   requestAnimationFrame(frame);

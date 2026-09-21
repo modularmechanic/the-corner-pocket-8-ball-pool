@@ -73,6 +73,7 @@ export function batchPubStatic(root: THREE.Object3D, scope: 'children' | 'subtre
     target.renderOrder = source.renderOrder;
     target.frustumCulled = source.frustumCulled;
     target.matrixAutoUpdate = false;
+    if (target instanceof THREE.InstancedMesh) target.userData.staticInstances = true;
     target.name = `pub-batch:${(source.material as THREE.Material).name || source.name || (source.material as THREE.Material).type}`;
   };
   const retire = (mesh: THREE.Mesh) => {

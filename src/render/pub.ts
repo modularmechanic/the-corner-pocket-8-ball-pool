@@ -18,6 +18,7 @@ const PUB_WALL_OAK_MAPS = [
 ] as const;
 import { buildPubGallery } from './pub-gallery';
 import { buildPubDrinks } from './pub-drinks';
+import { InstanceVisibility } from './instance-visibility';
 import { buildPubEntertainment } from './pub-entertainment';
 import { PUB_LAYOUT, pubBackZ, pubFrontZ, pubSideX } from './pub-layout';
 import { disposePubObject, type PubPlacement } from './pub-models';
@@ -197,10 +198,19 @@ export function buildPub(scene: THREE.Scene, installer: PropInstaller) {
   // Group boundaries remain intact: placeholder swaps, walls, screens and the
   // hanging fixture can still change independently. No work runs per frame.
   for (const section of [room, backBar, backWallFittings]) batchPubStatic(section);
+  const instanceVisibility = new InstanceVisibility(room);
   return {
     group: room,
-    diagnostics: () => ({ ...pubBatchDiagnostics(room), clubDecor: clubDecor.diagnostics() }),
+    diagnostics: () => ({
+      ...pubBatchDiagnostics(room),
+      ...instanceVisibility.diagnostics(),
+      clubDecor: clubDecor.diagnostics(),
+    }),
+    updateVisibility(camera: THREE.Camera, shadowCameras: readonly THREE.Camera[]) {
+      instanceVisibility.update(camera, shadowCameras, installer.revision);
+    },
     withEnclosedRoom(capture: () => void) {
+      instanceVisibility.restore();
       const objects = [...Object.values(interior.walls), backWallFittings, billiardFixture];
       const visibility = objects.map((object) => object.visible);
       try {

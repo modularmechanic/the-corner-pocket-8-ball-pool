@@ -12,7 +12,8 @@ import { TableModel } from '../src/render/table-model';
  * quantized: quantization moves mesh offsets onto node transforms, and
  * code reusing raw geometry (the merged gallery prints in 2ccf6b8) then collapses toward the room
  * origin. Re-encoded assets must not move a single piece. Regenerate deliberately with
- * WRITE_PUB_PLACEMENT=1 npm test, only after checking the new placement in a browser. */
+ * WRITE_PUB_PLACEMENT=1 node --import tsx --test tests/pub-placement.test.ts; review the changed
+ * world bounds and UVs before accepting the baseline. */
 const FIXTURE = new URL('./pub-placement-snapshot.json', import.meta.url);
 const TOLERANCE = 1e-3;
 /** Material name(s), world box min/max xyz, then UV min/max uv when the geometry has UVs. */
@@ -35,6 +36,18 @@ async function placements(): Promise<Placement[]> {
   try {
     const settled = await installer.settled();
     assert.deepEqual([settled.failed, errors], [[], []]);
+    // Exercise the actual loaded instance buffers without a renderer or browser.
+    const camera = new THREE.OrthographicCamera(-8, 8, 5, -5, 0.1, 80);
+    camera.position.set(0, 30, 0);
+    camera.up.set(0, 0, -1);
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld(true);
+    pub.updateVisibility(camera, []);
+    const culled = pub.diagnostics();
+    assert.ok(culled.totalInstances > 0 && culled.culledInstances > 0, 'loaded room instances are individually culled');
+    pub.withEnclosedRoom(() => {
+      assert.equal(pub.diagnostics().culledInstances, 0, 'reflection sees all original instances');
+    });
     scene.updateMatrixWorld(true);
     const records: Placement[] = [],
       world = new THREE.Matrix4(),

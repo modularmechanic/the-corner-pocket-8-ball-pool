@@ -29,6 +29,7 @@ interface PickupVisual {
   character: PowerCharacter;
   group: THREE.Group;
   icon: THREE.Group;
+  iconHeight: number;
   body: THREE.MeshPhysicalMaterial;
   aura: THREE.Sprite;
   halo: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
@@ -159,9 +160,12 @@ export class PowerupGlow {
     cue: { x: number; z: number } | null | undefined,
     clock: number,
     dt: number,
+    pickupClock: number = clock,
   ) {
-    this.syncPickups(pickups || [], clock);
-    for (const pickup of pickups || []) this.animatePickup(this.visuals.get(pickup.id)!, pickup, clock);
+    // Expiry belongs to the level's simulation clock, which resets between racks.
+    // The scene animation clock keeps running across levels and is only for motion.
+    this.syncPickups(pickups || [], pickupClock);
+    for (const pickup of pickups || []) this.animatePickup(this.visuals.get(pickup.id)!, pickup, clock, pickupClock);
     this.animateMoments(dt);
     this.animateMotes(dt);
     this.animateOrbits(buffs, cue, clock);
@@ -246,7 +250,10 @@ export class PowerupGlow {
       clearcoat: 0.8,
     });
     const icon = buildPowerIcon(power, body);
-    icon.position.y = 0.17;
+    // Authored icons have different lower bounds. Leave room for the full bob
+    // above the 0.04-high plinth; calculate this once, not on every frame.
+    const iconHeight = Math.max(0.17, 0.04 - new THREE.Box3().setFromObject(icon).min.y + character.lift);
+    icon.position.y = iconHeight;
     group.add(icon);
 
     // The glow itself: a camera-facing gradient, not a light. Bloom does the rest.
@@ -292,6 +299,7 @@ export class PowerupGlow {
       character,
       group,
       icon,
+      iconHeight,
       body,
       aura,
       halo,
@@ -301,7 +309,7 @@ export class PowerupGlow {
     };
   }
 
-  private animatePickup(visual: PickupVisual, pickup: Pickup, clock: number) {
+  private animatePickup(visual: PickupVisual, pickup: Pickup, clock: number, pickupClock: number) {
     const character = visual.character;
     const seed = pickup.id * 0.7;
     visual.group.visible = pickup.available !== false;
@@ -311,7 +319,7 @@ export class PowerupGlow {
     const spin = clock * character.spin + seed;
     visual.icon.rotation.y = character.snap ? Math.round(spin * 1.27) / 1.27 : spin;
     const bob = Math.sin(clock * character.bob + seed);
-    visual.icon.position.y = 0.17 + bob * character.lift;
+    visual.icon.position.y = visual.iconHeight + bob * character.lift;
 
     const beat = 0.5 + 0.5 * Math.sin(clock * character.pulse + seed);
     const flicker = character.flicker ? wobble(clock, seed) * character.flicker : 0;
@@ -326,7 +334,7 @@ export class PowerupGlow {
     if (visual.shell) visual.shell.scale.setScalar(1 + (beat - 0.5) * 0.14);
 
     // Running out of time: the fuse drains, then the whole pickup blinks harder the closer it gets.
-    const remaining = typeof pickup.expiresAt === 'number' ? pickup.expiresAt - clock : NaN;
+    const remaining = typeof pickup.expiresAt === 'number' ? pickup.expiresAt - pickupClock : NaN;
     if (!Number.isFinite(remaining)) {
       visual.fuse.visible = false;
       visual.group.scale.setScalar(1);
@@ -336,7 +344,9 @@ export class PowerupGlow {
     visual.fuse.visible = true;
     visual.fuse.geometry.setDrawRange(0, Math.ceil(left * FUSE_SEGMENTS) * 6);
     if (remaining < FUSE_WARNING) {
-      const urgency = 1 - remaining / FUSE_WARNING;
+      // Stale snapshots can briefly retain expired pickups. Never let shrinking
+      // cross zero and invert the entire icon, its plinth and aura under the cloth.
+      const urgency = Math.min(1, Math.max(0, 1 - remaining / FUSE_WARNING));
       const blink = Math.sin(clock * (7 + urgency * 26)) > -0.15 ? 1 : 0.12;
       visual.aura.material.opacity *= blink;
       visual.halo.material.opacity *= blink;

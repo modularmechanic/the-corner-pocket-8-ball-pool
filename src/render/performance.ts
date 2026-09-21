@@ -1,8 +1,8 @@
-export type RenderQuality = 'auto' | 'performance' | 'high' | 'ultra';
+export type RenderQuality = 'auto' | 'performance' | 'high' | 'veryHigh' | 'ultra';
 export type AdaptiveTier = 'refined' | 'balanced' | 'fast' | 'light' | 'minimum';
 
 export interface RenderBudget {
-  readonly tier: AdaptiveTier | 'performance' | 'high' | 'ultra';
+  readonly tier: AdaptiveTier | 'performance' | 'high' | 'veryHigh' | 'ultra';
   readonly maxDpr: number;
   readonly pixels: number;
   readonly bloom: boolean;
@@ -12,48 +12,55 @@ export interface RenderBudget {
   /** Real refraction through the pub glassware. Off below the top tiers: it costs a full
    * scene-colour pass every frame, where alpha glass costs nothing. */
   readonly glassTransmission: boolean;
+  /** Pixel budget while the camera is moving, as a fraction of `pixels`. A moving camera hides the
+   * resolution drop. Very High keeps this at 1 to preserve native 1440p during an orbit. */
+  readonly motionPixelScale: number;
 }
 
 const AUTO_BUDGETS: readonly RenderBudget[] = [
   {
     tier: 'refined',
-    maxDpr: 1.5,
-    pixels: 4_194_304,
+    maxDpr: 1.25,
+    pixels: 1920 * 1080,
     bloom: true,
     shadowLights: 3,
     shadowSize: 1024,
     reflectionSize: 128,
-    glassTransmission: true,
+    glassTransmission: false,
+    motionPixelScale: 0.8,
   },
   {
     tier: 'balanced',
     maxDpr: 1.25,
-    pixels: 3_686_400,
+    pixels: 1920 * 1080,
     bloom: false,
     shadowLights: 3,
     shadowSize: 1024,
     reflectionSize: 128,
     glassTransmission: false,
+    motionPixelScale: 0.8,
   },
   {
     tier: 'fast',
     maxDpr: 1.25,
-    pixels: 3_686_400,
+    pixels: 1920 * 1080,
     bloom: false,
     shadowLights: 1,
     shadowSize: 768,
     reflectionSize: 128,
     glassTransmission: false,
+    motionPixelScale: 0.8,
   },
   {
     tier: 'light',
     maxDpr: 1,
-    pixels: 2_073_600,
+    pixels: 1600 * 900,
     bloom: false,
     shadowLights: 1,
     shadowSize: 512,
     reflectionSize: 128,
     glassTransmission: false,
+    motionPixelScale: 0.8,
   },
   {
     tier: 'minimum',
@@ -64,6 +71,7 @@ const AUTO_BUDGETS: readonly RenderBudget[] = [
     shadowSize: 512,
     reflectionSize: 128,
     glassTransmission: false,
+    motionPixelScale: 0.8,
   },
 ];
 
@@ -79,12 +87,13 @@ export function graphicsBudget(quality: RenderQuality, tier = 1, mobile = false)
     return {
       tier: quality,
       maxDpr: 1,
-      pixels: 2_073_600,
+      pixels: 1600 * 900,
       bloom: false,
       shadowLights: 1,
       shadowSize: 512,
       reflectionSize: 128,
       glassTransmission: false,
+      motionPixelScale: 1,
     };
   if (quality === 'ultra')
     return {
@@ -96,16 +105,32 @@ export function graphicsBudget(quality: RenderQuality, tier = 1, mobile = false)
       shadowSize: 2048,
       reflectionSize: 256,
       glassTransmission: true,
+      motionPixelScale: 0.7,
+    };
+  // Native 1440p even in motion. Alpha glass avoids an extra scene pass; bloom's own
+  // targets are reduced independently without downscaling the table or labels.
+  if (quality === 'veryHigh')
+    return {
+      tier: quality,
+      maxDpr: 2,
+      pixels: 2560 * 1440,
+      bloom: true,
+      shadowLights: 3,
+      shadowSize: 1024,
+      reflectionSize: 256,
+      glassTransmission: false,
+      motionPixelScale: 1,
     };
   return {
     tier: quality,
-    maxDpr: 2,
-    pixels: 4_194_304,
+    maxDpr: 1.5,
+    pixels: 1920 * 1080,
     bloom: true,
-    shadowLights: 3,
+    shadowLights: 1,
     shadowSize: 1024,
-    reflectionSize: 256,
-    glassTransmission: true,
+    reflectionSize: 128,
+    glassTransmission: false,
+    motionPixelScale: 0.85,
   };
 }
 
@@ -117,12 +142,15 @@ export function budgetDpr(
   deviceDpr: number,
   maxWidth = 16384,
   maxHeight = 16384,
+  /** Fraction of the tier's pixel budget to spend. Below 1 while the camera moves. */
+  pixelScale = 1,
 ): number {
   if (!(width > 0 && height > 0)) return 1;
   const native = Number.isFinite(deviceDpr) && deviceDpr > 0 ? deviceDpr : 1;
+  const pixels = budget.pixels * (Number.isFinite(pixelScale) ? Math.max(0.1, Math.min(1, pixelScale)) : 1);
   return Math.max(
     0.05,
-    Math.min(native, budget.maxDpr, Math.sqrt(budget.pixels / (width * height)), maxWidth / width, maxHeight / height),
+    Math.min(native, budget.maxDpr, Math.sqrt(pixels / (width * height)), maxWidth / width, maxHeight / height),
   );
 }
 
@@ -182,9 +210,10 @@ export class AdaptiveRenderBudget {
   get ceiling(): RenderBudget {
     return graphicsBudget(this.quality, 0, this.mobile);
   }
-  /** Desktop frame deadline at the detected display refresh. Phones stay at 60 Hz. */
+  /** Auto follows observed refresh; manual presets expose their design target. Phones stay at 60 Hz. */
   get targetMs(): number {
-    return 1000 / (this.mobile ? 60 : this.refreshHz);
+    if (this.mobile || this.quality === 'veryHigh' || this.quality === 'ultra') return 1000 / 60;
+    return 1000 / (this.quality === 'auto' ? this.refreshHz : 120);
   }
   setQuality(quality: RenderQuality): void {
     this.quality = quality;

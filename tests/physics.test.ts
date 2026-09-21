@@ -593,3 +593,28 @@ test('only the moving white cue ball can collect visible power-ups', () => {
     game.dispose();
   }
 });
+
+test('rebuilding a ramp as an obstacle does not retain old collider classifications', () => {
+  const game = new PoolGame('replace-ramp');
+  try {
+    fixture(game, { 0: { x: -1.5, z: 0 } });
+    edit(game, (state) => {
+      state.arcade!.hazards = [{ id: 0, kind: 'ramp', x: 0, z: 0, radius: 0.58 }];
+    });
+    // The new world's first obstacle reuses the handle previously held by the ramp.
+    edit(game, (state) => {
+      state.arcade!.hazards = [];
+      state.arcade!.obstacles = [{ id: 0, x: 0, z: 0, width: 0.6, depth: 0.3, hp: 2, maxHp: 2, material: 'wood' }];
+    });
+    const hits: TableEvent[] = [];
+    game.onEvent = (event) => {
+      if (event.kind === 'obstacle') hits.push(event);
+    };
+    assert.ok(game.shoot({ angle: 0, power: 0.2 }));
+    for (let i = 0; i < 100 && hits.length === 0; i++) game.step();
+    assert.ok(hits.length > 0, 'a new obstacle contact must not be discarded as an old ramp contact');
+    assert.ok(game.state.arcade!.obstacles[0].hp < 2);
+  } finally {
+    game.dispose();
+  }
+});

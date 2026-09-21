@@ -188,6 +188,18 @@ test('menu option lists come from the difficulty, layout, quality and level sour
     LAYOUT_OPTIONS,
     Object.entries(LAYOUTS).map(([value, layout]) => ({ value, label: layout.name })),
   );
-  assert.deepEqual(QUALITY_OPTIONS.map((option) => option.value).sort(), ['auto', 'high', 'performance', 'ultra']);
+  assert.deepEqual(QUALITY_OPTIONS.map((option) => option.value).sort(), [
+    'auto',
+    'high',
+    'performance',
+    'ultra',
+    'veryHigh',
+  ]);
   assert.equal(LEVEL_NAMES.length, MAX_LEVEL);
+});
+
+test('Very High survives preference persistence and reload', () => {
+  const { storage } = memory();
+  new PlayerProfile(storage).set('quality', 'veryHigh');
+  assert.equal(new PlayerProfile(storage).preferences.quality, 'veryHigh');
 });

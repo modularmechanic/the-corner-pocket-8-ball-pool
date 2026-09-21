@@ -17,6 +17,7 @@ import { tableOf, type TableSpec } from '../simulation/modes/table';
 const BALL_MESH_COUNT = 22;
 import { ballTexture, snookerBallTexture, canvasTexture, clubLightingTexture } from './materials';
 import { createTableSurfaces, type TableSurfaces } from './table-surfaces';
+import { MotionResolution } from './motion-resolution';
 import { createPropInstaller } from './asset-installer';
 import { RoomReflections } from './room-reflections';
 import { PowerupGlow } from './powerup-glow';
@@ -101,7 +102,9 @@ export class PoolScene {
   }
   private balls: THREE.Mesh[] = [];
   // Canvas ball maps are large; the coin-return balls reuse them.
-  private ballMaps = Array.from({ length: BALL_MESH_COUNT }, (_, id) => (id <= 15 ? ballTexture(id) : snookerBallTexture(id)));
+  private ballMaps = Array.from({ length: BALL_MESH_COUNT }, (_, id) =>
+    id <= 15 ? ballTexture(id) : snookerBallTexture(id),
+  );
   /** Snooker's own albedos: the fifteen reds are one colour and the six colours carry no number,
    * so a snooker frame cannot reuse the numbered pool maps for ids 1-15. Built on first use. */
   private snookerMaps: THREE.Texture[] | null = null;
@@ -128,8 +131,14 @@ export class PoolScene {
   private tableLights: THREE.SpotLight[] = [];
   private resizeObserver: ResizeObserver;
   private quality: Quality = 'auto';
+  private pendingQuality: Quality | null = null;
   private performanceBudget: AdaptiveRenderBudget;
   private frameHistory = new RenderFrameHistory();
+  /** Drops resolution while the camera moves, by the amount this tier allows. */
+  private motionResolution = new MotionResolution();
+  private bufferLimits: [number, number] = [16384, 16384];
+  private bufferSizeKey = '';
+  private shadowCameras: THREE.Camera[] = [];
   private gpuTimer: GpuFrameTimer;
   private lastFrameAt = 0;
   private lastGpuMs: number | null = null;
@@ -252,6 +261,7 @@ export class PoolScene {
     });
     this.renderer.domElement.addEventListener('webglcontextrestored', () => {
       this.lost = false;
+      this.bufferSizeKey = '';
       this.gpuTimer = new GpuFrameTimer(this.renderer.getContext() as WebGL2RenderingContext);
       this.lastGpuMs = null;
       this.gpuSampleAge = Infinity;
@@ -671,28 +681,50 @@ export class PoolScene {
       this.renderer.capabilities.maxTextureSize,
       gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) as number,
     );
+    this.bufferLimits = [Math.min(bufferLimit, viewportLimits[0]), Math.min(bufferLimit, viewportLimits[1])];
+    this.motionResolution.invalidate();
+    const scale = this.motionResolution.sample(this.camera, 0, budget.motionPixelScale);
+    this.motionResolution.shouldApply(scale);
+    this.setPixelRatioFor(scale);
+  }
+  /** One place that turns a pixel scale into a ratio, a size and a postprocessing resize. */
+  private setPixelRatioFor(pixelScale: number) {
+    if (!this.width || !this.height || this.lost) return;
+    const budget = this.performanceBudget.budget;
     const dpr = budgetDpr(
       budget,
       this.width,
       this.height,
       devicePixelRatio,
-      Math.min(bufferLimit, viewportLimits[0]),
-      Math.min(bufferLimit, viewportLimits[1]),
+      this.bufferLimits[0],
+      this.bufferLimits[1],
+      pixelScale,
     );
-    this.renderer.setPixelRatio(dpr);
-    this.renderer.setSize(this.width, this.height);
+    const key = `${this.width}:${this.height}:${dpr}`;
+    if (key !== this.bufferSizeKey) {
+      this.renderer.setDrawingBufferSize(this.width, this.height, dpr);
+      this.bufferSizeKey = key;
+    }
     this.postprocessing?.resize(this.width, this.height, budget);
     this.maintenanceFrames = 3;
   }
   setQuality(quality: Quality) {
-    this.quality = quality;
-    this.performanceBudget.setQuality(quality);
-    this.applyGraphicsBudget();
+    // Applying a preset reallocates render targets. Leave menu controls responsive
+    // and apply the latest selection when scene rendering resumes.
+    this.pendingQuality = quality;
+  }
+  /** Spend fewer pixels while the camera moves, at the fraction this tier allows. Applied on
+   * transitions only: setting the pixel ratio reallocates the drawing buffer and its targets. */
+  private applyMotionResolution(dtMs: number) {
+    const budget = this.performanceBudget.budget;
+    const scale = this.motionResolution.sample(this.camera, dtMs, budget.motionPixelScale);
+    if (!this.motionResolution.shouldApply(scale)) return;
+    this.setPixelRatioFor(scale);
   }
   private applyGraphicsBudget() {
     const budget = this.performanceBudget.budget,
       ceiling = this.performanceBudget.ceiling;
-    this.practicalLights.configure(this.quality, budget.tier, ceiling.tier);
+    this.practicalLights.configure(this.quality, budget.tier);
     this.roomReflections?.setResolution(budget.reflectionSize);
     this.pubReflections?.setResolution(budget.reflectionSize);
     setPubGlassTransmission(budget.glassTransmission);
@@ -953,6 +985,12 @@ export class PoolScene {
     if (point) this.placement.position.set(point.x, TABLE.radius, point.z);
   }
   update(state: GameState, dt: number, canAim: boolean) {
+    if (this.pendingQuality !== null) {
+      this.quality = this.pendingQuality;
+      this.pendingQuality = null;
+      this.performanceBudget.setQuality(this.quality);
+      this.applyGraphicsBudget();
+    }
     const frameStart = performance.now(),
       frameMs = this.lastFrameAt ? frameStart - this.lastFrameAt : 0;
     this.lastFrameAt = frameStart;
@@ -1005,6 +1043,7 @@ export class PoolScene {
       shooterCue && !shooterCue.pocketed ? shooterCue : null,
       this.clock,
       frameDt,
+      state.arcade?.clock ?? 0,
     );
     this.renderedShotCount = state.shotCount;
     for (const ball of state.balls) {
@@ -1140,15 +1179,27 @@ export class PoolScene {
         this.gpuSampleAge = 0;
       }
       this.updateShadowBudget(frameDt);
-      this.practicalLights.update(this.camera, frameDt);
-      const idleForCapture = state.phase !== 'rolling';
-      const captured =
-        (this.roomReflections?.update(frameDt, idleForCapture) || false) ||
-        (this.pubReflections?.update(frameDt, idleForCapture) || false);
+      this.applyMotionResolution(frameDt * 1000);
+      this.practicalLights.update(this.camera, frameDt, this.propInstaller.revision);
+      const idleForCapture = state.phase !== 'rolling' && !this.motionResolution.moving;
+      const captured = Boolean(
+        this.roomReflections?.update(frameDt, idleForCapture) || this.pubReflections?.update(frameDt, idleForCapture),
+      );
       if (captured) {
         prewarmPrograms(this.renderer, this.scene, this.camera, !!this.postprocessing);
         this.postprocessing?.prewarm(this.performanceBudget.ceiling);
       }
+      this.shadowCameras.length = 0;
+      for (const lamp of this.tableLights) {
+        if (!lamp.castShadow || lamp.shadow.intensity === 0) continue;
+        lamp.updateWorldMatrix(true, false);
+        lamp.target.updateWorldMatrix(true, false);
+        lamp.shadow.updateMatrices(lamp);
+        // The shadow pass above restricts these lamps to gameplay objects.
+        lamp.shadow.camera.layers.set(TABLE_SHADOW_LAYER);
+        this.shadowCameras.push(lamp.shadow.camera);
+      }
+      this.pub?.updateVisibility(this.camera, this.shadowCameras);
       const maintenance = captured || this.maintenanceFrames > 0;
       this.maintenanceFrames = Math.max(0, this.maintenanceFrames - 1);
       if (this.postprocessing) this.postprocessing.render(this.scene, this.camera, frameDt);

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { PoolPostprocessing, prewarmPrograms } from '../src/render/postprocessing';
 import { graphicsBudget } from '../src/render/performance';
+import { BudgetBloomPass } from '../src/render/bloom-pass';
 
 function fakeRenderer() {
   const previous = new THREE.WebGLRenderTarget(4, 4),
@@ -96,4 +97,16 @@ test('pass prewarm compiles every bloom and output program without drawing or si
   );
   assert.equal(current, previous);
   assert.equal(disposed.length, 1, 'the scratch target is released');
+});
+
+test('bloom downsamples only its effect targets and tracks preset changes', () => {
+  const bloom = new BudgetBloomPass();
+  bloom.setSize(2560, 1440);
+  assert.equal(bloom.renderTargetBright.width, 640);
+  assert.equal(bloom.renderTargetBright.height, 360);
+  bloom.resolutionScale = 1;
+  bloom.setSize(2560, 1440);
+  assert.equal(bloom.renderTargetBright.width, 1280);
+  assert.equal(bloom.renderTargetBright.height, 720);
+  bloom.dispose();
 });

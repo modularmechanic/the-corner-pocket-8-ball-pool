@@ -44,7 +44,7 @@ test('Auto starts with bounded native resolution and mobile uses a smaller direc
   assert.equal(mobile.budget.bloom, false);
   assert.equal(budgetDpr(desktop.budget, 1920, 1080, 1), 1, 'a 1× display must never be forced to 1.5×');
   assert.equal(budgetDpr(mobile.budget, 390, 844, 3), 1, 'phone density does not allocate a 3× framebuffer');
-  for (const quality of ['auto', 'high', 'ultra', 'performance'] as const)
+  for (const quality of ['auto', 'high', 'veryHigh', 'ultra', 'performance'] as const)
     for (const [w, h] of [
       [1920, 1080],
       [3840, 2160],
@@ -334,4 +334,19 @@ test('GPU telemetry never reads an unfinished query and discards disjoint or mai
   assert.equal(reads, 1);
   assert.ok(deletes >= 3);
   timer.dispose();
+});
+
+test('preset costs are bounded for native 1440p60 and lower tiers targeting high refresh', () => {
+  const budget = new AdaptiveRenderBudget();
+  for (const quality of ['performance', 'high', 'veryHigh', 'ultra'] as const) {
+    budget.setQuality(quality);
+    assert.equal(budget.targetMs, 1000 / (quality === 'high' || quality === 'performance' ? 120 : 60));
+  }
+  for (let tier = 0; tier < 5; tier++) {
+    const auto = graphicsBudget('auto', tier);
+    assert.ok(auto.pixels <= 1920 * 1080);
+    assert.equal(auto.glassTransmission, false);
+  }
+  assert.equal(graphicsBudget('high').glassTransmission, false);
+  assert.equal(graphicsBudget('high').shadowLights, 1);
 });

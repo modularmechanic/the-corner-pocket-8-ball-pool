@@ -198,6 +198,7 @@ export class PoolGame {
     this.colliderIds.clear();
     this.colliderKeys.clear();
     this.obstacleColliders.clear();
+    this.rampColliders.clear();
     this.ballColliders.clear();
     if (state.arcade) sanitizeMarks(state.arcade);
     this.activeContacts = new Set(continuation?.activeContacts ?? []);
@@ -464,7 +465,9 @@ export class PoolGame {
     cue.vx = Math.cos(shot.angle) * speed;
     cue.vz = Math.sin(shot.angle) * speed;
     cue.vy = lift;
-    cue.elevation = 0;
+    // A cue resting on a ramp already has gravitational energy. Flattening only
+    // its state made the energy guard cancel the real body's motion on every step.
+    cue.elevation = Math.max(0, this.bodies.get(cueId)!.translation().y - TABLE.radius);
     cue.airborne = lift > 0.1;
     const grip = (chalked ? 1.12 : 0.8) * equipment.spin,
       side = tipX * speed * 0.13 * grip,
@@ -722,23 +725,24 @@ export class PoolGame {
       // gravity applied above.
       const wasFalling = wasAirborne || onRamp(this.current.arcade, ball.x, ball.z);
       let vy = Math.max(-10, Math.min(8, v.y - (wasFalling ? (GRAVITY * dt) / 2 : 0)));
-      // The table is no longer flat. The floor under a ball is the cloth, or the wedge surface
-      // where a ramp stands. The wedge collider does the real work; this is the net that stops a
-      // ball tunnelling through a surface the world has no collider for.
+      // Rapier owns ramp contact, including rounded sphere contact at the ridge.
+      // The analytic ramp height is only a grounded/airborne hint: projecting a
+      // sphere onto its face planes would create a phantom surface above the ridge.
+      // Only the cloth needs a floor correction because it has no collider.
       const ground = groundCentreY(this.current.arcade, p.x, p.z);
       const slope = ground > TABLE.radius + 1e-9;
       let centre = p.y;
       let height = Math.max(0, p.y - TABLE.radius);
       let landed = false;
-      if (p.y <= ground + FLIGHT_EPSILON && vy <= 0.18) {
+      if (p.y <= TABLE.radius + FLIGHT_EPSILON && vy <= 0.18) {
         landed = wasAirborne;
         // Felt absorbs the vertical impact; a small bounce is retained only for
         // fast descents. Tiny contacts settle without repeatedly waking the rack.
         const rebound = vy < -2.4 ? -vy * 0.13 : 0;
-        centre = ground;
-        height = ground - TABLE.radius;
+        centre = TABLE.radius;
+        height = 0;
         vy = rebound > 0.45 ? rebound : 0;
-        body.setTranslation({ x: p.x, y: ground, z: p.z }, false);
+        body.setTranslation({ x: p.x, y: TABLE.radius, z: p.z }, false);
         if (landed)
           this.emit({
             kind: 'land',
@@ -816,13 +820,14 @@ export class PoolGame {
       const ratio = speed > 0 ? next / speed : 0;
       ball.vx = v.x * ratio;
       ball.vz = v.z * ratio;
-      // On the flat a crawling ball has stopped. On a slope it has not: it is about to run back
-      // down, and zeroing it here would leave it standing on the side of the wedge forever.
+      // Keep small slope velocities so unstable balls can start rolling downhill.
+      // A ball that remains below the stop threshold may rest on the ridge; merely
+      // occupying a ramp must not keep the whole turn alive until the safety timeout.
       if (next < 0.035 && !ball.airborne && !slope) {
         ball.vx = 0;
         ball.vz = 0;
-      } else moving = true;
-      if (ball.airborne) moving = true;
+      }
+      if (next >= 0.035 || ball.airborne) moving = true;
       if (!body.isSleeping()) body.setLinvel({ x: ball.vx, y: ball.vy || 0, z: ball.vz }, false);
     }
     // Dense rack contacts can inject energy through iterative restitution solving.
@@ -860,7 +865,7 @@ export class PoolGame {
         b.vz = 0;
         b.vy = 0;
         b.airborne = false;
-        if (!b.pocketed) b.elevation = 0;
+        if (!b.pocketed && !onRamp(this.current.arcade, b.x, b.z)) b.elevation = 0;
         const body = this.bodies.get(b.id)!;
         body.setTranslation({ x: b.x, y: TABLE.radius + (b.elevation || 0), z: b.z }, false);
         body.setLinvel({ x: 0, y: 0, z: 0 }, false);

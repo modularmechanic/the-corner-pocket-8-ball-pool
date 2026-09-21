@@ -98,11 +98,12 @@ test('the room sweep takes metal and smooth glass, and leaves the matte room mat
   assert.ok(!catchesRoom(null));
 });
 
-test('real refraction is a top-tier budget knob', () => {
+test('real refraction is reserved for Ultra to avoid a second scene pass at 1440p', () => {
   assert.equal(graphicsBudget('ultra').glassTransmission, true);
-  assert.equal(graphicsBudget('high').glassTransmission, true);
+  assert.equal(graphicsBudget('high').glassTransmission, false);
+  assert.equal(graphicsBudget('veryHigh').glassTransmission, false);
   assert.equal(graphicsBudget('performance').glassTransmission, false);
-  assert.equal(graphicsBudget('auto', 0).glassTransmission, true);
+  assert.equal(graphicsBudget('auto', 0).glassTransmission, false);
   for (const tier of [1, 2, 3, 4]) assert.equal(graphicsBudget('auto', tier).glassTransmission, false, `tier ${tier}`);
 });
 

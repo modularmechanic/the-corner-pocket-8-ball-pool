@@ -31,6 +31,8 @@ export function instancePubModel(source: THREE.Object3D, placements: readonly Pu
     mesh.name = object.name;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    mesh.userData.staticInstances = true;
+    mesh.matrixAutoUpdate = false;
     for (let i = 0; i < transforms.length; i++)
       mesh.setMatrixAt(i, new THREE.Matrix4().multiplyMatrices(transforms[i], object.matrixWorld));
     mesh.instanceMatrix.needsUpdate = true;
